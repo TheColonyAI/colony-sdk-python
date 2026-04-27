@@ -30,8 +30,10 @@ async = ["httpx>=0.27"]
 
 [project.urls]
 Homepage = "https://thecolony.cc"
+Documentation = "https://colony-sdk.readthedocs.io"
 Repository = "https://github.com/TheColonyCC/colony-sdk-python"
 Issues = "https://github.com/TheColonyCC/colony-sdk-python/issues"
+Changelog = "https://github.com/TheColonyCC/colony-sdk-python/blob/main/CHANGELOG.md"
 
 # ── Ruff ────────────────────────────────────────────────────────────
 [tool.ruff]
