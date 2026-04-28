@@ -45,6 +45,86 @@ class TestColonyFilterParam:
         assert async_helper is _colony_filter_param
 
 
+class TestResolveColonyUuid:
+    """``_resolve_colony_uuid()`` is the body/URL-path counterpart to
+    ``_colony_filter_param()``. Used by ``create_post``, ``join_colony``,
+    and ``leave_colony`` — call sites that send the colony reference in
+    a request body or URL path that the API only accepts as a UUID.
+
+    Covers the ``c/builds``-fails-on-create_post case left explicitly
+    out-of-scope by PR #45.
+    """
+
+    def _client_with_mock(self, list_response):
+        """Build a ColonyClient whose `_raw_request` returns the given
+        list_colonies response on first GET and raises on any second
+        call (lets us assert the cache is used)."""
+        client = ColonyClient("col_test")
+        calls: list[tuple[str, str]] = []
+
+        def fake_request(method, path, **_kw):
+            calls.append((method, path))
+            return list_response
+
+        client._raw_request = fake_request  # type: ignore[method-assign]
+        return client, calls
+
+    def test_known_slug_returns_uuid_without_api_call(self):
+        client, calls = self._client_with_mock([])
+        assert client._resolve_colony_uuid("findings") == COLONIES["findings"]
+        assert calls == [], "should not have hit the API for a known slug"
+
+    def test_uuid_passthrough_without_api_call(self):
+        client, calls = self._client_with_mock([])
+        u = "bbe6be09-da95-4983-b23d-1dd980479a7e"
+        assert client._resolve_colony_uuid(u) == u
+        assert calls == [], "should not have hit the API for a UUID"
+
+    def test_unknown_slug_resolves_via_list_colonies(self):
+        builds_uuid = "11111111-2222-3333-4444-555555555555"
+        client, calls = self._client_with_mock(
+            [
+                {"id": builds_uuid, "name": "builds"},
+                {"id": "99999999-9999-9999-9999-999999999999", "name": "lobby"},
+            ]
+        )
+        assert client._resolve_colony_uuid("builds") == builds_uuid
+        assert calls == [("GET", "/colonies?limit=200")]
+
+    def test_cache_reused_on_subsequent_calls(self):
+        builds_uuid = "11111111-2222-3333-4444-555555555555"
+        client, calls = self._client_with_mock([{"id": builds_uuid, "name": "builds"}])
+        client._resolve_colony_uuid("builds")
+        client._resolve_colony_uuid("builds")
+        client._resolve_colony_uuid("builds")
+        assert len(calls) == 1, "list_colonies should be called exactly once"
+
+    def test_unknown_slug_after_lookup_raises_value_error(self):
+        client, _calls = self._client_with_mock([{"id": "11111111-2222-3333-4444-555555555555", "name": "builds"}])
+        try:
+            client._resolve_colony_uuid("not-a-real-slug")
+        except ValueError as exc:
+            assert "not-a-real-slug" in str(exc)
+            assert "Check for typos" in str(exc)
+        else:
+            raise AssertionError("expected ValueError for unknown slug")
+
+    def test_dict_response_shape_also_works(self):
+        # The API currently returns a list, but the resolver tolerates a
+        # `{items: [...]}` or `{colonies: [...]}` envelope as well.
+        client, _ = self._client_with_mock({"items": [{"id": "abc-123", "name": "experimental-shape"}]})
+        # `abc-123` isn't UUID-shape but the resolver doesn't validate the
+        # cached values — only the inputs. This documents that contract.
+        assert client._resolve_colony_uuid("experimental-shape") == "abc-123"
+
+    def test_async_resolver_exists_and_is_distinct(self):
+        # Catches accidental deletion of the async mirror.
+        from colony_sdk.async_client import AsyncColonyClient
+
+        assert hasattr(AsyncColonyClient, "_resolve_colony_uuid")
+        assert hasattr(AsyncColonyClient, "_colony_uuid_cache") is False  # instance attr
+
+
 def test_colonies_complete():
     """All 10 colonies should be present (9 canonical + test-posts)."""
     assert len(COLONIES) == 10

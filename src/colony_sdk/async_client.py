@@ -36,6 +36,7 @@ from types import TracebackType
 from typing import Any
 
 from colony_sdk.client import (
+    _UUID_RE,
     DEFAULT_BASE_URL,
     ColonyNetworkError,
     RetryConfig,
@@ -101,9 +102,43 @@ class AsyncColonyClient:
         self._on_response: list[Any] = []
         self._consecutive_failures: int = 0
         self._circuit_breaker_threshold: int = 0
+        # Lazy slug→UUID cache for `_resolve_colony_uuid()`. See ColonyClient
+        # for the same field; behaviour is identical, just async.
+        self._colony_uuid_cache: dict[str, str] | None = None
 
     def __repr__(self) -> str:
         return f"AsyncColonyClient(base_url={self.base_url!r})"
+
+    async def _resolve_colony_uuid(self, value: str) -> str:
+        """Async mirror of :meth:`ColonyClient._resolve_colony_uuid`.
+
+        Resolution order: hardcoded :data:`COLONIES` → UUID-shape
+        passthrough → lazy ``GET /colonies`` cache → :class:`ValueError`
+        if the slug is genuinely unknown to the server.
+        """
+        if value in COLONIES:
+            return COLONIES[value]
+        if _UUID_RE.match(value):
+            return value
+        if self._colony_uuid_cache is None:
+            data = await self._raw_request("GET", "/colonies?limit=200")
+            items = data if isinstance(data, list) else (data.get("items") or data.get("colonies") or [])
+            self._colony_uuid_cache = {}
+            for c in items:
+                key = c.get("name") or c.get("slug")
+                cid = c.get("id")
+                if key and cid:
+                    self._colony_uuid_cache[key] = cid
+        uuid = self._colony_uuid_cache.get(value)
+        if not uuid:
+            sample = sorted(self._colony_uuid_cache.keys())[:8]
+            raise ValueError(
+                f"Colony slug {value!r} is not in the hardcoded COLONIES "
+                f"map and was not found on the server "
+                f"(tried {len(self._colony_uuid_cache)} colonies; sample: "
+                f"{sample}). Check for typos."
+            )
+        return uuid
 
     def _wrap(self, data: dict, model: Any) -> Any:
         """Wrap a raw dict in a typed model if ``self.typed`` is True."""
@@ -295,7 +330,7 @@ class AsyncColonyClient:
         """Create a post in a colony. See :meth:`ColonyClient.create_post`
         for the full ``metadata`` schema for each post type.
         """
-        colony_id = COLONIES.get(colony, colony)
+        colony_id = await self._resolve_colony_uuid(colony)
         body_payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -714,13 +749,17 @@ class AsyncColonyClient:
         return await self._raw_request("GET", f"/colonies?{params}")
 
     async def join_colony(self, colony: str) -> dict:
-        """Join a colony."""
-        colony_id = COLONIES.get(colony, colony)
+        """Join a colony.
+
+        Unmapped slugs are resolved via a lazy ``GET /colonies`` lookup.
+        See :meth:`ColonyClient.join_colony` for details.
+        """
+        colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("POST", f"/colonies/{colony_id}/join")
 
     async def leave_colony(self, colony: str) -> dict:
-        """Leave a colony."""
-        colony_id = COLONIES.get(colony, colony)
+        """Leave a colony. See :meth:`ColonyClient.leave_colony`."""
+        colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("POST", f"/colonies/{colony_id}/leave")
 
     # ── Unread messages ──────────────────────────────────────────────

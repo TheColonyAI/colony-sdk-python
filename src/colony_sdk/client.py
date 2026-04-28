@@ -426,6 +426,10 @@ class ColonyClient:
         self._circuit_breaker_threshold: int = 0  # 0 = disabled
         self._cache: dict[str, tuple[float, dict]] = {}
         self._cache_ttl: float = 0  # 0 = disabled
+        # Lazy slug→UUID cache for `_resolve_colony_uuid()`. Populated on
+        # first miss against the hardcoded `COLONIES` map; never invalidated
+        # for the lifetime of the client (sub-communities are stable).
+        self._colony_uuid_cache: dict[str, str] | None = None
 
     def __repr__(self) -> str:
         return f"ColonyClient(base_url={self.base_url!r})"
@@ -659,6 +663,60 @@ class ColonyClient:
                 response={},
             ) from e
 
+    # ── Colony slug → UUID resolution ────────────────────────────────
+
+    def _resolve_colony_uuid(self, value: str) -> str:
+        """Resolve a colony name-or-UUID to its canonical UUID.
+
+        Used by call sites that send the colony reference in a request
+        body or URL path — both of which the API only accepts as a UUID.
+        :func:`_colony_filter_param` covers the query-param case where
+        the API also accepts a slug under ``?colony=``.
+
+        Resolution order:
+
+        1. If ``value`` is in the hardcoded :data:`COLONIES` map, return
+           its canonical UUID.
+        2. If ``value`` is UUID-shaped, return it unchanged.
+        3. Otherwise, fetch ``GET /colonies`` once and cache the slug→id
+           map on the client. Re-uses the cache for subsequent calls.
+        4. If the slug is still unknown after the server lookup, raise
+           :class:`ValueError` — distinguishes a typo'd slug from a
+           genuine API failure.
+
+        The cache is populated lazily and never invalidated for the
+        lifetime of the client. Sub-communities on The Colony are
+        stable enough that this is safer than a TTL — a freshly-added
+        colony just triggers one extra fetch on the first call that
+        references it.
+        """
+        if value in COLONIES:
+            return COLONIES[value]
+        if _UUID_RE.match(value):
+            return value
+        if self._colony_uuid_cache is None:
+            data = self._raw_request("GET", "/colonies?limit=200")
+            items = data if isinstance(data, list) else (data.get("items") or data.get("colonies") or [])
+            self._colony_uuid_cache = {}
+            for c in items:
+                # The API uses `name` for the slug field; `slug` is reserved
+                # for a future display-name variant and is currently empty.
+                # Prefer `name`, fall back to `slug` for forward-compat.
+                key = c.get("name") or c.get("slug")
+                cid = c.get("id")
+                if key and cid:
+                    self._colony_uuid_cache[key] = cid
+        uuid = self._colony_uuid_cache.get(value)
+        if not uuid:
+            sample = sorted(self._colony_uuid_cache.keys())[:8]
+            raise ValueError(
+                f"Colony slug {value!r} is not in the hardcoded COLONIES "
+                f"map and was not found on the server "
+                f"(tried {len(self._colony_uuid_cache)} colonies; sample: "
+                f"{sample}). Check for typos."
+            )
+        return uuid
+
     # ── Posts ─────────────────────────────────────────────────────────
 
     def create_post(
@@ -713,7 +771,7 @@ class ColonyClient:
                 },
             )
         """
-        colony_id = COLONIES.get(colony, colony)
+        colony_id = self._resolve_colony_uuid(colony)
         body_payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -1283,8 +1341,10 @@ class ColonyClient:
 
         Args:
             colony: Colony name (e.g. ``"general"``, ``"findings"``) or UUID.
+                Unmapped slugs (sub-communities the SDK doesn't know about
+                statically) are resolved via a lazy ``GET /colonies`` lookup.
         """
-        colony_id = COLONIES.get(colony, colony)
+        colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("POST", f"/colonies/{colony_id}/join")
 
     def leave_colony(self, colony: str) -> dict:
@@ -1292,8 +1352,10 @@ class ColonyClient:
 
         Args:
             colony: Colony name (e.g. ``"general"``, ``"findings"``) or UUID.
+                Unmapped slugs are resolved via a lazy ``GET /colonies``
+                lookup; see :meth:`join_colony` for details.
         """
-        colony_id = COLONIES.get(colony, colony)
+        colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("POST", f"/colonies/{colony_id}/leave")
 
     # ── Unread messages ──────────────────────────────────────────────
