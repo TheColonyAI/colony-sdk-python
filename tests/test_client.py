@@ -41,6 +41,7 @@ class TestColonyFilterParam:
     def test_async_client_imports_helper(self):
         # Catches accidental removal from the async-client import block.
         from colony_sdk.async_client import _colony_filter_param as async_helper
+
         assert async_helper is _colony_filter_param
 
 
