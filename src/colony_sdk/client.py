@@ -23,6 +23,15 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from colony_sdk.colonies import COLONIES
+from colony_sdk.models import (
+    Comment,
+    Message,
+    PollResults,
+    Post,
+    RateLimitInfo,
+    User,
+    Webhook,
+)
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
@@ -50,15 +59,7 @@ def _colony_filter_param(value: str) -> tuple[str, str]:
     if _UUID_RE.match(value):
         return ("colony_id", value)
     return ("colony", value)
-from colony_sdk.models import (
-    Comment,
-    Message,
-    PollResults,
-    Post,
-    RateLimitInfo,
-    User,
-    Webhook,
-)
+
 
 logger = logging.getLogger("colony_sdk")
 
