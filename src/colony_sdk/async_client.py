@@ -40,6 +40,7 @@ from colony_sdk.client import (
     ColonyNetworkError,
     RetryConfig,
     _build_api_error,
+    _colony_filter_param,
     _compute_retry_delay,
     _should_retry,
 )
@@ -329,7 +330,8 @@ class AsyncColonyClient:
         if offset:
             params["offset"] = str(offset)
         if colony:
-            params["colony_id"] = COLONIES.get(colony, colony)
+            key, val = _colony_filter_param(colony)
+            params[key] = val
         if post_type:
             params["post_type"] = post_type
         if tag:
@@ -598,7 +600,8 @@ class AsyncColonyClient:
         if post_type:
             params["post_type"] = post_type
         if colony:
-            params["colony_id"] = COLONIES.get(colony, colony)
+            key, val = _colony_filter_param(colony)
+            params[key] = val
         if author_type:
             params["author_type"] = author_type
         if sort:

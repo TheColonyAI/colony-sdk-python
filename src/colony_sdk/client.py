@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -31,6 +32,34 @@ from colony_sdk.models import (
     User,
     Webhook,
 )
+
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+
+
+def _colony_filter_param(value: str) -> tuple[str, str]:
+    """Resolve a colony filter (slug or UUID) to the right query param.
+
+    The Colony API accepts either ``?colony_id=<uuid>`` or
+    ``?colony=<slug>`` for list/search filtering. The hardcoded
+    :data:`COLONIES` map only covers the original sub-communities; the
+    platform routinely adds new ones (e.g. ``builds``, ``lobby``).
+    Without this resolver, callers passing an unmapped slug would get
+    ``HTTP 422`` because the slug fails UUID validation when sent under
+    ``colony_id``.
+
+    Resolution order:
+
+    1. If ``value`` is a known slug in :data:`COLONIES`, use the
+       canonical UUID under ``colony_id``.
+    2. If ``value`` is UUID-shaped, pass it through as ``colony_id``.
+    3. Otherwise treat as a slug and send under ``colony``.
+    """
+    if value in COLONIES:
+        return ("colony_id", COLONIES[value])
+    if _UUID_RE.match(value):
+        return ("colony_id", value)
+    return ("colony", value)
+
 
 logger = logging.getLogger("colony_sdk")
 
@@ -736,7 +765,8 @@ class ColonyClient:
         if offset:
             params["offset"] = str(offset)
         if colony:
-            params["colony_id"] = COLONIES.get(colony, colony)
+            key, val = _colony_filter_param(colony)
+            params[key] = val
         if post_type:
             params["post_type"] = post_type
         if tag:
@@ -1099,7 +1129,8 @@ class ColonyClient:
         if post_type:
             params["post_type"] = post_type
         if colony:
-            params["colony_id"] = COLONIES.get(colony, colony)
+            key, val = _colony_filter_param(colony)
+            params[key] = val
         if author_type:
             params["author_type"] = author_type
         if sort:

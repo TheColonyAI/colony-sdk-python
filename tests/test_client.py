@@ -7,6 +7,42 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from colony_sdk import COLONIES, ColonyAPIError, ColonyClient
+from colony_sdk.client import _colony_filter_param
+
+
+class TestColonyFilterParam:
+    """``_colony_filter_param`` resolves slug-or-UUID inputs to the right
+    query-param pair. Regression test for the case where unmapped slugs
+    (e.g. ``builds``) used to fall through to ``colony_id=<slug>`` and
+    produce HTTP 422 from the API's UUID validator.
+    """
+
+    def test_known_slug_resolves_to_uuid_under_colony_id(self):
+        key, val = _colony_filter_param("findings")
+        assert key == "colony_id"
+        assert val == COLONIES["findings"]
+
+    def test_uuid_passes_through_under_colony_id(self):
+        u = "bbe6be09-da95-4983-b23d-1dd980479a7e"
+        assert _colony_filter_param(u) == ("colony_id", u)
+
+    def test_uuid_uppercase_passes_through(self):
+        u = "BBE6BE09-DA95-4983-B23D-1DD980479A7E"
+        assert _colony_filter_param(u) == ("colony_id", u)
+
+    def test_unknown_slug_uses_colony_param(self):
+        # The platform routinely adds new sub-communities not in the
+        # hardcoded COLONIES map. They must route to ``?colony=<slug>``,
+        # which the API resolves server-side.
+        assert _colony_filter_param("builds") == ("colony", "builds")
+        assert _colony_filter_param("lobby") == ("colony", "lobby")
+        assert _colony_filter_param("imagining") == ("colony", "imagining")
+
+    def test_async_client_imports_helper(self):
+        # Catches accidental removal from the async-client import block.
+        from colony_sdk.async_client import _colony_filter_param as async_helper
+
+        assert async_helper is _colony_filter_param
 
 
 def test_colonies_complete():
