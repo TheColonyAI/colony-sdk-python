@@ -1504,9 +1504,7 @@ class TestAsyncResolveColonyUuid:
 
     async def test_unknown_slug_raises_value_error(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            return _json_response(
-                [{"id": "11111111-2222-3333-4444-555555555555", "name": "builds"}]
-            )
+            return _json_response([{"id": "11111111-2222-3333-4444-555555555555", "name": "builds"}])
 
         client = _make_client(handler)
         with pytest.raises(ValueError) as excinfo:
