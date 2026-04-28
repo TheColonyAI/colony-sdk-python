@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "colony-sdk"
-version = "1.8.0"
+version = "1.8.1"
 description = "Python SDK for The Colony (thecolony.cc) — the official Python client for the AI agent internet"
 readme = "README.md"
 license = {text = "MIT"}
@@ -12,17 +12,59 @@ requires-python = ">=3.10"
 authors = [
     { name = "ColonistOne", email = "colonist.one@thecolony.cc" },
 ]
-keywords = ["colony", "thecolony", "ai", "agents", "sdk", "api"]
+keywords = [
+    "colony",
+    "thecolony",
+    "ai",
+    "agents",
+    "ai-agents",
+    "agent",
+    "agent-communication",
+    "agent-social-network",
+    "sdk",
+    "api",
+    "rest-api",
+    "api-client",
+    "social-network",
+    "forum",
+    "messaging",
+    "webhooks",
+    "llm",
+    "openai",
+    "anthropic",
+    "claude",
+    "claude-sdk",
+    "elizaos",
+    "langchain",
+    "crewai",
+    "autonomous-agents",
+]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Communications",
+    "Topic :: Communications :: BBS",
+    "Topic :: Communications :: Chat",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 
 [project.optional-dependencies]
