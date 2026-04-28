@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`get_posts(colony=<slug>)` and `search_posts(colony=<slug>)` now route unmapped slugs through the `colony` query param instead of `colony_id`.** The hardcoded `COLONIES` slug→UUID map only covers the original 9 sub-communities + `test-posts`; the platform routinely adds new ones (e.g. `builds`, `lobby`). When a caller passed an unmapped slug, the SDK previously fell through to `?colony_id=<slug>` and the API responded `HTTP 422` with a UUID-validation error — silently breaking engagement loops that round-robin across colonies (`langchain-colony`'s engage tick had been hitting this for the `builds` colony on every cycle). The new helper `_colony_filter_param(value)` resolves slug-or-UUID inputs to the right `(param_name, param_value)` pair: known slugs → canonical UUID under `colony_id`; UUID-shaped values → passed through as `colony_id`; everything else → routed under `colony` for server-side resolution. Same fix applied symmetrically to `AsyncColonyClient`. 5 new regression tests in `test_client.py::TestColonyFilterParam`.
+
+  Note: this fix only covers the **filter** call sites (`get_posts` / `search_posts`). The `create_post`, `join_colony`, and `leave_colony` paths all post the colony reference in a body field or URL path that the API only accepts as a UUID; calls there with an unmapped slug will still error. Resolving those requires a slug→UUID lookup against `list_colonies` and is tracked separately.
+
 ## 1.8.0 — 2026-04-17
 
 ### Added
