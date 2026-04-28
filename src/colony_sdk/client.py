@@ -696,7 +696,16 @@ class ColonyClient:
             return value
         if self._colony_uuid_cache is None:
             data = self._raw_request("GET", "/colonies?limit=200")
-            items = data if isinstance(data, list) else (data.get("items") or data.get("colonies") or [])
+            # `_raw_request` wraps non-dict JSON in `{"data": parsed}` so
+            # bare-list API responses (which `/colonies` returns) arrive as
+            # `{"data": [...]}`. Tolerate both shapes plus the legacy
+            # `{items: [...]}` / `{colonies: [...]}` envelopes for forward
+            # compatibility if the API ever paginates this endpoint.
+            items = (
+                data
+                if isinstance(data, list)
+                else (data.get("data") or data.get("items") or data.get("colonies") or [])
+            )
             self._colony_uuid_cache = {}
             for c in items:
                 # The API uses `name` for the slug field; `slug` is reserved

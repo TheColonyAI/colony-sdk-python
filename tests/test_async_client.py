@@ -1432,3 +1432,91 @@ class TestAsyncIterComments:
         comments = await client.get_all_comments("p1")
         assert isinstance(comments, list)
         assert len(comments) == 21
+
+
+# ---------------------------------------------------------------------------
+# _resolve_colony_uuid (async mirror of test_client.py::TestResolveColonyUuid)
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncResolveColonyUuid:
+    """Async mirror of TestResolveColonyUuid in test_client.py.
+
+    Verifies the async resolver's lazy-cache + ValueError contract uses the
+    real httpx mock transport, not a method-replacement stub — so this also
+    exercises the JWT-bypassed `_raw_request` path through the resolver.
+    """
+
+    async def test_known_slug_no_request(self) -> None:
+        # If the resolver hits the network for a known slug, the mock would
+        # see at least one request. Counting calls catches that regression.
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            return _json_response([])
+
+        client = _make_client(handler)
+        assert await client._resolve_colony_uuid("findings") == COLONIES["findings"]
+        assert calls == [], f"unexpected requests: {calls}"
+
+    async def test_uuid_passthrough_no_request(self) -> None:
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            return _json_response([])
+
+        u = "bbe6be09-da95-4983-b23d-1dd980479a7e"
+        client = _make_client(handler)
+        assert await client._resolve_colony_uuid(u) == u
+        assert calls == []
+
+    async def test_unknown_slug_resolves_via_list_colonies(self) -> None:
+        builds_uuid = "11111111-2222-3333-4444-555555555555"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/api/v1/colonies"
+            return _json_response(
+                [
+                    {"id": builds_uuid, "name": "builds"},
+                    {"id": "99999999-9999-9999-9999-999999999999", "name": "lobby"},
+                ]
+            )
+
+        client = _make_client(handler)
+        assert await client._resolve_colony_uuid("builds") == builds_uuid
+
+    async def test_cache_reused_on_subsequent_calls(self) -> None:
+        builds_uuid = "11111111-2222-3333-4444-555555555555"
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            return _json_response([{"id": builds_uuid, "name": "builds"}])
+
+        client = _make_client(handler)
+        await client._resolve_colony_uuid("builds")
+        await client._resolve_colony_uuid("builds")
+        await client._resolve_colony_uuid("builds")
+        assert request_count == 1, f"list_colonies should be called once, got {request_count}"
+
+    async def test_unknown_slug_raises_value_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                [{"id": "11111111-2222-3333-4444-555555555555", "name": "builds"}]
+            )
+
+        client = _make_client(handler)
+        with pytest.raises(ValueError) as excinfo:
+            await client._resolve_colony_uuid("not-a-real-slug")
+        assert "not-a-real-slug" in str(excinfo.value)
+        assert "Check for typos" in str(excinfo.value)
+
+    async def test_dict_envelope_response_shape(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"items": [{"id": "abc-123", "name": "experimental"}]})
+
+        client = _make_client(handler)
+        assert await client._resolve_colony_uuid("experimental") == "abc-123"

@@ -122,7 +122,13 @@ class AsyncColonyClient:
             return value
         if self._colony_uuid_cache is None:
             data = await self._raw_request("GET", "/colonies?limit=200")
-            items = data if isinstance(data, list) else (data.get("items") or data.get("colonies") or [])
+            # See ColonyClient._resolve_colony_uuid for the response-shape
+            # rationale. _raw_request wraps bare-list JSON in {"data": [...]}.
+            items = (
+                data
+                if isinstance(data, list)
+                else (data.get("data") or data.get("items") or data.get("colonies") or [])
+            )
             self._colony_uuid_cache = {}
             for c in items:
                 key = c.get("name") or c.get("slug")
