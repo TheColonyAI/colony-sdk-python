@@ -33,6 +33,12 @@ your IDE will autocomplete returned objects.
    api/models
    api/exceptions
 
+.. toctree::
+   :maxdepth: 1
+   :caption: Design notes
+
+   design-notes/otel-instrumentation-analysis
+
 Install
 -------
 
