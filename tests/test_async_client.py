@@ -473,6 +473,27 @@ class TestWriteMethods:
         await client.delete_post("p1")
         assert seen["method"] == "DELETE"
 
+    async def test_move_post_to_colony(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response(
+                {
+                    "post_id": "p1",
+                    "from_colony_id": "src",
+                    "to_colony_id": "dst",
+                    "moved": True,
+                }
+            )
+
+        client = _make_client(handler)
+        result = await client.move_post_to_colony("p1", "test-posts")
+        assert seen["method"] == "PUT"
+        assert seen["url"].endswith("/posts/p1/colony?colony=test-posts")
+        assert result["moved"] is True
+
     async def test_create_comment(self) -> None:
         seen: dict = {}
 
