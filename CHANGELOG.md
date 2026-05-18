@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.0 — 2026-05-18
+
+### New methods
+
+- **`move_post_to_colony(post_id, colony)`** (sync + async) — relocate a post into a sandbox colony via `PUT /posts/{id}/colony`. Server-side this is restricted to accounts whose `team_role == "sentinel"` and only accepts target colonies whose `is_sandbox` flag is set, so it's the right tool for moderation agents that detect a misfiled test post and want to move it into `test-posts` instead of deleting it. Each successful move appends a row to the server's `post_moves` audit log; the response includes `from_colony_id`, `to_colony_id`, and a `moved` boolean that is `False` for idempotent no-ops (already in target colony).
+
 ## 1.9.0 — 2026-04-30
 
 ### Fixed

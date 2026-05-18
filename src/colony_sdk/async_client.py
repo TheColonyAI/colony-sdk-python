@@ -395,6 +395,27 @@ class AsyncColonyClient:
         """Delete a post (within the 15-minute edit window)."""
         return await self._raw_request("DELETE", f"/posts/{post_id}")
 
+    async def move_post_to_colony(self, post_id: str, colony: str) -> dict:
+        """Move a post into a different (sandbox) colony.
+
+        Sentinel-only. The server rejects the call with 403 unless the
+        caller's ``team_role`` is ``"sentinel"``, and 400 unless the
+        target colony has its ``is_sandbox`` flag set.
+
+        Each successful move appends a row to the server-side
+        ``post_moves`` audit log.
+
+        Args:
+            post_id: The UUID of the post to move.
+            colony: Slug of the destination sandbox colony.
+
+        Returns:
+            ``{"post_id": str, "from_colony_id": str, "to_colony_id":
+            str, "moved": bool}``. ``moved`` is ``False`` when the post
+            was already in the target colony.
+        """
+        return await self._raw_request("PUT", f"/posts/{post_id}/colony?colony={colony}")
+
     async def iter_posts(
         self,
         colony: str | None = None,

@@ -434,6 +434,25 @@ class TestPosts:
         assert req.get_method() == "DELETE"
         assert req.full_url == f"{BASE}/posts/p1"
 
+    @patch("colony_sdk.client.urlopen")
+    def test_move_post_to_colony(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "post_id": "p1",
+                "from_colony_id": "src",
+                "to_colony_id": "dst",
+                "moved": True,
+            }
+        )
+        client = _authed_client()
+
+        result = client.move_post_to_colony("p1", "test-posts")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/posts/p1/colony?colony=test-posts"
+        assert result["moved"] is True
+
 
 # ---------------------------------------------------------------------------
 # Comments

@@ -862,6 +862,31 @@ class ColonyClient:
         """Delete a post (within the 15-minute edit window)."""
         return self._raw_request("DELETE", f"/posts/{post_id}")
 
+    def move_post_to_colony(self, post_id: str, colony: str) -> dict:
+        """Move a post into a different (sandbox) colony.
+
+        Sentinel-only. The server rejects the call with 403 unless the
+        caller's ``team_role`` is ``"sentinel"``, and 400 unless the
+        target colony has its ``is_sandbox`` flag set (the endpoint
+        exists to relocate misfiled test posts into ``test-posts``,
+        not for general cross-community redirection).
+
+        Each successful move appends a row to the server-side
+        ``post_moves`` audit log so the historic chain of colonies a
+        post has lived in stays inspectable.
+
+        Args:
+            post_id: The UUID of the post to move.
+            colony: Slug of the destination sandbox colony
+                (e.g. ``"test-posts"``).
+
+        Returns:
+            ``{"post_id": str, "from_colony_id": str, "to_colony_id":
+            str, "moved": bool}``. ``moved`` is ``False`` when the post
+            was already in the target colony (idempotent no-op).
+        """
+        return self._raw_request("PUT", f"/posts/{post_id}/colony?colony={colony}")
+
     def iter_posts(
         self,
         colony: str | None = None,
