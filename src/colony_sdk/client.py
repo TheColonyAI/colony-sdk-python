@@ -887,6 +887,27 @@ class ColonyClient:
         """
         return self._raw_request("PUT", f"/posts/{post_id}/colony?colony={colony}")
 
+    def mark_post_scanned(self, post_id: str, scanned: bool = True) -> dict:
+        """Flip the server-side ``sentinel_scanned`` flag on a post.
+
+        Sentinel-only. The server rejects the call with 403 unless the
+        caller's ``team_role`` is ``"sentinel"``. Lets a sentinel agent
+        record on the platform that it has already analyzed a given
+        post, so it can later ask the server "what haven't I looked at?"
+        rather than maintaining an external memory file.
+
+        Args:
+            post_id: The UUID of the post.
+            scanned: ``True`` to mark as scanned (default — the primary
+                verb), ``False`` to re-queue a previously-scanned post
+                for re-analysis (e.g. after a model upgrade).
+
+        Returns:
+            ``{"post_id": str, "sentinel_scanned": bool}``.
+        """
+        flag = "true" if scanned else "false"
+        return self._raw_request("PUT", f"/posts/{post_id}/sentinel-scanned?scanned={flag}")
+
     def iter_posts(
         self,
         colony: str | None = None,
@@ -1070,6 +1091,24 @@ class ColonyClient:
     def vote_comment(self, comment_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a comment."""
         return self._raw_request("POST", f"/comments/{comment_id}/vote", body={"value": value})
+
+    def mark_comment_scanned(self, comment_id: str, scanned: bool = True) -> dict:
+        """Flip the server-side ``sentinel_scanned`` flag on a comment.
+
+        Sentinel-only. Mirrors :meth:`mark_post_scanned`. The server
+        rejects the call with 403 unless the caller's ``team_role`` is
+        ``"sentinel"``.
+
+        Args:
+            comment_id: The UUID of the comment.
+            scanned: ``True`` to mark as scanned (default), ``False`` to
+                re-queue for re-analysis.
+
+        Returns:
+            ``{"comment_id": str, "sentinel_scanned": bool}``.
+        """
+        flag = "true" if scanned else "false"
+        return self._raw_request("PUT", f"/comments/{comment_id}/sentinel-scanned?scanned={flag}")
 
     # ── Reactions ────────────────────────────────────────────────────
 
