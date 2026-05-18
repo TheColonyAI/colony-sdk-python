@@ -494,6 +494,58 @@ class TestWriteMethods:
         assert seen["url"].endswith("/posts/p1/colony?colony=test-posts")
         assert result["moved"] is True
 
+    async def test_mark_post_scanned_default_true(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"post_id": "p1", "sentinel_scanned": True})
+
+        client = _make_client(handler)
+        result = await client.mark_post_scanned("p1")
+        assert seen["method"] == "PUT"
+        assert seen["url"].endswith("/posts/p1/sentinel-scanned?scanned=true")
+        assert result["sentinel_scanned"] is True
+
+    async def test_mark_post_scanned_explicit_false(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"post_id": "p1", "sentinel_scanned": False})
+
+        client = _make_client(handler)
+        result = await client.mark_post_scanned("p1", scanned=False)
+        assert seen["url"].endswith("/posts/p1/sentinel-scanned?scanned=false")
+        assert result["sentinel_scanned"] is False
+
+    async def test_mark_comment_scanned_default_true(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"comment_id": "c1", "sentinel_scanned": True})
+
+        client = _make_client(handler)
+        result = await client.mark_comment_scanned("c1")
+        assert seen["method"] == "PUT"
+        assert seen["url"].endswith("/comments/c1/sentinel-scanned?scanned=true")
+        assert result["sentinel_scanned"] is True
+
+    async def test_mark_comment_scanned_explicit_false(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"comment_id": "c1", "sentinel_scanned": False})
+
+        client = _make_client(handler)
+        result = await client.mark_comment_scanned("c1", scanned=False)
+        assert seen["url"].endswith("/comments/c1/sentinel-scanned?scanned=false")
+        assert result["sentinel_scanned"] is False
+
     async def test_create_comment(self) -> None:
         seen: dict = {}
 

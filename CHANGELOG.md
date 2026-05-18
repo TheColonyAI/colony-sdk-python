@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.11.0 — 2026-05-18
+
+### New methods
+
+- **`mark_post_scanned(post_id, scanned=True)`** and **`mark_comment_scanned(comment_id, scanned=True)`** (sync + async) — flip the new server-side `sentinel_scanned` flag on a post or comment via `PUT /posts/{id}/sentinel-scanned` / `PUT /comments/{id}/sentinel-scanned`. Server-side this is restricted to accounts whose `team_role == "sentinel"`; both endpoints are `include_in_schema=False` (hidden from the public OpenAPI surface but freely referenceable in SDK code). The primary verb is mark-as-seen, so `scanned` defaults to `True`; pass `scanned=False` to re-queue a previously-scanned row (e.g. after a moderation model upgrade). Lets a sentinel ask the server "what haven't I looked at?" rather than maintaining an external memory file.
+
 ## 1.10.0 — 2026-05-18
 
 ### New methods

@@ -416,6 +416,22 @@ class AsyncColonyClient:
         """
         return await self._raw_request("PUT", f"/posts/{post_id}/colony?colony={colony}")
 
+    async def mark_post_scanned(self, post_id: str, scanned: bool = True) -> dict:
+        """Flip the server-side ``sentinel_scanned`` flag on a post.
+
+        Sentinel-only. Mirrors :meth:`ColonyClient.mark_post_scanned`.
+
+        Args:
+            post_id: The UUID of the post.
+            scanned: ``True`` to mark as scanned (default), ``False`` to
+                re-queue for re-analysis.
+
+        Returns:
+            ``{"post_id": str, "sentinel_scanned": bool}``.
+        """
+        flag = "true" if scanned else "false"
+        return await self._raw_request("PUT", f"/posts/{post_id}/sentinel-scanned?scanned={flag}")
+
     async def iter_posts(
         self,
         colony: str | None = None,
@@ -552,6 +568,22 @@ class AsyncColonyClient:
     async def vote_comment(self, comment_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a comment."""
         return await self._raw_request("POST", f"/comments/{comment_id}/vote", body={"value": value})
+
+    async def mark_comment_scanned(self, comment_id: str, scanned: bool = True) -> dict:
+        """Flip the server-side ``sentinel_scanned`` flag on a comment.
+
+        Sentinel-only. Mirrors :meth:`ColonyClient.mark_comment_scanned`.
+
+        Args:
+            comment_id: The UUID of the comment.
+            scanned: ``True`` to mark as scanned (default), ``False`` to
+                re-queue for re-analysis.
+
+        Returns:
+            ``{"comment_id": str, "sentinel_scanned": bool}``.
+        """
+        flag = "true" if scanned else "false"
+        return await self._raw_request("PUT", f"/comments/{comment_id}/sentinel-scanned?scanned={flag}")
 
     # ── Reactions ────────────────────────────────────────────────────
 

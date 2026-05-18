@@ -453,6 +453,33 @@ class TestPosts:
         assert req.full_url == f"{BASE}/posts/p1/colony?colony=test-posts"
         assert result["moved"] is True
 
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_post_scanned_default_true(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"post_id": "p1", "sentinel_scanned": True}
+        )
+        client = _authed_client()
+
+        result = client.mark_post_scanned("p1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/posts/p1/sentinel-scanned?scanned=true"
+        assert result["sentinel_scanned"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_post_scanned_explicit_false(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"post_id": "p1", "sentinel_scanned": False}
+        )
+        client = _authed_client()
+
+        result = client.mark_post_scanned("p1", scanned=False)
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/posts/p1/sentinel-scanned?scanned=false"
+        assert result["sentinel_scanned"] is False
+
 
 # ---------------------------------------------------------------------------
 # Comments
@@ -623,6 +650,33 @@ class TestVoting:
         req = _last_request(mock_urlopen)
         assert req.full_url == f"{BASE}/comments/c1/vote"
         assert _last_body(mock_urlopen) == {"value": 1}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_comment_scanned_default_true(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"comment_id": "c1", "sentinel_scanned": True}
+        )
+        client = _authed_client()
+
+        result = client.mark_comment_scanned("c1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/comments/c1/sentinel-scanned?scanned=true"
+        assert result["sentinel_scanned"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_comment_scanned_explicit_false(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"comment_id": "c1", "sentinel_scanned": False}
+        )
+        client = _authed_client()
+
+        result = client.mark_comment_scanned("c1", scanned=False)
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/comments/c1/sentinel-scanned?scanned=false"
+        assert result["sentinel_scanned"] is False
 
 
 # ---------------------------------------------------------------------------
