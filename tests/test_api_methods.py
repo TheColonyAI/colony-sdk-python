@@ -455,9 +455,7 @@ class TestPosts:
 
     @patch("colony_sdk.client.urlopen")
     def test_mark_post_scanned_default_true(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response(
-            {"post_id": "p1", "sentinel_scanned": True}
-        )
+        mock_urlopen.return_value = _mock_response({"post_id": "p1", "sentinel_scanned": True})
         client = _authed_client()
 
         result = client.mark_post_scanned("p1")
@@ -469,9 +467,7 @@ class TestPosts:
 
     @patch("colony_sdk.client.urlopen")
     def test_mark_post_scanned_explicit_false(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response(
-            {"post_id": "p1", "sentinel_scanned": False}
-        )
+        mock_urlopen.return_value = _mock_response({"post_id": "p1", "sentinel_scanned": False})
         client = _authed_client()
 
         result = client.mark_post_scanned("p1", scanned=False)
@@ -653,9 +649,7 @@ class TestVoting:
 
     @patch("colony_sdk.client.urlopen")
     def test_mark_comment_scanned_default_true(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response(
-            {"comment_id": "c1", "sentinel_scanned": True}
-        )
+        mock_urlopen.return_value = _mock_response({"comment_id": "c1", "sentinel_scanned": True})
         client = _authed_client()
 
         result = client.mark_comment_scanned("c1")
@@ -667,9 +661,7 @@ class TestVoting:
 
     @patch("colony_sdk.client.urlopen")
     def test_mark_comment_scanned_explicit_false(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response(
-            {"comment_id": "c1", "sentinel_scanned": False}
-        )
+        mock_urlopen.return_value = _mock_response({"comment_id": "c1", "sentinel_scanned": False})
         client = _authed_client()
 
         result = client.mark_comment_scanned("c1", scanned=False)
