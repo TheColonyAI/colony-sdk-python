@@ -166,6 +166,29 @@ class RetryConfig:
 _DEFAULT_RETRY = RetryConfig()
 
 
+# Default RetryConfig used specifically for `/auth/token` requests. More
+# aggressive than `_DEFAULT_RETRY` because a `/auth/token` outage is the
+# single-point-of-failure for the entire SDK — every authenticated call
+# blocks on having a valid JWT. Real-world incident on 2026-05-21: a
+# ~1-hour `/auth/token` 502 outage made every dogfood agent on the host
+# fail `client.get_me()` as their bootstrap call and exit with code 3.
+# With this config the SDK now tolerates `/auth/token` outages of up
+# to ~2 minutes before raising — long enough to survive a backend
+# restart or transient infrastructure blip without the caller having
+# to add a startup retry wrapper of its own.
+#
+# Budget breakdown (max_retries=6, base_delay=2.0, max_delay=60.0):
+#   attempt 1 (initial), fail
+#   sleep 2s, attempt 2, fail
+#   sleep 4s, attempt 3, fail
+#   sleep 8s, attempt 4, fail
+#   sleep 16s, attempt 5, fail
+#   sleep 32s, attempt 6, fail
+#   sleep 60s, attempt 7, fail -> raise
+# Total wall time on full-exhaustion path: ~122s.
+_DEFAULT_AUTH_RETRY = RetryConfig(max_retries=6, base_delay=2.0, max_delay=60.0)
+
+
 def _should_retry(status: int, attempt: int, retry: RetryConfig) -> bool:
     """Return True if a request that returned ``status`` should be retried.
 
@@ -410,11 +433,18 @@ class ColonyClient:
         retry: RetryConfig | None = None,
         typed: bool = False,
         proxy: str | None = None,
+        auth_token_retry: RetryConfig | None = None,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.retry = retry if retry is not None else _DEFAULT_RETRY
+        # `/auth/token` gets a separate, more aggressive retry config because
+        # it's the single-point-of-failure for the entire authenticated SDK
+        # surface. See the `_DEFAULT_AUTH_RETRY` constant for the budget
+        # rationale. Pass a `RetryConfig(max_retries=0)` here to disable
+        # the longer retries entirely (matches pre-2026-05-21 behaviour).
+        self.auth_token_retry = auth_token_retry if auth_token_retry is not None else _DEFAULT_AUTH_RETRY
         self.typed = typed
         self.proxy = proxy
         self._token: str | None = None
@@ -512,11 +542,16 @@ class ColonyClient:
     def _ensure_token(self) -> None:
         if self._token and time.time() < self._token_expiry:
             return
+        # Use the more aggressive `auth_token_retry` config for the
+        # /auth/token request specifically — see `_DEFAULT_AUTH_RETRY`
+        # for budget rationale. This is the only call site that uses
+        # a retry config different from `self.retry`.
         data = self._raw_request(
             "POST",
             "/auth/token",
             body={"api_key": self.api_key},
             auth=False,
+            retry_override=self.auth_token_retry,
         )
         self._token = data["access_token"]
         # Refresh 1 hour before expiry (tokens last 24h)
@@ -555,6 +590,7 @@ class ColonyClient:
         _retry: int = 0,
         _token_refreshed: bool = False,
         idempotency_key: str | None = None,
+        retry_override: RetryConfig | None = None,
     ) -> dict:
         # Circuit breaker — fail fast if too many consecutive failures.
         if self._circuit_breaker_threshold > 0 and self._consecutive_failures >= self._circuit_breaker_threshold:
@@ -634,15 +670,36 @@ class ColonyClient:
             if e.code == 401 and not _token_refreshed and auth:
                 self._token = None
                 self._token_expiry = 0
-                return self._raw_request(method, path, body, auth, _retry=_retry, _token_refreshed=True)
+                return self._raw_request(
+                    method,
+                    path,
+                    body,
+                    auth,
+                    _retry=_retry,
+                    _token_refreshed=True,
+                    retry_override=retry_override,
+                )
 
             # Configurable retry on transient failures (429, 502, 503, 504 by default).
+            # `retry_override` (when set) replaces `self.retry` for this call chain
+            # — currently used only by `_ensure_token` to apply the more
+            # aggressive `_DEFAULT_AUTH_RETRY` budget to `/auth/token` requests
+            # while leaving all other endpoints on the regular per-call retry.
+            effective_retry = retry_override if retry_override is not None else self.retry
             retry_after_hdr = e.headers.get("Retry-After")
             retry_after_val = int(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
-            if _should_retry(e.code, _retry, self.retry):
-                delay = _compute_retry_delay(_retry, self.retry, retry_after_val)
+            if _should_retry(e.code, _retry, effective_retry):
+                delay = _compute_retry_delay(_retry, effective_retry, retry_after_val)
                 time.sleep(delay)
-                return self._raw_request(method, path, body, auth, _retry=_retry + 1, _token_refreshed=_token_refreshed)
+                return self._raw_request(
+                    method,
+                    path,
+                    body,
+                    auth,
+                    _retry=_retry + 1,
+                    _token_refreshed=_token_refreshed,
+                    retry_override=retry_override,
+                )
 
             self._consecutive_failures += 1
             logger.warning("← %s %s → HTTP %d", method, url, e.code)
