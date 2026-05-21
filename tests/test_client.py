@@ -402,3 +402,200 @@ class TestReturnTypeAnnotations:
                 f"AsyncColonyClient.{name} return annotation is {sig.return_annotation!r}, "
                 "expected 'dict' (see TestReturnTypeAnnotations docstring)."
             )
+
+
+class TestAuthTokenRetry:
+    """When `/auth/token` returns transient 5xx/network errors, the SDK
+    now retries with a separately-configurable, more aggressive budget
+    than the per-call retry config. This closes the failure mode from
+    the 2026-05-21 incident where a ~1-hour `/auth/token` 502 outage
+    bricked every dogfood agent (their bootstrap `client.get_me()` call
+    triggered `_ensure_token`, which gave up after the default 3
+    attempts in a few seconds and exited with code 3).
+
+    The X-API-Key fallback I initially proposed for this case turned out
+    to be based on a false premise — the Colony backend does NOT accept
+    X-API-Key on authenticated endpoints. The correct fix is to make
+    `/auth/token` itself more retry-tolerant.
+    """
+
+    def _client(self, **overrides):
+        # Disable sleep so tests don't actually wait the exponential backoff.
+        # Tests use the real `_compute_retry_delay` logic but skip the sleep.
+        from colony_sdk import RetryConfig
+
+        kwargs = {"api_key": "col_test", "retry": RetryConfig(max_retries=0)}
+        kwargs.update(overrides)
+        return ColonyClient(**kwargs)
+
+    def _patch(self, monkeypatch, responses):
+        """Mock urlopen + time.sleep. Returns list of recorded calls."""
+        import json as _json
+        from io import BytesIO
+        from urllib.error import HTTPError, URLError
+
+        calls = []
+        sleeps = []
+        iter_responses = iter(responses)
+
+        class _FakeResponse:
+            def __init__(self, status, body_bytes):
+                self.status = status
+                self._body = body_bytes
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return self._body
+
+            def getheaders(self):
+                return []
+
+        def _fake_urlopen(req, timeout=None):
+            calls.append({"url": req.full_url, "method": req.get_method()})
+            kind, *rest = next(iter_responses)
+            if kind == "ok":
+                status, body = rest
+                return _FakeResponse(status, _json.dumps(body).encode())
+            if kind == "http_error":
+                status, body = rest
+                body_bytes = body.encode() if isinstance(body, str) else body
+                raise HTTPError(req.full_url, status, "fake", {}, BytesIO(body_bytes))
+            if kind == "url_error":
+                (reason,) = rest
+                raise URLError(reason)
+            raise AssertionError(f"unknown response kind: {kind}")
+
+        def _fake_sleep(seconds):
+            sleeps.append(seconds)
+
+        monkeypatch.setattr("colony_sdk.client.urlopen", _fake_urlopen)
+        monkeypatch.setattr("colony_sdk.client.time.sleep", _fake_sleep)
+        return calls, sleeps
+
+    def test_default_auth_token_retry_is_more_aggressive_than_call_retry(self):
+        """Sanity: the default auth_token_retry has higher max_retries
+        than the default per-call retry."""
+        c = ColonyClient("col_test")
+        assert c.auth_token_retry.max_retries > c.retry.max_retries
+        assert c.auth_token_retry.max_retries >= 6
+
+    def test_auth_token_502_burst_recovers(self, monkeypatch):
+        """`/auth/token` returns 502 three times then succeeds — the SDK
+        rides through the burst and the original call completes."""
+        c = self._client()
+        calls, sleeps = self._patch(
+            monkeypatch,
+            [
+                ("http_error", 502, '{"detail":"bad gateway"}'),  # /auth/token attempt 1
+                ("http_error", 502, '{"detail":"bad gateway"}'),  # /auth/token attempt 2
+                ("http_error", 502, '{"detail":"bad gateway"}'),  # /auth/token attempt 3
+                ("ok", 200, {"access_token": "jwt_now", "expires_in": 86400}),  # /auth/token attempt 4: success
+                ("ok", 200, {"username": "colonist-one"}),  # /users/me
+            ],
+        )
+        result = c.get_me()
+        assert result["username"] == "colonist-one"
+        # 4 /auth/token attempts + 1 /users/me
+        assert sum(1 for x in calls if x["url"].endswith("/auth/token")) == 4
+        # Sleeps between retries: 3 (after each of the 3 failures)
+        assert len(sleeps) == 3
+        # Sleeps follow exponential growth from the auth_token_retry config:
+        # base_delay=2.0 * 2^attempt -> 2, 4, 8
+        assert sleeps == [2.0, 4.0, 8.0]
+
+    def test_auth_token_always_5xx_eventually_raises(self, monkeypatch):
+        """Once the auth_token_retry budget is exhausted, the SDK raises
+        ColonyServerError (does not loop forever)."""
+        from colony_sdk import ColonyServerError, RetryConfig
+
+        # Tight budget for fast test
+        c = self._client(auth_token_retry=RetryConfig(max_retries=2, base_delay=0.1, max_delay=0.1))
+        self._patch(
+            monkeypatch,
+            [
+                ("http_error", 502, '{"detail":"bad gateway"}'),
+                ("http_error", 502, '{"detail":"bad gateway"}'),
+                ("http_error", 502, '{"detail":"bad gateway"}'),
+            ],
+        )
+        try:
+            c.get_me()
+            raise AssertionError("expected ColonyServerError")
+        except ColonyServerError:
+            pass
+
+    def test_auth_token_retry_zero_preserves_legacy_behaviour(self, monkeypatch):
+        """`auth_token_retry=RetryConfig(max_retries=0)` restores the
+        pre-2026-05-21 single-attempt behaviour for `/auth/token`."""
+        from colony_sdk import ColonyServerError, RetryConfig
+
+        c = self._client(auth_token_retry=RetryConfig(max_retries=0))
+        calls, _ = self._patch(
+            monkeypatch,
+            [
+                ("http_error", 502, '{"detail":"bad gateway"}'),
+            ],
+        )
+        try:
+            c.get_me()
+            raise AssertionError("expected ColonyServerError")
+        except ColonyServerError:
+            pass
+        # Only ONE /auth/token attempt — legacy behaviour.
+        assert sum(1 for x in calls if x["url"].endswith("/auth/token")) == 1
+
+    def test_aggressive_budget_applies_only_to_auth_token(self, monkeypatch):
+        """A 502 on a NON-/auth/token endpoint must use `self.retry`,
+        NOT `self.auth_token_retry`. (Avoids accidentally turning every
+        endpoint into a long-running call.)"""
+        from colony_sdk import ColonyServerError, RetryConfig
+
+        # Generous auth_token_retry, but stingy regular retry
+        c = self._client(
+            retry=RetryConfig(max_retries=0),
+            auth_token_retry=RetryConfig(max_retries=6),
+        )
+        # Prime the token so /auth/token isn't called
+        import time as _time
+
+        c._token = "fake_jwt"
+        c._token_expiry = _time.time() + 86400
+        calls, _ = self._patch(
+            monkeypatch,
+            [
+                ("http_error", 502, '{"detail":"bad gateway"}'),  # /users/me, retry=0 -> raises immediately
+            ],
+        )
+        try:
+            c.get_me()
+            raise AssertionError("expected ColonyServerError")
+        except ColonyServerError:
+            pass
+        # Exactly one /users/me attempt; the more-aggressive auth_token_retry
+        # didn't sneak into a non-/auth/token endpoint.
+        users_me_calls = [x for x in calls if "/users/me" in x["url"]]
+        assert len(users_me_calls) == 1
+
+    def test_url_error_on_auth_token_also_retries(self, monkeypatch):
+        """Network failures (DNS / connection refused) on `/auth/token`
+        are NOT in `retry_on` by default, so the SDK currently raises
+        immediately on the first URLError. This test documents that
+        contract — opening a separate issue if we ever want URLError to
+        be part of the retry budget."""
+        c = self._client()
+        self._patch(
+            monkeypatch,
+            [
+                ("url_error", "Temporary failure in name resolution"),
+            ],
+        )
+        try:
+            c.get_me()
+            raise AssertionError("expected ColonyNetworkError")
+        except Exception as e:
+            assert "network error" in str(e).lower()
