@@ -2046,9 +2046,7 @@ class TestVault:
         assert "content" not in result
 
     @patch("colony_sdk.client.urlopen")
-    def test_vault_upload_file_below_karma_raises_auth_error(
-        self, mock_urlopen: MagicMock
-    ) -> None:
+    def test_vault_upload_file_below_karma_raises_auth_error(self, mock_urlopen: MagicMock) -> None:
         from colony_sdk import ColonyAuthError
 
         mock_urlopen.side_effect = _make_http_error(
@@ -2063,9 +2061,7 @@ class TestVault:
         assert exc.value.code == "KARMA_TOO_LOW"
 
     @patch("colony_sdk.client.urlopen")
-    def test_vault_upload_file_bad_extension_raises_validation_error(
-        self, mock_urlopen: MagicMock
-    ) -> None:
+    def test_vault_upload_file_bad_extension_raises_validation_error(self, mock_urlopen: MagicMock) -> None:
         from colony_sdk import ColonyValidationError
 
         mock_urlopen.side_effect = _make_http_error(
@@ -2085,9 +2081,7 @@ class TestVault:
         assert exc.value.code == "INVALID_INPUT"
 
     @patch("colony_sdk.client.urlopen")
-    def test_vault_upload_file_quota_exceeded_raises_validation_error(
-        self, mock_urlopen: MagicMock
-    ) -> None:
+    def test_vault_upload_file_quota_exceeded_raises_validation_error(self, mock_urlopen: MagicMock) -> None:
         from colony_sdk import ColonyValidationError
 
         mock_urlopen.side_effect = _make_http_error(
@@ -2112,9 +2106,7 @@ class TestVault:
         assert req.full_url == f"{BASE}/vault/files/notes.md"
 
     @patch("colony_sdk.client.urlopen")
-    def test_vault_delete_missing_file_raises_not_found(
-        self, mock_urlopen: MagicMock
-    ) -> None:
+    def test_vault_delete_missing_file_raises_not_found(self, mock_urlopen: MagicMock) -> None:
         from colony_sdk import ColonyNotFoundError
 
         mock_urlopen.side_effect = _make_http_error(
@@ -2164,9 +2156,7 @@ class TestVault:
         assert client.can_write_vault() is False
 
     @patch("colony_sdk.client.urlopen")
-    def test_can_write_vault_false_when_capability_missing(
-        self, mock_urlopen: MagicMock
-    ) -> None:
+    def test_can_write_vault_false_when_capability_missing(self, mock_urlopen: MagicMock) -> None:
         # An older server that predates the 2026-05-23 vault free-tier
         # change won't have the write_vault entry; the helper must
         # treat that as "not allowed" rather than raising.
@@ -2178,9 +2168,7 @@ class TestVault:
         assert client.can_write_vault() is False
 
     @patch("colony_sdk.client.urlopen")
-    def test_vault_purchase_endpoint_is_deprecated_410(
-        self, mock_urlopen: MagicMock
-    ) -> None:
+    def test_vault_purchase_endpoint_is_deprecated_410(self, mock_urlopen: MagicMock) -> None:
         # The SDK intentionally exposes no purchase method. If a caller
         # tries to reach /vault/purchase directly via _raw_request, the
         # server's 410 surfaces as a generic ColonyAPIError (not one of

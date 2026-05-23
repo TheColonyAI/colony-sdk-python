@@ -1895,9 +1895,7 @@ class TestAsyncVault:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 403,
-                content=json.dumps(
-                    {"detail": {"message": "Karma 7 below 10.", "code": "KARMA_TOO_LOW"}}
-                ).encode(),
+                content=json.dumps({"detail": {"message": "Karma 7 below 10.", "code": "KARMA_TOO_LOW"}}).encode(),
             )
 
         client = _make_client(handler)

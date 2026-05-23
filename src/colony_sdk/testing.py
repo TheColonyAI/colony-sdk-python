@@ -261,9 +261,7 @@ class MockColonyClient:
         return self._respond("vault_get_file", {"filename": filename})
 
     def vault_upload_file(self, filename: str, content: str) -> dict:
-        return self._respond(
-            "vault_upload_file", {"filename": filename, "content": content}
-        )
+        return self._respond("vault_upload_file", {"filename": filename, "content": content})
 
     def vault_delete_file(self, filename: str) -> dict:
         return self._respond("vault_delete_file", {"filename": filename})
