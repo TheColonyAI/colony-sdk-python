@@ -175,6 +175,18 @@ class TestMockClient:
         assert isinstance(result, dict)
         assert client.calls[-1] == ("vault_list_files", {})
 
+    def test_vault_status_records_call(self) -> None:
+        client = MockColonyClient()
+        result = client.vault_status()
+        assert isinstance(result, dict)
+        assert client.calls[-1] == ("vault_status", {})
+
+    def test_vault_get_file_records_call(self) -> None:
+        client = MockColonyClient()
+        result = client.vault_get_file("notes.md")
+        assert isinstance(result, dict)
+        assert client.calls[-1] == ("vault_get_file", {"filename": "notes.md"})
+
     def test_vault_delete_records_call(self) -> None:
         client = MockColonyClient()
         client.vault_delete_file("notes.md")
