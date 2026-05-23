@@ -882,6 +882,91 @@ class TestTokenCachePersistence:
         cached = _json.loads(next(iter(tmp_path.glob("*.json"))).read_text())
         assert cached["token"] == "jwt_new"
 
+    def test_cache_dir_honors_xdg_cache_home(self, monkeypatch, tmp_path):
+        """When `XDG_CACHE_HOME` is set and our explicit override isn't,
+        the cache lives under `$XDG_CACHE_HOME/colony-sdk/`. Matches the
+        XDG Base Directory Specification."""
+        from colony_sdk.client import _token_cache_dir
+
+        # Clear the explicit override so XDG path is selected.
+        monkeypatch.delenv("COLONY_SDK_TOKEN_CACHE_DIR", raising=False)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        assert _token_cache_dir() == tmp_path / "colony-sdk"
+
+    def test_cache_dir_falls_back_to_home_dot_cache(self, monkeypatch, tmp_path):
+        """With neither override set, the cache lives at `~/.cache/colony-sdk/`."""
+        from pathlib import Path
+
+        from colony_sdk.client import _token_cache_dir
+
+        monkeypatch.delenv("COLONY_SDK_TOKEN_CACHE_DIR", raising=False)
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        assert _token_cache_dir() == tmp_path / ".cache" / "colony-sdk"
+
+    def test_save_swallows_mid_write_oserror(self, monkeypatch, tmp_path):
+        """If `json.dump` raises an OSError mid-write (disk full, broken
+        pipe, etc.), the tmp file is cleaned up and the outer save call
+        returns silently — caching never blocks a request from completing.
+
+        Exercises the inner-except partial-write cleanup branch + outer
+        OSError swallow."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+
+        import colony_sdk.client as _client_mod
+
+        def _exploding_dump(obj, fp, **kwargs):
+            # OSError-shape — same as what a real disk-full scenario raises
+            # mid json.dump call when the underlying fd hits ENOSPC.
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(_client_mod.json, "dump", _exploding_dump)
+
+        c = ColonyClient("col_test")
+        c._token = "jwt_will_fail_to_save"
+        c._token_expiry = 9999999999
+        # MUST NOT raise — _save_cached_token is best-effort under OSError.
+        c._save_cached_token()
+        # No stale tmp file left behind, no final cache file either.
+        assert list(tmp_path.glob("*")) == []
+
+    def test_save_swallows_outer_oserror(self, monkeypatch, tmp_path):
+        """If mkdir/open at the very top raises OSError, save returns
+        silently — never propagates to the caller."""
+        monkeypatch.setenv(
+            "COLONY_SDK_TOKEN_CACHE_DIR",
+            "/proc/1/root/cache-cannot-write-here",  # path that can't be created
+        )
+        c = ColonyClient("col_test")
+        c._token = "jwt_unwritable"
+        c._token_expiry = 9999999999
+        # MUST NOT raise.
+        c._save_cached_token()
+
+    def test_clear_cached_token_no_op_when_cache_disabled(self, monkeypatch, tmp_path):
+        """`_clear_cached_token` early-returns without touching the
+        filesystem when caching is globally disabled — protects against
+        accidentally nuking a file someone else's process owns."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        monkeypatch.setenv("COLONY_SDK_NO_TOKEN_CACHE", "1")
+        # Pre-seed a file at the path that WOULD be the cache target.
+        from colony_sdk.client import _token_cache_path
+
+        # Compute path before the env-disable check would skip the unlink.
+        # We need to bypass the disable to compute the path, so check the
+        # path without invoking _clear_cached_token.
+        # Set up: cache disabled by env, but a file exists at the path
+        # (could be left over from a previous run).
+        monkeypatch.delenv("COLONY_SDK_NO_TOKEN_CACHE", raising=False)
+        path = _token_cache_path("col_test", "https://thecolony.cc/api/v1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"v":1,"token":"untouched","expiry":9999999999}')
+        # Now disable caching and call clear — file must remain.
+        monkeypatch.setenv("COLONY_SDK_NO_TOKEN_CACHE", "1")
+        c = ColonyClient("col_test")
+        c._clear_cached_token()
+        assert path.exists(), "cache disabled → clear must not touch the filesystem"
+
     def test_safety_margin_treats_near_expiry_as_miss(self, monkeypatch, tmp_path):
         """A token whose expiry is within the 60s safety margin is treated
         as a cache miss — otherwise a long request could outlive the token

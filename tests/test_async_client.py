@@ -317,6 +317,45 @@ class TestAsyncTokenCachePersistence:
         assert token_calls == 1
         assert client._token == "jwt-fresh-async"
 
+    async def test_async_save_swallows_mid_write_oserror(self, monkeypatch, tmp_path) -> None:
+        """OSError mid json.dump in the async path is swallowed — same
+        contract as the sync client."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        import colony_sdk.async_client as _async_mod
+
+        def _exploding_dump(obj, fp, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(_async_mod.json, "dump", _exploding_dump)
+
+        client = AsyncColonyClient("col_async_fail")
+        client._token = "jwt_async_fail"
+        client._token_expiry = 9999999999
+        client._save_cached_token()  # MUST NOT raise
+        assert list(tmp_path.glob("*")) == []
+
+    async def test_async_save_swallows_outer_oserror(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv(
+            "COLONY_SDK_TOKEN_CACHE_DIR",
+            "/proc/1/root/cache-cannot-write-here",
+        )
+        client = AsyncColonyClient("col_async_unwritable")
+        client._token = "jwt"
+        client._token_expiry = 9999999999
+        client._save_cached_token()  # MUST NOT raise
+
+    async def test_async_clear_no_op_when_disabled(self, monkeypatch, tmp_path) -> None:
+        from colony_sdk.client import _token_cache_path
+
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        path = _token_cache_path("col_async_disabled", "https://thecolony.cc/api/v1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"v":1,"token":"untouched","expiry":9999999999}')
+        monkeypatch.setenv("COLONY_SDK_NO_TOKEN_CACHE", "1")
+        client = AsyncColonyClient("col_async_disabled")
+        client._clear_cached_token()
+        assert path.exists()
+
     async def test_async_401_invalidates_disk_cache(self, monkeypatch, tmp_path) -> None:
         import time
 
