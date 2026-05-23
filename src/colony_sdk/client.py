@@ -13,10 +13,13 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import re
+import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -187,6 +190,90 @@ _DEFAULT_RETRY = RetryConfig()
 #   sleep 60s, attempt 7, fail -> raise
 # Total wall time on full-exhaustion path: ~122s.
 _DEFAULT_AUTH_RETRY = RetryConfig(max_retries=6, base_delay=2.0, max_delay=60.0)
+
+
+# ── On-disk JWT cache ────────────────────────────────────────────────────
+#
+# The in-memory `_token` cache on `ColonyClient` survives only for the
+# lifetime of the client instance. Short-lived scripts and any setup
+# that constructs a fresh client per invocation pay for a `/auth/token`
+# round-trip on every start — and the server rate-limits that endpoint
+# per-IP, so heavy reconstruction can exhaust the budget before doing
+# any real work.
+#
+# This file-backed cache survives across processes for the same
+# (base_url, api_key) pair. The on-disk format is a small JSON envelope
+# with the token, its expiry, and a schema version. Reads and writes are
+# best-effort: any IO error silently falls through to a fresh fetch, so
+# correctness never depends on the cache being present, readable, or
+# writable. The cache file is written mode-0600 so a co-tenant on the
+# same machine cannot read another user's token.
+
+_TOKEN_CACHE_SCHEMA_VERSION = 1
+_TOKEN_CACHE_SAFETY_MARGIN_SEC = 60.0
+
+
+def _token_cache_dir() -> Path:
+    """Resolve the JWT cache directory for the current platform.
+
+    Resolution order:
+
+    1. ``COLONY_SDK_TOKEN_CACHE_DIR`` if set (tests + power users override).
+    2. Platform default:
+
+       - **Linux / BSD / other Unix**: ``$XDG_CACHE_HOME/colony-sdk`` if
+         set, otherwise ``~/.cache/colony-sdk`` (XDG Base Directory).
+       - **macOS**: ``~/Library/Caches/colony-sdk`` (Apple's File System
+         Programming Guide).
+       - **Windows**: ``%LOCALAPPDATA%/colony-sdk/Cache``, falling back
+         to ``%APPDATA%/colony-sdk/Cache``, and finally to
+         ``~/AppData/Local/colony-sdk/Cache`` if neither is set.
+
+    If the chosen path can't be created or written at use time, the
+    caller silently falls through to a fresh `/auth/token` request, so
+    cache resolution never errors at this layer.
+    """
+    override = os.environ.get("COLONY_SDK_TOKEN_CACHE_DIR")
+    if override:
+        return Path(override)
+    if sys.platform == "win32":
+        # Prefer LOCALAPPDATA (machine-local, not roamed) over APPDATA
+        # so a per-machine cache isn't synced to other machines via
+        # roaming profiles.
+        for env_var in ("LOCALAPPDATA", "APPDATA"):
+            base = os.environ.get(env_var)
+            if base:
+                return Path(base) / "colony-sdk" / "Cache"
+        return Path.home() / "AppData" / "Local" / "colony-sdk" / "Cache"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "colony-sdk"
+    # Linux / BSD / other Unix.
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        return Path(xdg) / "colony-sdk"
+    return Path.home() / ".cache" / "colony-sdk"
+
+
+def _token_cache_path(api_key: str, base_url: str) -> Path:
+    """Compute the cache filename for a given (api_key, base_url) pair.
+
+    Hashes both together so the same api_key used against multiple bases
+    (e.g., prod vs staging) gets independent cache files. 16 hex chars
+    = 64 bits — more than enough to avoid collisions for any realistic
+    number of (key, base) pairs on one host.
+    """
+    fingerprint = f"{base_url}|{api_key}".encode()
+    digest = hashlib.sha256(fingerprint).hexdigest()[:16]
+    return _token_cache_dir() / f"{digest}.json"
+
+
+def _token_cache_disabled_via_env() -> bool:
+    """Global opt-out via env var. Recognised values: 1/true/yes (case-insensitive)."""
+    return os.environ.get("COLONY_SDK_NO_TOKEN_CACHE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def _should_retry(status: int, attempt: int, retry: RetryConfig) -> bool:
@@ -434,6 +521,7 @@ class ColonyClient:
         typed: bool = False,
         proxy: str | None = None,
         auth_token_retry: RetryConfig | None = None,
+        cache_token: bool = True,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -447,6 +535,16 @@ class ColonyClient:
         self.auth_token_retry = auth_token_retry if auth_token_retry is not None else _DEFAULT_AUTH_RETRY
         self.typed = typed
         self.proxy = proxy
+        # `cache_token=True` (default) persists the JWT to a
+        # platform-specific cache directory (XDG on Linux,
+        # ~/Library/Caches on macOS, %LOCALAPPDATA% on Windows; see
+        # :func:`_token_cache_dir`) so it survives process restarts
+        # for the same (base_url, api_key) pair. Set to False to
+        # disable per-client. Global opt-out via the
+        # `COLONY_SDK_NO_TOKEN_CACHE=1` env var. The cache file is
+        # written mode-0600 and reads/writes are best-effort: any IO
+        # error silently falls through to a fresh `/auth/token` call.
+        self.cache_token = cache_token
         self._token: str | None = None
         self._token_expiry: float = 0
         self.last_rate_limit: RateLimitInfo | None = None
@@ -539,8 +637,107 @@ class ColonyClient:
 
     # ── Auth ──────────────────────────────────────────────────────────
 
+    def _token_cache_enabled(self) -> bool:
+        """True if the on-disk JWT cache is active for this client.
+
+        Both the per-client `cache_token` constructor arg and the global
+        `COLONY_SDK_NO_TOKEN_CACHE` env var must allow caching. The env
+        var takes precedence so operators can disable globally without
+        touching application code.
+        """
+        if not self.cache_token:
+            return False
+        return not _token_cache_disabled_via_env()
+
+    def _cached_token_path(self) -> Path:
+        """Path to this client's on-disk JWT cache file."""
+        return _token_cache_path(self.api_key, self.base_url)
+
+    def _load_cached_token(self) -> bool:
+        """Hydrate `self._token` from the on-disk cache if a valid one exists.
+
+        Returns True on cache hit (token loaded), False on miss or any
+        read failure. Cache hits are validated against a 60-second
+        safety margin so a token about to expire mid-request still
+        triggers a refresh rather than getting handed out at the edge.
+        """
+        if not self._token_cache_enabled():
+            return False
+        try:
+            path = self._cached_token_path()
+            if not path.exists():
+                return False
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            token = data.get("token")
+            expiry = float(data.get("expiry", 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            # Corrupt file, missing field, permission denied — any IO or
+            # parse failure is a cache miss, never an error to the caller.
+            return False
+        if not token or expiry <= time.time() + _TOKEN_CACHE_SAFETY_MARGIN_SEC:
+            return False
+        self._token = token
+        self._token_expiry = expiry
+        return True
+
+    def _save_cached_token(self) -> None:
+        """Best-effort write of the current JWT + expiry to disk.
+
+        Writes are atomic (tmpfile + rename) and mode-0600. Any failure
+        is silently swallowed — the cache is a cold-start latency
+        optimization, not a correctness requirement.
+        """
+        import contextlib
+
+        if not self._token_cache_enabled() or not self._token:
+            return
+        try:
+            path = self._cached_token_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            # Open with 0600 from the start so the secret is never on
+            # disk with a wider mode (umask can otherwise widen the
+            # initial mode and the chmod-after-write window leaks).
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {
+                            "v": _TOKEN_CACHE_SCHEMA_VERSION,
+                            "token": self._token,
+                            "expiry": self._token_expiry,
+                        },
+                        f,
+                    )
+            except Exception:
+                # Tmp file partially written — best-effort cleanup, then
+                # re-raise into the outer except where the whole save
+                # operation is swallowed.
+                with contextlib.suppress(OSError):
+                    os.unlink(str(tmp))
+                raise
+            os.replace(str(tmp), str(path))
+        except OSError:
+            pass
+
+    def _clear_cached_token(self) -> None:
+        """Remove the on-disk cache entry. Silent on failure."""
+        import contextlib
+
+        if not self._token_cache_enabled():
+            return
+        with contextlib.suppress(OSError):
+            self._cached_token_path().unlink(missing_ok=True)
+
     def _ensure_token(self) -> None:
         if self._token and time.time() < self._token_expiry:
+            return
+        # Try the on-disk cache before paying for a fresh /auth/token
+        # call. Cache is keyed by (base_url, api_key) so it survives
+        # process restarts and short-lived scripts that would otherwise
+        # re-authenticate on every invocation.
+        if self._load_cached_token():
             return
         # Use the more aggressive `auth_token_retry` config for the
         # /auth/token request specifically — see `_DEFAULT_AUTH_RETRY`
@@ -556,11 +753,20 @@ class ColonyClient:
         self._token = data["access_token"]
         # Refresh 1 hour before expiry (tokens last 24h)
         self._token_expiry = time.time() + 23 * 3600
+        # Persist to disk so the next process for this (base_url,
+        # api_key) pair can skip /auth/token entirely.
+        self._save_cached_token()
 
     def refresh_token(self) -> None:
-        """Force a token refresh on the next request."""
+        """Force a token refresh on the next request.
+
+        Clears both the in-memory token and the on-disk cache entry
+        (if enabled) so the next call will hit `/auth/token` and write
+        a fresh value back.
+        """
         self._token = None
         self._token_expiry = 0
+        self._clear_cached_token()
 
     def rotate_key(self) -> dict:
         """Rotate your API key. Returns the new key and invalidates the old one.
@@ -573,6 +779,10 @@ class ColonyClient:
         """
         data = self._raw_request("POST", "/auth/rotate-key")
         if "api_key" in data:
+            # Clear the old key's on-disk cache entry BEFORE flipping
+            # `self.api_key` — otherwise `_clear_cached_token()` would
+            # compute the path for the new key and miss the stale file.
+            self._clear_cached_token()
             self.api_key = data["api_key"]
             # Force token refresh since the old key is now invalid
             self._token = None
@@ -668,6 +878,11 @@ class ColonyClient:
 
             # Auto-refresh on 401 once (separate from the configurable retry loop).
             if e.code == 401 and not _token_refreshed and auth:
+                # The token (whether in-memory or from the on-disk
+                # cache) was rejected. Invalidate the disk cache too,
+                # otherwise the next process load would re-hydrate the
+                # same stale token and immediately 401 again.
+                self._clear_cached_token()
                 self._token = None
                 self._token_expiry = 0
                 return self._raw_request(
