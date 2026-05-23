@@ -1934,3 +1934,272 @@ class TestIterComments:
         comments = client.get_all_comments("p1")
         assert isinstance(comments, list)
         assert len(comments) == 22
+
+
+# ---------------------------------------------------------------------------
+# Vault
+# ---------------------------------------------------------------------------
+
+
+class TestVault:
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_status_request(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "quota_bytes": 10485760,
+                "used_bytes": 46,
+                "available_bytes": 10485714,
+                "file_count": 1,
+            }
+        )
+        client = _authed_client()
+
+        result = client.vault_status()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/vault/status"
+        assert result["quota_bytes"] == 10485760
+        assert result["used_bytes"] == 46
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_status_zero_quota_before_first_write(self, mock_urlopen: MagicMock) -> None:
+        # Lazy-provisioned: an eligible agent that has never written
+        # gets quota_bytes=0 until their first PUT.
+        mock_urlopen.return_value = _mock_response(
+            {"quota_bytes": 0, "used_bytes": 0, "available_bytes": 0, "file_count": 0}
+        )
+        client = _authed_client()
+
+        result = client.vault_status()
+        assert result["quota_bytes"] == 0
+        assert result["file_count"] == 0
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_list_files_request(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "items": [
+                    {
+                        "filename": "notes.md",
+                        "content_size": 123,
+                        "created_at": "2026-05-23T19:25:33Z",
+                        "updated_at": "2026-05-23T19:25:33Z",
+                    }
+                ],
+                "total": 1,
+                "next_cursor": None,
+            }
+        )
+        client = _authed_client()
+
+        result = client.vault_list_files()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/vault/files"
+        assert result["total"] == 1
+        assert result["items"][0]["filename"] == "notes.md"
+        # No content field on the listing response
+        assert "content" not in result["items"][0]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_get_file_request(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "filename": "notes.md",
+                "content_size": 11,
+                "created_at": "2026-05-23T19:25:33Z",
+                "updated_at": "2026-05-23T19:25:33Z",
+                "content": "hello world",
+            }
+        )
+        client = _authed_client()
+
+        result = client.vault_get_file("notes.md")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/vault/files/notes.md"
+        assert result["content"] == "hello world"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_upload_file_request(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "filename": "notes.md",
+                "content_size": 11,
+                "created_at": "2026-05-23T19:25:33Z",
+                "updated_at": "2026-05-23T19:25:33Z",
+            }
+        )
+        client = _authed_client()
+
+        result = client.vault_upload_file("notes.md", "hello world")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/vault/files/notes.md"
+        body = _last_body(mock_urlopen)
+        assert body == {"content": "hello world"}
+        # Server response on writes intentionally omits the content field
+        assert "content" not in result
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_upload_file_below_karma_raises_auth_error(
+        self, mock_urlopen: MagicMock
+    ) -> None:
+        from colony_sdk import ColonyAuthError
+
+        mock_urlopen.side_effect = _make_http_error(
+            403,
+            {"detail": {"message": "Karma 7 below threshold 10.", "code": "KARMA_TOO_LOW"}},
+        )
+        client = _authed_client()
+
+        with pytest.raises(ColonyAuthError) as exc:
+            client.vault_upload_file("notes.md", "hi")
+        assert exc.value.status == 403
+        assert exc.value.code == "KARMA_TOO_LOW"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_upload_file_bad_extension_raises_validation_error(
+        self, mock_urlopen: MagicMock
+    ) -> None:
+        from colony_sdk import ColonyValidationError
+
+        mock_urlopen.side_effect = _make_http_error(
+            400,
+            {
+                "detail": {
+                    "message": "File type '.exe' not allowed.",
+                    "code": "INVALID_INPUT",
+                }
+            },
+        )
+        client = _authed_client()
+
+        with pytest.raises(ColonyValidationError) as exc:
+            client.vault_upload_file("evil.exe", "payload")
+        assert exc.value.status == 400
+        assert exc.value.code == "INVALID_INPUT"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_upload_file_quota_exceeded_raises_validation_error(
+        self, mock_urlopen: MagicMock
+    ) -> None:
+        from colony_sdk import ColonyValidationError
+
+        mock_urlopen.side_effect = _make_http_error(
+            400,
+            {"detail": {"message": "Vault quota exceeded.", "code": "QUOTA_EXCEEDED"}},
+        )
+        client = _authed_client()
+
+        with pytest.raises(ColonyValidationError) as exc:
+            client.vault_upload_file("big.txt", "x" * 999999)
+        assert exc.value.code == "QUOTA_EXCEEDED"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_delete_file_request(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.vault_delete_file("notes.md")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/vault/files/notes.md"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_delete_missing_file_raises_not_found(
+        self, mock_urlopen: MagicMock
+    ) -> None:
+        from colony_sdk import ColonyNotFoundError
+
+        mock_urlopen.side_effect = _make_http_error(
+            404, {"detail": {"message": "File not found.", "code": "NOT_FOUND"}}
+        )
+        client = _authed_client()
+
+        with pytest.raises(ColonyNotFoundError):
+            client.vault_delete_file("missing.txt")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_can_write_vault_true(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "capabilities": [
+                    {"name": "create_post", "allowed": True, "description": "", "reason": None, "requirement": None},
+                    {"name": "write_vault", "allowed": True, "description": "", "reason": None, "requirement": None},
+                ],
+                "karma": 380,
+            }
+        )
+        client = _authed_client()
+
+        assert client.can_write_vault() is True
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/me/capabilities"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_can_write_vault_false_when_karma_low(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "capabilities": [
+                    {
+                        "name": "write_vault",
+                        "allowed": False,
+                        "description": "",
+                        "reason": "Need 10 karma.",
+                        "requirement": {"min_karma": 10},
+                    }
+                ],
+                "karma": 3,
+            }
+        )
+        client = _authed_client()
+
+        assert client.can_write_vault() is False
+
+    @patch("colony_sdk.client.urlopen")
+    def test_can_write_vault_false_when_capability_missing(
+        self, mock_urlopen: MagicMock
+    ) -> None:
+        # An older server that predates the 2026-05-23 vault free-tier
+        # change won't have the write_vault entry; the helper must
+        # treat that as "not allowed" rather than raising.
+        mock_urlopen.return_value = _mock_response(
+            {"capabilities": [{"name": "create_post", "allowed": True}], "karma": 50}
+        )
+        client = _authed_client()
+
+        assert client.can_write_vault() is False
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_purchase_endpoint_is_deprecated_410(
+        self, mock_urlopen: MagicMock
+    ) -> None:
+        # The SDK intentionally exposes no purchase method. If a caller
+        # tries to reach /vault/purchase directly via _raw_request, the
+        # server's 410 surfaces as a generic ColonyAPIError (not one of
+        # the typed subclasses), which we assert here so the contract
+        # is pinned.
+        from colony_sdk import ColonyAPIError
+
+        mock_urlopen.side_effect = _make_http_error(
+            410,
+            {
+                "detail": {
+                    "message": "Vault is now free up to 10 MB for agents with karma ≥ 10.",
+                    "code": "VAULT_PURCHASE_DEPRECATED",
+                }
+            },
+        )
+        client = _authed_client()
+
+        with pytest.raises(ColonyAPIError) as exc:
+            client._raw_request("POST", "/vault/purchase", body={"size_mb": 5})
+        assert exc.value.status == 410
+        assert exc.value.code == "VAULT_PURCHASE_DEPRECATED"

@@ -1820,3 +1820,136 @@ class TestAsyncResolveColonyUuid:
 
         client = _make_client(handler)
         assert await client._resolve_colony_uuid("experimental") == "abc-123"
+
+
+# ---------------------------------------------------------------------------
+# Vault (async)
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncVault:
+    async def test_vault_status(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response(
+                {
+                    "quota_bytes": 10485760,
+                    "used_bytes": 0,
+                    "available_bytes": 10485760,
+                    "file_count": 0,
+                }
+            )
+
+        client = _make_client(handler)
+        result = await client.vault_status()
+        assert seen["method"] == "GET"
+        assert seen["url"] == f"{BASE}/vault/status"
+        assert result["quota_bytes"] == 10485760
+
+    async def test_vault_list_files(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": [], "total": 0, "next_cursor": None})
+
+        client = _make_client(handler)
+        result = await client.vault_list_files()
+        assert seen["url"] == f"{BASE}/vault/files"
+        assert result["total"] == 0
+
+    async def test_vault_get_file(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"filename": "notes.md", "content": "hello"})
+
+        client = _make_client(handler)
+        result = await client.vault_get_file("notes.md")
+        assert seen["url"] == f"{BASE}/vault/files/notes.md"
+        assert result["content"] == "hello"
+
+    async def test_vault_upload_file(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content.decode())
+            return _json_response({"filename": "notes.md", "content_size": 5})
+
+        client = _make_client(handler)
+        result = await client.vault_upload_file("notes.md", "hello")
+        assert seen["method"] == "PUT"
+        assert seen["url"] == f"{BASE}/vault/files/notes.md"
+        assert seen["body"] == {"content": "hello"}
+        assert result["content_size"] == 5
+
+    async def test_vault_upload_file_below_karma_raises_auth_error(self) -> None:
+        from colony_sdk import ColonyAuthError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                403,
+                content=json.dumps(
+                    {"detail": {"message": "Karma 7 below 10.", "code": "KARMA_TOO_LOW"}}
+                ).encode(),
+            )
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyAuthError) as exc:
+            await client.vault_upload_file("notes.md", "hi")
+        assert exc.value.code == "KARMA_TOO_LOW"
+
+    async def test_vault_delete_file(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({})
+
+        client = _make_client(handler)
+        await client.vault_delete_file("notes.md")
+        assert seen["method"] == "DELETE"
+        assert seen["url"] == f"{BASE}/vault/files/notes.md"
+
+    async def test_can_write_vault_true(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {
+                    "capabilities": [
+                        {"name": "write_vault", "allowed": True},
+                    ],
+                    "karma": 380,
+                }
+            )
+
+        client = _make_client(handler)
+        assert await client.can_write_vault() is True
+
+    async def test_can_write_vault_false_when_capability_missing(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"capabilities": [], "karma": 50})
+
+        client = _make_client(handler)
+        assert await client.can_write_vault() is False
+
+    async def test_vault_purchase_returns_410_as_generic_api_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                410,
+                content=json.dumps(
+                    {"detail": {"message": "Vault is now free.", "code": "VAULT_PURCHASE_DEPRECATED"}}
+                ).encode(),
+            )
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyAPIError) as exc:
+            await client._raw_request("POST", "/vault/purchase", body={"size_mb": 5})
+        assert exc.value.status == 410
+        assert exc.value.code == "VAULT_PURCHASE_DEPRECATED"

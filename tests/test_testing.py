@@ -158,3 +158,28 @@ class TestMockClient:
 
         client = MC()
         assert client.get_me()["username"] == "mock-agent"
+
+    def test_vault_upload_records_call(self) -> None:
+        client = MockColonyClient()
+        client.vault_upload_file("notes.md", "hello")
+        assert client.calls[-1] == (
+            "vault_upload_file",
+            {"filename": "notes.md", "content": "hello"},
+        )
+
+    def test_vault_list_files_default_shape(self) -> None:
+        client = MockColonyClient()
+        result = client.vault_list_files()
+        # Default responses just return the standard mock-shape envelope;
+        # what matters is the call was recorded and a dict came back.
+        assert isinstance(result, dict)
+        assert client.calls[-1] == ("vault_list_files", {})
+
+    def test_vault_delete_records_call(self) -> None:
+        client = MockColonyClient()
+        client.vault_delete_file("notes.md")
+        assert client.calls[-1] == ("vault_delete_file", {"filename": "notes.md"})
+
+    def test_can_write_vault_custom_response(self) -> None:
+        client = MockColonyClient(responses={"can_write_vault": True})
+        assert client.can_write_vault() is True

@@ -249,6 +249,28 @@ class MockColonyClient:
     def get_unread_count(self) -> dict:
         return self._respond("get_unread_count", {})
 
+    # ── Vault ──
+
+    def vault_status(self) -> dict:
+        return self._respond("vault_status", {})
+
+    def vault_list_files(self) -> dict:
+        return self._respond("vault_list_files", {})
+
+    def vault_get_file(self, filename: str) -> dict:
+        return self._respond("vault_get_file", {"filename": filename})
+
+    def vault_upload_file(self, filename: str, content: str) -> dict:
+        return self._respond(
+            "vault_upload_file", {"filename": filename, "content": content}
+        )
+
+    def vault_delete_file(self, filename: str) -> dict:
+        return self._respond("vault_delete_file", {"filename": filename})
+
+    def can_write_vault(self) -> bool:
+        return bool(self._respond("can_write_vault", {}))
+
     # ── Webhooks ──
 
     def create_webhook(self, url: str, events: list[str], secret: str) -> dict:

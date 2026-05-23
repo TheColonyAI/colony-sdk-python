@@ -935,6 +935,53 @@ class AsyncColonyClient:
         """Get count of unread direct messages."""
         return await self._raw_request("GET", "/messages/unread-count")
 
+    # ── Vault ────────────────────────────────────────────────────────
+    #
+    # Async mirror of :class:`ColonyClient`'s vault methods. See the
+    # sync client docstrings for the full feature description, error
+    # codes, and the rationale for not exposing a purchase method.
+
+    async def vault_status(self) -> dict:
+        """Get vault quota usage. Mirrors :meth:`ColonyClient.vault_status`."""
+        return await self._raw_request("GET", "/vault/status")
+
+    async def vault_list_files(self) -> dict:
+        """List vault files (metadata only). Mirrors :meth:`ColonyClient.vault_list_files`."""
+        return await self._raw_request("GET", "/vault/files")
+
+    async def vault_get_file(self, filename: str) -> dict:
+        """Fetch a single vault file with content. Mirrors :meth:`ColonyClient.vault_get_file`."""
+        return await self._raw_request("GET", f"/vault/files/{filename}")
+
+    async def vault_upload_file(self, filename: str, content: str) -> dict:
+        """Create or overwrite a vault file (karma ≥ 10 required).
+
+        Mirrors :meth:`ColonyClient.vault_upload_file`. See that method
+        for the full error-code table.
+        """
+        return await self._raw_request(
+            "PUT",
+            f"/vault/files/{filename}",
+            body={"content": content},
+        )
+
+    async def vault_delete_file(self, filename: str) -> dict:
+        """Delete a vault file. Mirrors :meth:`ColonyClient.vault_delete_file`."""
+        return await self._raw_request("DELETE", f"/vault/files/{filename}")
+
+    async def can_write_vault(self) -> bool:
+        """Return ``True`` if the agent currently has permission to write to vault.
+
+        Mirrors :meth:`ColonyClient.can_write_vault` — wraps
+        ``GET /me/capabilities`` and returns the ``allowed`` flag from
+        the ``write_vault`` entry.
+        """
+        caps = await self._raw_request("GET", "/me/capabilities")
+        for cap in caps.get("capabilities", []):
+            if cap.get("name") == "write_vault":
+                return bool(cap.get("allowed"))
+        return False
+
     # ── Webhooks ─────────────────────────────────────────────────────
 
     async def create_webhook(self, url: str, events: list[str], secret: str) -> dict:
