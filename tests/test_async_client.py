@@ -165,6 +165,196 @@ class TestAuth:
         assert len(me_paths) == 2
 
 
+class TestAsyncTokenCachePersistence:
+    """The async client persists the JWT to disk the same way the sync
+    client does, and the two share the cache file for matching
+    `(base_url, api_key)` pairs. These tests mirror the sync coverage in
+    `test_client.py::TestTokenCachePersistence` — sync logic is tested
+    in depth there; here we verify the async paths are wired up correctly.
+    """
+
+    async def test_first_async_client_writes_to_cache(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        token_calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal token_calls
+            if request.url.path.endswith("/auth/token"):
+                token_calls += 1
+                return _json_response({"access_token": "jwt-async-persisted"})
+            return _json_response({"id": "u1"})
+
+        async with AsyncColonyClient(
+            "col_a", client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        ) as client:
+            await client.get_me()
+        cached = list(tmp_path.glob("*.json"))
+        assert len(cached) == 1
+        assert token_calls == 1
+        # Sync client with the same key should read this file and skip auth.
+
+    async def test_second_async_client_reads_from_cache(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        token_calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal token_calls
+            if request.url.path.endswith("/auth/token"):
+                token_calls += 1
+                return _json_response({"access_token": "jwt-once"})
+            return _json_response({"ok": True})
+
+        # First client writes the cache.
+        async with AsyncColonyClient(
+            "col_b", client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        ) as client_a:
+            await client_a.get_me()
+        # Second client must not hit /auth/token again.
+        async with AsyncColonyClient(
+            "col_b", client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        ) as client_b:
+            await client_b.get_me()
+        assert token_calls == 1
+        assert client_b._token == "jwt-once"
+
+    async def test_cache_token_false_disables_disk_writes(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/auth/token"):
+                return _json_response({"access_token": "jwt-no-write"})
+            return _json_response({"id": "u1"})
+
+        async with AsyncColonyClient(
+            "col_c",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            cache_token=False,
+        ) as client:
+            await client.get_me()
+        assert list(tmp_path.glob("*.json")) == []
+
+    async def test_env_var_disables_async_cache(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        monkeypatch.setenv("COLONY_SDK_NO_TOKEN_CACHE", "1")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/auth/token"):
+                return _json_response({"access_token": "jwt-env-off"})
+            return _json_response({"id": "u1"})
+
+        async with AsyncColonyClient(
+            "col_d", client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        ) as client:
+            await client.get_me()
+        assert list(tmp_path.glob("*.json")) == []
+
+    async def test_async_refresh_token_clears_disk_cache(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/auth/token"):
+                return _json_response({"access_token": "jwt-init"})
+            return _json_response({"id": "u1"})
+
+        async with AsyncColonyClient(
+            "col_e", client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        ) as client:
+            await client.get_me()
+            assert len(list(tmp_path.glob("*.json"))) == 1
+            client.refresh_token()
+            assert list(tmp_path.glob("*.json")) == []
+
+    async def test_async_corrupt_cache_falls_through(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        # Pre-seed garbage at the expected cache path.
+        from colony_sdk.client import _token_cache_path
+
+        bad_path = _token_cache_path("col_corrupt", "https://thecolony.cc/api/v1")
+        bad_path.parent.mkdir(parents=True, exist_ok=True)
+        bad_path.write_text("{not valid json")
+
+        token_calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal token_calls
+            if request.url.path.endswith("/auth/token"):
+                token_calls += 1
+                return _json_response({"access_token": "jwt-after-corrupt"})
+            return _json_response({"id": "u1"})
+
+        async with AsyncColonyClient(
+            "col_corrupt",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        ) as client:
+            await client.get_me()  # MUST NOT raise
+        assert token_calls == 1
+        assert client._token == "jwt-after-corrupt"
+
+    async def test_async_expired_cache_triggers_fresh_auth(self, monkeypatch, tmp_path) -> None:
+        import time
+
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        from colony_sdk.client import _token_cache_path
+
+        stale_path = _token_cache_path("col_expired", "https://thecolony.cc/api/v1")
+        stale_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_path.write_text(json.dumps({"v": 1, "token": "jwt-stale", "expiry": time.time() - 1}))
+
+        token_calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal token_calls
+            if request.url.path.endswith("/auth/token"):
+                token_calls += 1
+                return _json_response({"access_token": "jwt-fresh-async"})
+            return _json_response({"id": "u1"})
+
+        async with AsyncColonyClient(
+            "col_expired",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        ) as client:
+            await client.get_me()
+        assert token_calls == 1
+        assert client._token == "jwt-fresh-async"
+
+    async def test_async_401_invalidates_disk_cache(self, monkeypatch, tmp_path) -> None:
+        import time
+
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        from colony_sdk.client import _token_cache_path
+
+        stale_path = _token_cache_path("col_revoked", "https://thecolony.cc/api/v1")
+        stale_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_path.write_text(json.dumps({"v": 1, "token": "jwt-server-revoked", "expiry": time.time() + 86400}))
+
+        # First /users/me with stale token returns 401, then /auth/token,
+        # then /users/me retry succeeds.
+        token_calls = 0
+        me_calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal token_calls, me_calls
+            if request.url.path.endswith("/auth/token"):
+                token_calls += 1
+                return _json_response({"access_token": "jwt-new-async"})
+            me_calls += 1
+            if me_calls == 1:
+                return _json_response({"detail": "stale"}, status=401)
+            return _json_response({"id": "u1"})
+
+        async with AsyncColonyClient(
+            "col_revoked",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        ) as client:
+            result = await client.get_me()
+        assert result == {"id": "u1"}
+        # Cache rewritten with the new token.
+        cached_files = list(tmp_path.glob("*.json"))
+        assert len(cached_files) == 1
+        cached = json.loads(next(iter(cached_files)).read_text())
+        assert cached["token"] == "jwt-new-async"
+
+
 # ---------------------------------------------------------------------------
 # Read methods
 # ---------------------------------------------------------------------------
