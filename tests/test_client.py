@@ -599,3 +599,312 @@ class TestAuthTokenRetry:
             raise AssertionError("expected ColonyNetworkError")
         except Exception as e:
             assert "network error" in str(e).lower()
+
+
+class TestTokenCachePersistence:
+    """The JWT is persisted to disk by default so it survives process
+    restarts. Cross-process cache, keyed by (base_url, api_key) — the
+    primary win is for supervisor-rotated dogfood agents that restart
+    every ~20min and would otherwise re-auth every cycle, eventually
+    tripping the 100/hr/IP `/auth/token` rate limit.
+
+    Tests route the cache to a temp dir via ``COLONY_SDK_TOKEN_CACHE_DIR``
+    so they never touch the real ``~/.cache/colony-sdk/`` location.
+    """
+
+    def _patch(self, monkeypatch, responses):
+        """Same mock-urlopen shape as TestAuthTokenRetry — duplicated here
+        because we want focused tests on the cache layer without inheriting
+        an unrelated test fixture."""
+        import json as _json
+        from io import BytesIO
+        from urllib.error import HTTPError
+
+        calls = []
+        iter_responses = iter(responses)
+
+        class _FakeResponse:
+            def __init__(self, status, body_bytes):
+                self.status = status
+                self._body = body_bytes
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return self._body
+
+            def getheaders(self):
+                return []
+
+        def _fake_urlopen(req, timeout=None):
+            calls.append({"url": req.full_url, "method": req.get_method()})
+            kind, *rest = next(iter_responses)
+            if kind == "ok":
+                status, body = rest
+                return _FakeResponse(status, _json.dumps(body).encode())
+            if kind == "http_error":
+                status, body = rest
+                body_bytes = body.encode() if isinstance(body, str) else body
+                raise HTTPError(req.full_url, status, "fake", {}, BytesIO(body_bytes))
+            raise AssertionError(f"unknown response kind: {kind}")
+
+        monkeypatch.setattr("colony_sdk.client.urlopen", _fake_urlopen)
+        monkeypatch.setattr("colony_sdk.client.time.sleep", lambda _: None)
+        return calls
+
+    def test_first_client_writes_token_to_disk(self, monkeypatch, tmp_path):
+        """After a fresh `_ensure_token` call, the cache file exists,
+        contains the token, and is mode 0600."""
+        import stat
+
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"access_token": "jwt_first", "expires_in": 86400}),
+                ("ok", 200, {"username": "colonist-one"}),
+            ],
+        )
+        c = ColonyClient("col_test")
+        c.get_me()
+        cached_files = list(tmp_path.glob("*.json"))
+        assert len(cached_files) == 1
+        # File must be 0600 — protects the secret on shared hosts.
+        mode = cached_files[0].stat().st_mode
+        assert stat.S_IMODE(mode) == 0o600, f"expected 0600, got {oct(stat.S_IMODE(mode))}"
+        import json as _json
+
+        data = _json.loads(cached_files[0].read_text())
+        assert data["token"] == "jwt_first"
+        assert data["v"] == 1
+        assert data["expiry"] > 0
+
+    def test_second_client_loads_token_from_disk(self, monkeypatch, tmp_path):
+        """A second `ColonyClient(api_key)` with the same key sees the
+        cache file and skips `/auth/token` entirely."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        # First client: writes cache
+        calls_a = self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"access_token": "jwt_persisted", "expires_in": 86400}),
+                ("ok", 200, {"username": "colonist-one"}),
+            ],
+        )
+        a = ColonyClient("col_test")
+        a.get_me()
+        first_auth_calls = sum(1 for x in calls_a if x["url"].endswith("/auth/token"))
+        assert first_auth_calls == 1
+
+        # Second client: should NOT hit /auth/token at all.
+        calls_b = self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"username": "colonist-one"}),  # just /users/me, NO /auth/token
+            ],
+        )
+        b = ColonyClient("col_test")
+        b.get_me()
+        second_auth_calls = sum(1 for x in calls_b if x["url"].endswith("/auth/token"))
+        assert second_auth_calls == 0
+        assert b._token == "jwt_persisted"
+
+    def test_expired_cached_token_triggers_fresh_auth(self, monkeypatch, tmp_path):
+        """If the cached token's expiry is in the past, the SDK ignores
+        the cache and fetches a fresh token (and overwrites the cache)."""
+        import json as _json
+        import time as _time
+
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+
+        # Pre-seed a stale cache file directly (don't go through the SDK)
+        from colony_sdk.client import _token_cache_path
+
+        stale_path = _token_cache_path("col_test", "https://thecolony.cc/api/v1")
+        stale_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_path.write_text(_json.dumps({"v": 1, "token": "jwt_stale", "expiry": _time.time() - 1}))
+
+        calls = self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"access_token": "jwt_fresh", "expires_in": 86400}),
+                ("ok", 200, {"username": "colonist-one"}),
+            ],
+        )
+        c = ColonyClient("col_test")
+        c.get_me()
+        # Stale cache ignored; /auth/token called once.
+        assert sum(1 for x in calls if x["url"].endswith("/auth/token")) == 1
+        # Cache rewritten with the fresh token.
+        assert c._token == "jwt_fresh"
+
+    def test_corrupt_cache_file_falls_through_to_fresh_auth(self, monkeypatch, tmp_path):
+        """A garbage cache file is silently ignored and a fresh token is
+        fetched. Cache correctness is not load-bearing."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+
+        from colony_sdk.client import _token_cache_path
+
+        path = _token_cache_path("col_test", "https://thecolony.cc/api/v1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not valid json at all")
+
+        calls = self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"access_token": "jwt_recovered", "expires_in": 86400}),
+                ("ok", 200, {"username": "colonist-one"}),
+            ],
+        )
+        c = ColonyClient("col_test")
+        c.get_me()  # MUST NOT raise
+        assert sum(1 for x in calls if x["url"].endswith("/auth/token")) == 1
+        assert c._token == "jwt_recovered"
+
+    def test_cache_token_false_per_client_disables_persistence(self, monkeypatch, tmp_path):
+        """When the constructor arg is False, no cache file is written —
+        even if the env var would otherwise enable caching."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"access_token": "jwt_no_cache", "expires_in": 86400}),
+                ("ok", 200, {"username": "colonist-one"}),
+            ],
+        )
+        c = ColonyClient("col_test", cache_token=False)
+        c.get_me()
+        assert list(tmp_path.glob("*.json")) == []
+
+    def test_env_var_disables_cache_globally(self, monkeypatch, tmp_path):
+        """`COLONY_SDK_NO_TOKEN_CACHE=1` disables caching even when the
+        per-client setting would enable it. Operator-level kill switch
+        without code change."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        monkeypatch.setenv("COLONY_SDK_NO_TOKEN_CACHE", "1")
+        self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"access_token": "jwt_global_off", "expires_in": 86400}),
+                ("ok", 200, {"username": "colonist-one"}),
+            ],
+        )
+        c = ColonyClient("col_test")  # cache_token defaults to True
+        c.get_me()
+        assert list(tmp_path.glob("*.json")) == []
+
+    def test_different_api_keys_get_different_cache_files(self, monkeypatch, tmp_path):
+        """The cache filename is keyed by (base_url, api_key) — two clients
+        with different keys must not collide. Otherwise rotating an api_key
+        would silently re-load the old key's token until expiry."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"access_token": "jwt_key_a", "expires_in": 86400}),
+                ("ok", 200, {"username": "alice"}),
+                ("ok", 200, {"access_token": "jwt_key_b", "expires_in": 86400}),
+                ("ok", 200, {"username": "bob"}),
+            ],
+        )
+        ColonyClient("col_key_alice").get_me()
+        ColonyClient("col_key_bob").get_me()
+        assert len(list(tmp_path.glob("*.json"))) == 2
+
+    def test_different_base_urls_get_different_cache_files(self, monkeypatch, tmp_path):
+        """Same api_key against prod vs staging must get independent cache
+        files — same key may be valid on both bases with different tokens."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"access_token": "jwt_prod", "expires_in": 86400}),
+                ("ok", 200, {"username": "u"}),
+                ("ok", 200, {"access_token": "jwt_staging", "expires_in": 86400}),
+                ("ok", 200, {"username": "u"}),
+            ],
+        )
+        ColonyClient("col_same", base_url="https://thecolony.cc/api/v1").get_me()
+        ColonyClient("col_same", base_url="https://staging.example/api/v1").get_me()
+        assert len(list(tmp_path.glob("*.json"))) == 2
+
+    def test_refresh_token_removes_cache_file(self, monkeypatch, tmp_path):
+        """`refresh_token()` clears both in-memory and on-disk state so
+        the next request hits `/auth/token` even on a fresh process."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"access_token": "jwt_initial", "expires_in": 86400}),
+                ("ok", 200, {"username": "colonist-one"}),
+            ],
+        )
+        c = ColonyClient("col_test")
+        c.get_me()
+        assert len(list(tmp_path.glob("*.json"))) == 1
+        c.refresh_token()
+        assert list(tmp_path.glob("*.json")) == []
+        assert c._token is None
+
+    def test_401_response_invalidates_disk_cache(self, monkeypatch, tmp_path):
+        """A 401 from the server means the (possibly cached) token is stale.
+        The disk cache must be cleared so the next process doesn't re-load
+        the same stale token and immediately 401 again."""
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        # Pre-seed a "valid-looking but server-rejected" token.
+        import json as _json
+        import time as _time
+
+        from colony_sdk.client import _token_cache_path
+
+        stale_path = _token_cache_path("col_test", "https://thecolony.cc/api/v1")
+        stale_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_path.write_text(_json.dumps({"v": 1, "token": "jwt_revoked", "expiry": _time.time() + 86400}))
+
+        self._patch(
+            monkeypatch,
+            [
+                ("http_error", 401, '{"detail":"invalid token"}'),  # /users/me with cached jwt_revoked
+                ("ok", 200, {"access_token": "jwt_new", "expires_in": 86400}),  # /auth/token refresh
+                ("ok", 200, {"username": "colonist-one"}),  # /users/me retry
+            ],
+        )
+        c = ColonyClient("col_test")
+        result = c.get_me()
+        assert result["username"] == "colonist-one"
+        # Cache file rewritten with the new token (not zero — _ensure_token
+        # wrote the new one after fetching).
+        assert len(list(tmp_path.glob("*.json"))) == 1
+        cached = _json.loads(next(iter(tmp_path.glob("*.json"))).read_text())
+        assert cached["token"] == "jwt_new"
+
+    def test_safety_margin_treats_near_expiry_as_miss(self, monkeypatch, tmp_path):
+        """A token whose expiry is within the 60s safety margin is treated
+        as a cache miss — otherwise a long request could outlive the token
+        and 401 mid-flight."""
+        import json as _json
+        import time as _time
+
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
+        from colony_sdk.client import _token_cache_path
+
+        path = _token_cache_path("col_test", "https://thecolony.cc/api/v1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Token "expires" in 30s — within the 60s safety margin.
+        path.write_text(_json.dumps({"v": 1, "token": "jwt_near_expiry", "expiry": _time.time() + 30}))
+
+        calls = self._patch(
+            monkeypatch,
+            [
+                ("ok", 200, {"access_token": "jwt_refreshed", "expires_in": 86400}),
+                ("ok", 200, {"username": "colonist-one"}),
+            ],
+        )
+        c = ColonyClient("col_test")
+        c.get_me()
+        assert sum(1 for x in calls if x["url"].endswith("/auth/token")) == 1
+        assert c._token == "jwt_refreshed"

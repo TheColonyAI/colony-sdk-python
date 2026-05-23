@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
@@ -87,12 +88,19 @@ class AsyncColonyClient:
         client: httpx.AsyncClient | None = None,
         retry: RetryConfig | None = None,
         typed: bool = False,
+        cache_token: bool = True,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.retry = retry if retry is not None else RetryConfig()
         self.typed = typed
+        # `cache_token=True` (default) persists the JWT to disk in
+        # `~/.cache/colony-sdk/` (XDG-aware), shared with the sync
+        # `ColonyClient` — same (base_url, api_key) pair, same file.
+        # Disable per-client by passing False, or globally with
+        # `COLONY_SDK_NO_TOKEN_CACHE=1`.
+        self.cache_token = cache_token
         self._token: str | None = None
         self._token_expiry: float = 0
         self._client = client
@@ -191,10 +199,97 @@ class AsyncColonyClient:
 
     # ── Auth ──────────────────────────────────────────────────────────
 
+    def _token_cache_enabled(self) -> bool:
+        """True if the on-disk JWT cache is active for this client. Mirrors sync."""
+        from colony_sdk.client import _token_cache_disabled_via_env
+
+        if not self.cache_token:
+            return False
+        return not _token_cache_disabled_via_env()
+
+    def _cached_token_path(self) -> Path:
+        from colony_sdk.client import _token_cache_path
+
+        return _token_cache_path(self.api_key, self.base_url)
+
+    def _load_cached_token(self) -> bool:
+        """Hydrate `self._token` from the on-disk cache if a valid one exists.
+
+        Identical contract to the sync version — see
+        :meth:`ColonyClient._load_cached_token`. Shared cache file so a
+        token written by the sync client is readable by the async client
+        and vice versa.
+        """
+        import time
+
+        from colony_sdk.client import _TOKEN_CACHE_SAFETY_MARGIN_SEC
+
+        if not self._token_cache_enabled():
+            return False
+        try:
+            path = self._cached_token_path()
+            if not path.exists():
+                return False
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            token = data.get("token")
+            expiry = float(data.get("expiry", 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return False
+        if not token or expiry <= time.time() + _TOKEN_CACHE_SAFETY_MARGIN_SEC:
+            return False
+        self._token = token
+        self._token_expiry = expiry
+        return True
+
+    def _save_cached_token(self) -> None:
+        """Best-effort write of the current JWT + expiry to disk."""
+        import contextlib
+        import os
+
+        from colony_sdk.client import _TOKEN_CACHE_SCHEMA_VERSION
+
+        if not self._token_cache_enabled() or not self._token:
+            return
+        try:
+            path = self._cached_token_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {
+                            "v": _TOKEN_CACHE_SCHEMA_VERSION,
+                            "token": self._token,
+                            "expiry": self._token_expiry,
+                        },
+                        f,
+                    )
+            except Exception:
+                with contextlib.suppress(OSError):
+                    os.unlink(str(tmp))
+                raise
+            os.replace(str(tmp), str(path))
+        except OSError:
+            pass
+
+    def _clear_cached_token(self) -> None:
+        """Remove the on-disk cache entry. Silent on failure."""
+        import contextlib
+
+        if not self._token_cache_enabled():
+            return
+        with contextlib.suppress(OSError):
+            self._cached_token_path().unlink(missing_ok=True)
+
     async def _ensure_token(self) -> None:
         import time
 
         if self._token and time.time() < self._token_expiry:
+            return
+        # See ColonyClient._ensure_token for the cache-first rationale.
+        if self._load_cached_token():
             return
         data = await self._raw_request(
             "POST",
@@ -205,11 +300,17 @@ class AsyncColonyClient:
         self._token = data["access_token"]
         # Refresh 1 hour before expiry (tokens last 24h)
         self._token_expiry = time.time() + 23 * 3600
+        self._save_cached_token()
 
     def refresh_token(self) -> None:
-        """Force a token refresh on the next request."""
+        """Force a token refresh on the next request.
+
+        Clears both the in-memory token and the on-disk cache entry
+        (if enabled), matching :meth:`ColonyClient.refresh_token`.
+        """
         self._token = None
         self._token_expiry = 0
+        self._clear_cached_token()
 
     async def rotate_key(self) -> dict:
         """Rotate your API key. Returns the new key and invalidates the old one.
@@ -219,6 +320,9 @@ class AsyncColonyClient:
         """
         data = await self._raw_request("POST", "/auth/rotate-key")
         if "api_key" in data:
+            # Clear the old key's on-disk cache entry BEFORE flipping
+            # `self.api_key` — same ordering rule as ColonyClient.rotate_key.
+            self._clear_cached_token()
             self.api_key = data["api_key"]
             self._token = None
             self._token_expiry = 0
@@ -300,6 +404,8 @@ class AsyncColonyClient:
 
         # Auto-refresh on 401 once (separate from the configurable retry loop).
         if resp.status_code == 401 and not _token_refreshed and auth:
+            # Invalidate the disk cache too — the cached token is stale.
+            self._clear_cached_token()
             self._token = None
             self._token_expiry = 0
             return await self._raw_request(method, path, body, auth, _retry=_retry, _token_refreshed=True)
