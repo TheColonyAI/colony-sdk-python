@@ -882,27 +882,90 @@ class TestTokenCachePersistence:
         cached = _json.loads(next(iter(tmp_path.glob("*.json"))).read_text())
         assert cached["token"] == "jwt_new"
 
-    def test_cache_dir_honors_xdg_cache_home(self, monkeypatch, tmp_path):
-        """When `XDG_CACHE_HOME` is set and our explicit override isn't,
-        the cache lives under `$XDG_CACHE_HOME/colony-sdk/`. Matches the
-        XDG Base Directory Specification."""
+    def test_cache_dir_explicit_override_wins_on_every_platform(self, monkeypatch, tmp_path):
+        """`COLONY_SDK_TOKEN_CACHE_DIR` short-circuits all platform
+        detection — it's the escape hatch for tests, multi-user hosts,
+        and anyone who wants the cache somewhere specific."""
         from colony_sdk.client import _token_cache_dir
 
-        # Clear the explicit override so XDG path is selected.
+        monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path / "explicit"))
+        # Force a non-Linux platform — override must still win.
+        monkeypatch.setattr("colony_sdk.client.sys.platform", "win32")
+        assert _token_cache_dir() == tmp_path / "explicit"
+
+    def test_cache_dir_linux_honors_xdg_cache_home(self, monkeypatch, tmp_path):
+        """Linux: `$XDG_CACHE_HOME/colony-sdk` per the XDG Base Directory Spec."""
+        from colony_sdk.client import _token_cache_dir
+
         monkeypatch.delenv("COLONY_SDK_TOKEN_CACHE_DIR", raising=False)
+        monkeypatch.setattr("colony_sdk.client.sys.platform", "linux")
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
         assert _token_cache_dir() == tmp_path / "colony-sdk"
 
-    def test_cache_dir_falls_back_to_home_dot_cache(self, monkeypatch, tmp_path):
-        """With neither override set, the cache lives at `~/.cache/colony-sdk/`."""
+    def test_cache_dir_linux_falls_back_to_home_dot_cache(self, monkeypatch, tmp_path):
+        """Linux without XDG_CACHE_HOME falls back to `~/.cache/colony-sdk`."""
         from pathlib import Path
 
         from colony_sdk.client import _token_cache_dir
 
         monkeypatch.delenv("COLONY_SDK_TOKEN_CACHE_DIR", raising=False)
         monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+        monkeypatch.setattr("colony_sdk.client.sys.platform", "linux")
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
         assert _token_cache_dir() == tmp_path / ".cache" / "colony-sdk"
+
+    def test_cache_dir_macos_uses_library_caches(self, monkeypatch, tmp_path):
+        """macOS: `~/Library/Caches/colony-sdk` per Apple's File System
+        Programming Guide."""
+        from pathlib import Path
+
+        from colony_sdk.client import _token_cache_dir
+
+        monkeypatch.delenv("COLONY_SDK_TOKEN_CACHE_DIR", raising=False)
+        monkeypatch.setattr("colony_sdk.client.sys.platform", "darwin")
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        # Even with XDG_CACHE_HOME set, macOS should ignore it.
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "wrong"))
+        assert _token_cache_dir() == tmp_path / "Library" / "Caches" / "colony-sdk"
+
+    def test_cache_dir_windows_prefers_localappdata(self, monkeypatch, tmp_path):
+        """Windows: `%LOCALAPPDATA%\\colony-sdk\\Cache` — machine-local
+        rather than roamed. (Local cache shouldn't sync to other
+        machines via the roaming profile.)"""
+        from colony_sdk.client import _token_cache_dir
+
+        monkeypatch.delenv("COLONY_SDK_TOKEN_CACHE_DIR", raising=False)
+        monkeypatch.setattr("colony_sdk.client.sys.platform", "win32")
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+        monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+        result = _token_cache_dir()
+        assert result == tmp_path / "Local" / "colony-sdk" / "Cache"
+
+    def test_cache_dir_windows_falls_back_to_appdata(self, monkeypatch, tmp_path):
+        """Windows without LOCALAPPDATA falls back to APPDATA (still
+        better than dumping under home root)."""
+        from colony_sdk.client import _token_cache_dir
+
+        monkeypatch.delenv("COLONY_SDK_TOKEN_CACHE_DIR", raising=False)
+        monkeypatch.setattr("colony_sdk.client.sys.platform", "win32")
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+        result = _token_cache_dir()
+        assert result == tmp_path / "Roaming" / "colony-sdk" / "Cache"
+
+    def test_cache_dir_windows_falls_back_to_home_appdata_local(self, monkeypatch, tmp_path):
+        """Windows with neither env var falls back to the conventional
+        `~/AppData/Local/colony-sdk/Cache` path."""
+        from pathlib import Path
+
+        from colony_sdk.client import _token_cache_dir
+
+        monkeypatch.delenv("COLONY_SDK_TOKEN_CACHE_DIR", raising=False)
+        monkeypatch.setattr("colony_sdk.client.sys.platform", "win32")
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        monkeypatch.delenv("APPDATA", raising=False)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+        assert _token_cache_dir() == tmp_path / "AppData" / "Local" / "colony-sdk" / "Cache"
 
     def test_save_swallows_mid_write_oserror(self, monkeypatch, tmp_path):
         """If `json.dump` raises an OSError mid-write (disk full, broken

@@ -1,16 +1,25 @@
 # Changelog
 
-## 1.12.0 — 2026-05-23
+## 1.11.2 — 2026-05-23
 
-### New features
+### Fixed
 
-- **Cross-process JWT cache.** The SDK now persists the `/auth/token` response to disk in `~/.cache/colony-sdk/<sha256(base_url|api_key)[:16]>.json` (XDG-aware: honors `XDG_CACHE_HOME`, overridable via `COLONY_SDK_TOKEN_CACHE_DIR`). A new `ColonyClient(..., cache_token=True)` constructor arg (default-on) enables the disk cache; per-client opt-out is `cache_token=False` and global opt-out is `COLONY_SDK_NO_TOKEN_CACHE=1`. Cache writes are atomic (tmpfile + rename) and mode-0600 so a co-tenant on the same host cannot read another user's token. Reads and writes are best-effort — any IO error silently falls through to a fresh `/auth/token` call, so cache correctness is never load-bearing.
+- **Cross-process JWT cache.** The in-memory `_token` cache previously survived only for the lifetime of a `ColonyClient` instance — short-lived scripts and processes that recreate a client per invocation re-authenticated against `/auth/token` every time, which the server rate-limits per-IP. The SDK now persists the access token to disk so a new process for the same `(base_url, api_key)` pair reuses the cached token instead of round-tripping.
 
-  Closes the failure mode that surfaced on 2026-05-23 where a single host running ~10 short-lived SDK scripts plus four supervisor-rotated dogfood agents hit the server-side 100/hr/IP rate limit on `/auth/token`. Each fresh `ColonyClient` instance previously re-authed from zero; with this PR a new process for the same `(base_url, api_key)` pair reuses the on-disk token instead, as long as it has > 60s of life remaining (the safety margin guards against a token expiring mid-request).
+  Cache location is platform-aware:
 
-  The cache key includes both `base_url` and `api_key` so the same key used against prod vs staging gets independent cache files. `refresh_token()`, `rotate_key()`, and the auto-401-refresh path all invalidate the on-disk cache so a stale token cannot resurrect itself across processes. Mirrored in `AsyncColonyClient` (same cache file format and location — sync and async clients can share the cache for the same `(base_url, api_key)` pair).
+  - **Linux / BSD / Unix**: `$XDG_CACHE_HOME/colony-sdk/` or `~/.cache/colony-sdk/`
+  - **macOS**: `~/Library/Caches/colony-sdk/`
+  - **Windows**: `%LOCALAPPDATA%\colony-sdk\Cache\` (falls back to `%APPDATA%`)
+  - Always overridable via `COLONY_SDK_TOKEN_CACHE_DIR`
 
-  11 new regression tests in `test_client.py::TestTokenCachePersistence`. A new `tests/conftest.py` autouse fixture routes the cache to a per-test `tmp_path` so existing tests don't leak token files into the developer's real cache dir.
+  Filename is `<sha256(base_url|api_key)[:16]>.json` so the same api_key against prod vs staging gets independent cache files. Cache writes are atomic (tmpfile + rename) and mode-0600 so a co-tenant on the same host cannot read another user's token. A 60-second safety margin avoids handing out a token that's about to expire mid-request.
+
+  Opt-out: per-client via `ColonyClient(..., cache_token=False)`, or globally via `COLONY_SDK_NO_TOKEN_CACHE=1`.
+
+  Reads and writes are best-effort — any IO error (un-writable cache dir, corrupt cache file, disk full) silently falls through to a fresh `/auth/token` call, so cache correctness is never load-bearing on the request path. `refresh_token()`, `rotate_key()`, and the auto-401-refresh path all invalidate the on-disk cache so a stale token cannot resurrect across processes. Mirrored in `AsyncColonyClient` (shared cache file format and location for the same `(base_url, api_key)` pair).
+
+  Regression coverage in `test_client.py::TestTokenCachePersistence` and `test_async_client.py::TestAsyncTokenCachePersistence`. A new `tests/conftest.py` autouse fixture routes the cache to a per-test `tmp_path` so existing tests don't leak token files into the developer's real cache dir.
 
 ## 1.11.0 — 2026-05-18
 

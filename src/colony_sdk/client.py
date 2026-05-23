@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -194,11 +195,11 @@ _DEFAULT_AUTH_RETRY = RetryConfig(max_retries=6, base_delay=2.0, max_delay=60.0)
 # ── On-disk JWT cache ────────────────────────────────────────────────────
 #
 # The in-memory `_token` cache on `ColonyClient` survives only for the
-# lifetime of the client instance. Process restarts (and short-lived
-# scripts that construct a fresh client per invocation) re-auth against
-# `/auth/token` every time, which trips the 100/hr/IP server-side rate
-# limit when many cycles happen on the same host — a recurring pattern
-# in supervisor-rotated dogfood-agent setups.
+# lifetime of the client instance. Short-lived scripts and any setup
+# that constructs a fresh client per invocation pay for a `/auth/token`
+# round-trip on every start — and the server rate-limits that endpoint
+# per-IP, so heavy reconstruction can exhaust the budget before doing
+# any real work.
 #
 # This file-backed cache survives across processes for the same
 # (base_url, api_key) pair. The on-disk format is a small JSON envelope
@@ -213,14 +214,40 @@ _TOKEN_CACHE_SAFETY_MARGIN_SEC = 60.0
 
 
 def _token_cache_dir() -> Path:
-    """Resolve the JWT cache directory.
+    """Resolve the JWT cache directory for the current platform.
 
-    Honors ``COLONY_SDK_TOKEN_CACHE_DIR`` if set (tests + power users).
-    Otherwise honors ``XDG_CACHE_HOME``. Otherwise ``~/.cache/colony-sdk``.
+    Resolution order:
+
+    1. ``COLONY_SDK_TOKEN_CACHE_DIR`` if set (tests + power users override).
+    2. Platform default:
+
+       - **Linux / BSD / other Unix**: ``$XDG_CACHE_HOME/colony-sdk`` if
+         set, otherwise ``~/.cache/colony-sdk`` (XDG Base Directory).
+       - **macOS**: ``~/Library/Caches/colony-sdk`` (Apple's File System
+         Programming Guide).
+       - **Windows**: ``%LOCALAPPDATA%/colony-sdk/Cache``, falling back
+         to ``%APPDATA%/colony-sdk/Cache``, and finally to
+         ``~/AppData/Local/colony-sdk/Cache`` if neither is set.
+
+    If the chosen path can't be created or written at use time, the
+    caller silently falls through to a fresh `/auth/token` request, so
+    cache resolution never errors at this layer.
     """
     override = os.environ.get("COLONY_SDK_TOKEN_CACHE_DIR")
     if override:
         return Path(override)
+    if sys.platform == "win32":
+        # Prefer LOCALAPPDATA (machine-local, not roamed) over APPDATA
+        # so a per-machine cache isn't synced to other machines via
+        # roaming profiles.
+        for env_var in ("LOCALAPPDATA", "APPDATA"):
+            base = os.environ.get(env_var)
+            if base:
+                return Path(base) / "colony-sdk" / "Cache"
+        return Path.home() / "AppData" / "Local" / "colony-sdk" / "Cache"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "colony-sdk"
+    # Linux / BSD / other Unix.
     xdg = os.environ.get("XDG_CACHE_HOME")
     if xdg:
         return Path(xdg) / "colony-sdk"
@@ -508,10 +535,12 @@ class ColonyClient:
         self.auth_token_retry = auth_token_retry if auth_token_retry is not None else _DEFAULT_AUTH_RETRY
         self.typed = typed
         self.proxy = proxy
-        # `cache_token=True` (default) persists the JWT to disk in
-        # `~/.cache/colony-sdk/` (XDG-aware) so it survives process
-        # restarts for the same (base_url, api_key) pair. Set to False
-        # to disable per-client. Global opt-out via the
+        # `cache_token=True` (default) persists the JWT to a
+        # platform-specific cache directory (XDG on Linux,
+        # ~/Library/Caches on macOS, %LOCALAPPDATA% on Windows; see
+        # :func:`_token_cache_dir`) so it survives process restarts
+        # for the same (base_url, api_key) pair. Set to False to
+        # disable per-client. Global opt-out via the
         # `COLONY_SDK_NO_TOKEN_CACHE=1` env var. The cache file is
         # written mode-0600 and reads/writes are best-effort: any IO
         # error silently falls through to a fresh `/auth/token` call.
@@ -706,10 +735,8 @@ class ColonyClient:
             return
         # Try the on-disk cache before paying for a fresh /auth/token
         # call. Cache is keyed by (base_url, api_key) so it survives
-        # process restarts — important for supervisor-rotated dogfood
-        # agents that re-instantiate a client on every cycle and would
-        # otherwise rapidly exhaust the 100/hr/IP /auth/token rate
-        # limit.
+        # process restarts and short-lived scripts that would otherwise
+        # re-authenticate on every invocation.
         if self._load_cached_token():
             return
         # Use the more aggressive `auth_token_retry` config for the

@@ -95,9 +95,11 @@ class AsyncColonyClient:
         self.timeout = timeout
         self.retry = retry if retry is not None else RetryConfig()
         self.typed = typed
-        # `cache_token=True` (default) persists the JWT to disk in
-        # `~/.cache/colony-sdk/` (XDG-aware), shared with the sync
-        # `ColonyClient` — same (base_url, api_key) pair, same file.
+        # `cache_token=True` (default) persists the JWT to a
+        # platform-specific cache directory (see
+        # :func:`colony_sdk.client._token_cache_dir` for resolution
+        # order on Linux / macOS / Windows). Shared cache file with the
+        # sync `ColonyClient` for the same (base_url, api_key) pair.
         # Disable per-client by passing False, or globally with
         # `COLONY_SDK_NO_TOKEN_CACHE=1`.
         self.cache_token = cache_token
