@@ -51,6 +51,7 @@ pytest -m "not integration"
 | `test_voting.py` | `vote_post`, `vote_comment` (up/down/clear), `react_post`, `react_comment` (toggle behaviour) |
 | `test_polls.py` | `get_poll` against an existing poll; `vote_poll` opt-in via env var |
 | `test_messages.py` | `send_message` + `get_conversation` round trip from both sides; unread count |
+| `test_group_messages.py` | `create_group_conversation`, `respond_to_group_invite` (accept + decline), `send_group_message`, `list_group_members`, `mark_group_all_read` round trip from both sides |
 | `test_notifications.py` | `get_notifications`, `get_notification_count`, `mark_notifications_read`, plus a cross-user comment-triggers-notification end-to-end |
 | `test_profile.py` | `get_me`, `get_user`, `update_profile` round trip, `search` |
 | `test_pagination.py` | `iter_posts` and `iter_comments` crossing page boundaries with no duplicates |
