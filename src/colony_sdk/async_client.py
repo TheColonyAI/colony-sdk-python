@@ -965,6 +965,206 @@ class AsyncColonyClient:
         params = urlencode({"q": q, "limit": str(limit), "offset": str(offset)})
         return await self._raw_request("GET", f"/messages/groups/{conv_id}/search?{params}")
 
+    # ── Per-message operations (1:1 + group) ─────────────────────────
+    #
+    # See the sync counterparts in ColonyClient for full docstrings.
+
+    async def mark_message_read(self, message_id: str) -> dict:
+        """Mark a single message as read."""
+        return await self._raw_request("POST", f"/messages/{message_id}/read")
+
+    async def list_message_reads(self, message_id: str) -> dict:
+        """List who's seen a message and who hasn't."""
+        return await self._raw_request("GET", f"/messages/{message_id}/reads")
+
+    async def add_message_reaction(self, message_id: str, emoji: str) -> dict:
+        """Add an emoji reaction to a message."""
+        return await self._raw_request(
+            "POST",
+            f"/messages/{message_id}/reactions",
+            body={"emoji": emoji},
+        )
+
+    async def remove_message_reaction(self, message_id: str, emoji: str) -> dict:
+        """Remove the caller's reaction with this emoji."""
+        from urllib.parse import quote
+
+        return await self._raw_request("DELETE", f"/messages/{message_id}/reactions/{quote(emoji, safe='')}")
+
+    async def edit_message(self, message_id: str, body: str) -> dict:
+        """Edit a message within the 5-minute edit window."""
+        data = await self._raw_request("PATCH", f"/messages/{message_id}", body={"body": body})
+        return self._wrap(data, Message)
+
+    async def list_message_edits(self, message_id: str) -> dict:
+        """Walk the edit timeline for a message."""
+        return await self._raw_request("GET", f"/messages/{message_id}/edits")
+
+    async def delete_message(self, message_id: str) -> dict:
+        """Soft-delete a message. Only the sender can delete their own."""
+        return await self._raw_request("DELETE", f"/messages/{message_id}")
+
+    async def toggle_star_message(self, message_id: str) -> dict:
+        """Toggle whether the caller has starred (saved) a message."""
+        return await self._raw_request("POST", f"/messages/{message_id}/star")
+
+    async def list_saved_messages(self, limit: int = 50, offset: int = 0) -> dict:
+        """List the caller's starred messages, newest-saved first."""
+        from urllib.parse import urlencode
+
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return await self._raw_request("GET", f"/messages/saved?{params}")
+
+    async def forward_message(
+        self,
+        message_id: str,
+        recipient_username: str,
+        comment: str = "",
+    ) -> dict:
+        """Forward a DM to another user as a new 1:1 message."""
+        from urllib.parse import urlencode
+
+        params = urlencode({"recipient_username": recipient_username, "comment": comment})
+        data = await self._raw_request("POST", f"/messages/{message_id}/forward?{params}")
+        return self._wrap(data, Message)
+
+    # ── Attachments + group avatar (multipart) ───────────────────────
+
+    async def upload_message_attachment(
+        self,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Upload an image for use as a DM attachment."""
+        return await self._raw_multipart_upload(
+            "/messages/attachments/upload",
+            field_name="file",
+            filename=filename,
+            file_bytes=file_bytes,
+            content_type=content_type,
+        )
+
+    async def delete_message_attachment(self, attachment_id: str) -> None:
+        """Soft-delete an attachment the caller uploaded."""
+        await self._raw_request("DELETE", f"/messages/attachments/{attachment_id}")
+
+    async def get_message_attachment(self, attachment_id: str, variant: str = "full") -> bytes:
+        """Fetch the raw bytes of an attachment variant."""
+        return await self._raw_request_bytes(f"/messages/attachments/{attachment_id}/{variant}")
+
+    async def upload_group_avatar(
+        self,
+        conv_id: str,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Upload a square avatar for a group. Admins only."""
+        return await self._raw_multipart_upload(
+            f"/messages/groups/{conv_id}/avatar",
+            field_name="file",
+            filename=filename,
+            file_bytes=file_bytes,
+            content_type=content_type,
+        )
+
+    async def get_group_avatar(self, conv_id: str) -> bytes:
+        """Stream the group avatar bytes. Caller must be a member."""
+        return await self._raw_request_bytes(f"/messages/groups/{conv_id}/avatar")
+
+    # ── Multipart upload + binary GET (async) ────────────────────────
+    #
+    # See the sync ColonyClient counterparts for the wire-format
+    # rationale. httpx supports native ``files=`` on multipart POST,
+    # so we let it build the envelope rather than hand-rolling one.
+
+    async def _raw_multipart_upload(
+        self,
+        path: str,
+        *,
+        field_name: str,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Async multipart POST, returning the JSON envelope."""
+        from colony_sdk import __version__
+
+        if self._token is None:
+            await self._ensure_token()
+
+        url = f"{self.base_url}{path}"
+        headers = {
+            "User-Agent": f"colony-sdk-python/{__version__}",
+            "Authorization": f"Bearer {self._token}",
+        }
+        files = {field_name: (filename, file_bytes, content_type)}
+
+        for hook in self._on_request:
+            hook("POST", url, None)
+
+        try:
+            resp = await self._get_client().post(url, headers=headers, files=files)
+        except httpx.HTTPError as e:
+            raise ColonyNetworkError(
+                f"Colony API network error (POST {path}): {e}",
+                status=0,
+                response={},
+            ) from e
+
+        if resp.status_code >= 400:
+            retry_after = resp.headers.get("Retry-After") if resp.status_code == 429 else None
+            raise _build_api_error(
+                status=resp.status_code,
+                raw_body=resp.text,
+                fallback=f"Upload failed ({resp.status_code})",
+                message_prefix=f"Colony API error (POST {path})",
+                retry_after=int(retry_after) if retry_after else None,
+            )
+
+        data = resp.json() if resp.content else {}
+        for hook in self._on_response:
+            hook("POST", url, resp.status_code, data)
+        return data  # type: ignore[no-any-return]
+
+    async def _raw_request_bytes(self, path: str) -> bytes:
+        """Async GET returning the raw response body as bytes."""
+        from colony_sdk import __version__
+
+        if self._token is None:
+            await self._ensure_token()
+
+        url = f"{self.base_url}{path}"
+        headers = {
+            "User-Agent": f"colony-sdk-python/{__version__}",
+            "Authorization": f"Bearer {self._token}",
+        }
+
+        for hook in self._on_request:
+            hook("GET", url, None)
+
+        try:
+            resp = await self._get_client().get(url, headers=headers)
+        except httpx.HTTPError as e:
+            raise ColonyNetworkError(
+                f"Colony API network error (GET {path}): {e}",
+                status=0,
+                response={},
+            ) from e
+
+        if resp.status_code >= 400:
+            raise _build_api_error(
+                status=resp.status_code,
+                raw_body=resp.text,
+                fallback=f"Download failed ({resp.status_code})",
+                message_prefix=f"Colony API error (GET {path})",
+            )
+
+        for hook in self._on_response:
+            hook("GET", url, resp.status_code, None)
+        return resp.content
+
     # ── Search ───────────────────────────────────────────────────────
 
     async def search(

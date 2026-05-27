@@ -369,3 +369,117 @@ class TestMockClient:
             "search_group_messages",
             {"conv_id": "g-1", "q": "hi", "limit": 10, "offset": 20},
         )
+
+    # ── Per-message operations ───────────────────────────────────────
+
+    def test_mark_message_read_records_call(self) -> None:
+        client = MockColonyClient()
+        client.mark_message_read("m-1")
+        assert client.calls[-1] == ("mark_message_read", {"message_id": "m-1"})
+
+    def test_list_message_reads_records_call(self) -> None:
+        client = MockColonyClient()
+        client.list_message_reads("m-1")
+        assert client.calls[-1] == ("list_message_reads", {"message_id": "m-1"})
+
+    def test_add_message_reaction_records_call(self) -> None:
+        client = MockColonyClient()
+        client.add_message_reaction("m-1", "👍")
+        assert client.calls[-1] == (
+            "add_message_reaction",
+            {"message_id": "m-1", "emoji": "👍"},
+        )
+
+    def test_remove_message_reaction_records_call(self) -> None:
+        client = MockColonyClient()
+        client.remove_message_reaction("m-1", "👍")
+        assert client.calls[-1] == (
+            "remove_message_reaction",
+            {"message_id": "m-1", "emoji": "👍"},
+        )
+
+    def test_edit_message_records_call(self) -> None:
+        client = MockColonyClient()
+        client.edit_message("m-1", "new body")
+        assert client.calls[-1] == ("edit_message", {"message_id": "m-1", "body": "new body"})
+
+    def test_list_message_edits_records_call(self) -> None:
+        client = MockColonyClient()
+        client.list_message_edits("m-1")
+        assert client.calls[-1] == ("list_message_edits", {"message_id": "m-1"})
+
+    def test_delete_message_records_call(self) -> None:
+        client = MockColonyClient()
+        client.delete_message("m-1")
+        assert client.calls[-1] == ("delete_message", {"message_id": "m-1"})
+
+    def test_toggle_star_message_records_call(self) -> None:
+        client = MockColonyClient()
+        client.toggle_star_message("m-1")
+        assert client.calls[-1] == ("toggle_star_message", {"message_id": "m-1"})
+
+    def test_list_saved_messages_records_call(self) -> None:
+        client = MockColonyClient()
+        client.list_saved_messages(limit=20, offset=5)
+        assert client.calls[-1] == ("list_saved_messages", {"limit": 20, "offset": 5})
+
+    def test_forward_message_records_call(self) -> None:
+        client = MockColonyClient()
+        client.forward_message("m-1", "carol", comment="FYI")
+        assert client.calls[-1] == (
+            "forward_message",
+            {"message_id": "m-1", "recipient_username": "carol", "comment": "FYI"},
+        )
+
+    # ── Attachments + group avatar ──────────────────────────────────
+
+    def test_upload_message_attachment_records_size_not_bytes(self) -> None:
+        # The mock records the byte length rather than the raw bytes
+        # so test assertions stay grep-able for large uploads.
+        client = MockColonyClient()
+        client.upload_message_attachment("photo.png", b"\x89PNG" * 100, "image/png")
+        assert client.calls[-1] == (
+            "upload_message_attachment",
+            {"filename": "photo.png", "size_bytes": 400, "content_type": "image/png"},
+        )
+
+    def test_delete_message_attachment_records_call(self) -> None:
+        client = MockColonyClient()
+        client.delete_message_attachment("a-1")
+        assert client.calls[-1] == ("delete_message_attachment", {"attachment_id": "a-1"})
+
+    def test_get_message_attachment_returns_sentinel_bytes_by_default(self) -> None:
+        client = MockColonyClient()
+        result = client.get_message_attachment("a-1")
+        assert isinstance(result, bytes)
+        assert client.calls[-1] == (
+            "get_message_attachment",
+            {"attachment_id": "a-1", "variant": "full"},
+        )
+
+    def test_get_message_attachment_custom_bytes_response(self) -> None:
+        client = MockColonyClient(responses={"get_message_attachment": b"custom-image-bytes"})
+        assert client.get_message_attachment("a-1") == b"custom-image-bytes"
+
+    def test_upload_group_avatar_records_call(self) -> None:
+        client = MockColonyClient()
+        client.upload_group_avatar("g-1", "team.png", b"\x89PNG", "image/png")
+        assert client.calls[-1] == (
+            "upload_group_avatar",
+            {
+                "conv_id": "g-1",
+                "filename": "team.png",
+                "size_bytes": 4,
+                "content_type": "image/png",
+            },
+        )
+
+    def test_get_group_avatar_returns_sentinel_bytes(self) -> None:
+        client = MockColonyClient()
+        result = client.get_group_avatar("g-1")
+        assert isinstance(result, bytes)
+        assert client.calls[-1] == ("get_group_avatar", {"conv_id": "g-1"})
+
+    def test_get_group_avatar_custom_bytes_response(self) -> None:
+        client = MockColonyClient(responses={"get_group_avatar": b"custom"})
+        assert client.get_group_avatar("g-1") == b"custom"

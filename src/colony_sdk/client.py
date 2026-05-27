@@ -935,6 +935,137 @@ class ColonyClient:
                 response={},
             ) from e
 
+    # ── Multipart upload + binary GET helpers ────────────────────────
+    #
+    # The DM attachment + group avatar endpoints accept multipart/
+    # form-data and serve raw image bytes; both shapes sit outside the
+    # JSON contract handled by ``_raw_request``. These helpers build
+    # the multipart envelope manually (urllib has no native support)
+    # and parse JSON / return bytes as appropriate. They share auth
+    # and rate-limit-tracking with ``_raw_request`` but skip the
+    # configurable retry loop — uploads/downloads are rarely safe to
+    # retry blindly.
+
+    def _raw_multipart_upload(
+        self,
+        path: str,
+        *,
+        field_name: str,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Build a single-file ``multipart/form-data`` POST and return JSON.
+
+        Hand-rolled rather than using ``email.mime`` so the wire
+        format is exactly what FastAPI's ``UploadFile`` parser expects
+        (RFC 7578 with CRLF line endings).
+        """
+        from colony_sdk import __version__
+
+        if self._token is None:
+            self._ensure_token()
+
+        boundary = f"----colonysdk{os.urandom(16).hex()}"
+        # Escape filename quotes per RFC 6266 §4.2: ``"`` and ``\`` in
+        # the filename get backslash-escaped to keep the header parseable.
+        safe_filename = filename.replace("\\", "\\\\").replace('"', '\\"')
+        crlf = b"\r\n"
+        body_parts: list[bytes] = [
+            f"--{boundary}".encode(),
+            (f'Content-Disposition: form-data; name="{field_name}"; filename="{safe_filename}"').encode(),
+            f"Content-Type: {content_type}".encode(),
+            b"",
+            file_bytes,
+            f"--{boundary}--".encode(),
+            b"",
+        ]
+        payload = crlf.join(body_parts)
+
+        url = f"{self.base_url}{path}"
+        headers = {
+            "User-Agent": f"colony-sdk-python/{__version__}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Authorization": f"Bearer {self._token}",
+        }
+
+        for hook in self._on_request:
+            hook("POST", url, None)
+
+        req = Request(url, data=payload, headers=headers, method="POST")
+        logger.debug("→ POST %s (multipart, %d bytes)", url, len(file_bytes))
+
+        try:
+            with urlopen(req, timeout=self.timeout) as resp:
+                raw = resp.read().decode()
+                self.last_rate_limit = RateLimitInfo.from_headers(dict(resp.getheaders()))
+                data = json.loads(raw) if raw else {}
+                for hook in self._on_response:
+                    hook("POST", url, resp.status, data)
+                return data
+        except HTTPError as e:
+            resp_body = e.read().decode()
+            retry_after_val = e.headers.get("Retry-After") if e.headers else None
+            raise _build_api_error(
+                status=e.code,
+                raw_body=resp_body,
+                fallback=f"Upload failed ({e.code})",
+                message_prefix=f"Colony API error (POST {path})",
+                retry_after=int(retry_after_val) if (e.code == 429 and retry_after_val) else None,
+            ) from e
+        except URLError as e:
+            raise ColonyNetworkError(
+                f"Colony API network error (POST {path}): {e.reason}",
+                status=0,
+                response={},
+            ) from e
+
+    def _raw_request_bytes(self, path: str) -> bytes:
+        """GET an endpoint and return the raw response body as bytes.
+
+        Used for image / file streams (attachment + avatar downloads)
+        where the body is not JSON. Auth is required (the server's
+        attachment + avatar endpoints both check membership).
+        """
+        from colony_sdk import __version__
+
+        if self._token is None:
+            self._ensure_token()
+
+        url = f"{self.base_url}{path}"
+        headers = {
+            "User-Agent": f"colony-sdk-python/{__version__}",
+            "Authorization": f"Bearer {self._token}",
+        }
+
+        for hook in self._on_request:
+            hook("GET", url, None)
+
+        req = Request(url, headers=headers, method="GET")
+        logger.debug("→ GET %s (raw bytes)", url)
+
+        try:
+            with urlopen(req, timeout=self.timeout) as resp:
+                raw_bytes = resp.read()
+                self.last_rate_limit = RateLimitInfo.from_headers(dict(resp.getheaders()))
+                for hook in self._on_response:
+                    hook("GET", url, resp.status, None)
+                return raw_bytes  # type: ignore[no-any-return]
+        except HTTPError as e:
+            resp_body = e.read().decode("utf-8", errors="replace")
+            raise _build_api_error(
+                status=e.code,
+                raw_body=resp_body,
+                fallback=f"Download failed ({e.code})",
+                message_prefix=f"Colony API error (GET {path})",
+            ) from e
+        except URLError as e:
+            raise ColonyNetworkError(
+                f"Colony API network error (GET {path}): {e.reason}",
+                status=0,
+                response={},
+            ) from e
+
     # ── Colony slug → UUID resolution ────────────────────────────────
 
     def _resolve_colony_uuid(self, value: str) -> str:
@@ -1953,6 +2084,277 @@ class ColonyClient:
 
         params = urlencode({"q": q, "limit": str(limit), "offset": str(offset)})
         return self._raw_request("GET", f"/messages/groups/{conv_id}/search?{params}")
+
+    # ── Per-message operations (1:1 + group) ─────────────────────────
+    #
+    # These endpoints all key off ``message_id`` directly — the same
+    # surface for 1:1 and group messages. Authorization is checked
+    # server-side against the message's conversation: a sender can
+    # always touch their own messages; everyone in the conversation
+    # can mark-read, reads-list, react. Some ops (edit, delete) are
+    # sender-only with a 5-minute window for edits.
+
+    def mark_message_read(self, message_id: str) -> dict:
+        """Mark a single message as read by the caller.
+
+        Idempotent and finer-grained than the conversation-level
+        :meth:`mark_conversation_read` / :meth:`mark_group_all_read`
+        endpoints — useful when a client wants per-message acks
+        rather than bulk-marking on focus.
+
+        Returns:
+            ``{message_id, was_unread: bool, read_at: str | None}``.
+            ``was_unread`` is False on the second call (idempotent).
+        """
+        return self._raw_request("POST", f"/messages/{message_id}/read")
+
+    def list_message_reads(self, message_id: str) -> dict:
+        """List who's seen a message and who hasn't.
+
+        Powers the "Seen by N of M" pill on sender-side bubbles in
+        group conversations. The same shape works for 1:1: one entry
+        on each side, ``seen`` based on the message's ``is_read``.
+
+        Returns:
+            ``{is_group, total_others, seen_count,
+            seen: [{user_id, username, display_name, read_at}],
+            unseen: [{user_id, username, display_name}]}``.
+
+        Raises:
+            ColonyAuthError: 403 if the caller is not a participant
+                of the message's conversation.
+        """
+        return self._raw_request("GET", f"/messages/{message_id}/reads")
+
+    def add_message_reaction(self, message_id: str, emoji: str) -> dict:
+        """Add an emoji reaction to a message.
+
+        Args:
+            message_id: The UUID of the message to react to.
+            emoji: A short emoji string (server enforces ≤ 30 chars
+                including the emoji's compound codepoints).
+
+        Returns:
+            The created :class:`MessageReaction` envelope
+            ``{emoji, user_id, username, created_at}``. Adding the
+            same reaction twice is a no-op (idempotent).
+        """
+        return self._raw_request(
+            "POST",
+            f"/messages/{message_id}/reactions",
+            body={"emoji": emoji},
+        )
+
+    def remove_message_reaction(self, message_id: str, emoji: str) -> dict:
+        """Remove the caller's reaction with this emoji.
+
+        Idempotent — removing a reaction the caller never placed is a
+        no-op (returns ``{removed: False, ...}``).
+        """
+        from urllib.parse import quote
+
+        return self._raw_request("DELETE", f"/messages/{message_id}/reactions/{quote(emoji, safe='')}")
+
+    def edit_message(self, message_id: str, body: str) -> dict:
+        """Edit a message within the 5-minute edit window.
+
+        Args:
+            message_id: The message's UUID. Must be one the caller sent.
+            body: New body text. 1..10000 chars.
+
+        Returns:
+            The updated :class:`Message`. The server records the
+            pre-edit body in the message-edit history (queryable via
+            :meth:`list_message_edits`).
+
+        Raises:
+            ColonyAuthError: 403 if the caller is not the sender or
+                the edit window has lapsed.
+        """
+        data = self._raw_request("PATCH", f"/messages/{message_id}", body={"body": body})
+        return self._wrap(data, Message)
+
+    def list_message_edits(self, message_id: str) -> dict:
+        """Walk the edit timeline for a message.
+
+        Returns:
+            ``{message_id, versions: [{body, at, is_current}]}``. The
+            first entry is the current body (``is_current=True``);
+            subsequent entries are older versions in
+            most-recently-edited order.
+        """
+        return self._raw_request("GET", f"/messages/{message_id}/edits")
+
+    def delete_message(self, message_id: str) -> dict:
+        """Soft-delete a message. Only the sender can delete their own.
+
+        The message is replaced with a tombstone (rendered as
+        "message deleted" by clients); reactions, reads, and the
+        edit history are preserved server-side for audit.
+
+        Returns:
+            ``{deleted: True, message_id}``.
+        """
+        return self._raw_request("DELETE", f"/messages/{message_id}")
+
+    def toggle_star_message(self, message_id: str) -> dict:
+        """Toggle whether the caller has starred (saved) a message.
+
+        Each call flips the state. The starred list is exposed via
+        :meth:`list_saved_messages`.
+
+        Returns:
+            ``{saved: bool}`` — the post-toggle state.
+        """
+        return self._raw_request("POST", f"/messages/{message_id}/star")
+
+    def list_saved_messages(self, limit: int = 50, offset: int = 0) -> dict:
+        """List the caller's starred messages, newest-saved first.
+
+        Returns:
+            ``{messages: [SavedMessageEntry], pagination: {total, has_more}}``.
+            Each entry includes the original message, the
+            ``other_username`` (for 1:1) or ``conversation_title``
+            (for groups) so clients can render a "Go to thread" link.
+        """
+        from urllib.parse import urlencode
+
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return self._raw_request("GET", f"/messages/saved?{params}")
+
+    def forward_message(
+        self,
+        message_id: str,
+        recipient_username: str,
+        comment: str = "",
+    ) -> dict:
+        """Forward a DM to another user as a new 1:1 message.
+
+        The original body is quoted in the new message; ``comment`` is
+        prepended as the forwarder's note. The recipient must pass
+        :func:`check_dm_eligibility` against the caller (block /
+        privacy / karma gate), same as any normal send.
+
+        Args:
+            message_id: The source message's UUID. Caller must be a
+                participant of the source conversation.
+            recipient_username: The target user.
+            comment: Optional forwarder's note (0..10000 chars).
+
+        Returns:
+            The created :class:`Message` envelope (the forwarded copy).
+        """
+        from urllib.parse import urlencode
+
+        params = urlencode({"recipient_username": recipient_username, "comment": comment})
+        data = self._raw_request("POST", f"/messages/{message_id}/forward?{params}")
+        return self._wrap(data, Message)
+
+    # ── Attachments + group avatar (multipart) ───────────────────────
+    #
+    # Two multipart-form-data endpoints (attachment upload, group
+    # avatar upload) and their byte-download counterparts. The SDK
+    # builds the multipart body manually on the sync path (urllib has
+    # no built-in support); the async path uses httpx's native
+    # ``files=`` argument.
+
+    def upload_message_attachment(
+        self,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Upload an image for use as a DM attachment.
+
+        Args:
+            filename: Display name (used in the multipart envelope and
+                stored on the row). The server derives the real
+                extension from a sniffed MIME type — the filename is
+                advisory.
+            file_bytes: The raw image bytes. Server cap is currently
+                8 MB; over that returns 413.
+            content_type: MIME type (``image/png``, ``image/jpeg``,
+                ``image/webp``, ``image/gif``). The server re-sniffs
+                the bytes to confirm; mismatches are rejected.
+
+        Returns:
+            ``{id, mime_type, size_bytes, width, height, thumb_url,
+            full_url, deduped: bool}``. ``deduped=True`` means the
+            upload matched an existing row by content_hash and the
+            existing row was returned instead of creating a new one.
+
+        Raises:
+            ColonyValidationError: 400 for bad MIME or mismatched
+                magic bytes; 413 for over-cap file size.
+        """
+        return self._raw_multipart_upload(
+            "/messages/attachments/upload",
+            field_name="file",
+            filename=filename,
+            file_bytes=file_bytes,
+            content_type=content_type,
+        )
+
+    def delete_message_attachment(self, attachment_id: str) -> None:
+        """Soft-delete an attachment the caller uploaded.
+
+        Only the uploader can delete. Returns nothing on success
+        (204 No Content). Idempotent — deleting an already-deleted
+        attachment still returns 204.
+        """
+        self._raw_request("DELETE", f"/messages/attachments/{attachment_id}")
+
+    def get_message_attachment(self, attachment_id: str, variant: str = "full") -> bytes:
+        """Fetch the raw bytes of an attachment variant.
+
+        Args:
+            attachment_id: The attachment's UUID.
+            variant: ``"full"`` (default) or ``"thumb"``. The server
+                generates thumbs server-side on upload.
+
+        Returns:
+            The raw image bytes. Caller must be a participant of the
+            conversation the attachment belongs to.
+        """
+        return self._raw_request_bytes(f"/messages/attachments/{attachment_id}/{variant}")
+
+    def upload_group_avatar(
+        self,
+        conv_id: str,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Upload a square avatar for a group. Admins only.
+
+        Args:
+            conv_id: The group's UUID.
+            filename: Display name for the multipart envelope.
+            file_bytes: The raw image bytes (square ratio is enforced
+                server-side; pre-crop client-side or accept the
+                server's center-crop).
+            content_type: MIME (``image/png``, ``image/jpeg``,
+                ``image/webp``).
+
+        Returns:
+            ``{avatar_url: str}`` — public-ish URL the client can
+            cache. Fetch the bytes via :meth:`get_group_avatar` if a
+            participant-authenticated stream is needed.
+
+        Raises:
+            ColonyAuthError: 403 if the caller is not a group admin.
+        """
+        return self._raw_multipart_upload(
+            f"/messages/groups/{conv_id}/avatar",
+            field_name="file",
+            filename=filename,
+            file_bytes=file_bytes,
+            content_type=content_type,
+        )
+
+    def get_group_avatar(self, conv_id: str) -> bytes:
+        """Stream the group avatar bytes. Caller must be a member."""
+        return self._raw_request_bytes(f"/messages/groups/{conv_id}/avatar")
 
     # ── Search ───────────────────────────────────────────────────────
 

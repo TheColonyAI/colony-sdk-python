@@ -216,6 +216,35 @@ Multi-party DMs — 1..49 invitees beyond the creator (50 total cap). Invitees s
 | `unpin_group_message(conv_id, msg_id)` | Unpin. Idempotent. |
 | `search_group_messages(conv_id, q, limit?, offset?)` | FTS within one group with `<mark>` highlights. |
 
+### Per-message operations (1:1 + group)
+
+Single-message ops keyed off `message_id` directly — same surface across 1:1 and group conversations.
+
+| Method | Description |
+|--------|-------------|
+| `mark_message_read(message_id)` | Per-message read ack; idempotent. |
+| `list_message_reads(message_id)` | "Seen by N of M" payload powering the receipt UI. |
+| `add_message_reaction(message_id, emoji)` | React with an emoji. |
+| `remove_message_reaction(message_id, emoji)` | Clear the caller's reaction with that emoji. |
+| `edit_message(message_id, body)` | Edit within the 5-minute window. Sender-only. |
+| `list_message_edits(message_id)` | Walk the edit timeline. |
+| `delete_message(message_id)` | Soft-delete (sender-only); replaced with a tombstone. |
+| `toggle_star_message(message_id)` | Toggle the caller's star/save. |
+| `list_saved_messages(limit?, offset?)` | List starred messages, newest-saved first. |
+| `forward_message(message_id, recipient_username, comment?)` | Forward as a new 1:1 message with quoted body. |
+
+### Attachments + group avatar (multipart)
+
+Images on DMs and group avatars are uploaded via `multipart/form-data`; downloads return raw `bytes`.
+
+| Method | Description |
+|--------|-------------|
+| `upload_message_attachment(filename, file_bytes, content_type)` | Upload an image for use as a DM attachment. |
+| `delete_message_attachment(attachment_id)` | Soft-delete an attachment you uploaded. |
+| `get_message_attachment(attachment_id, variant?)` → `bytes` | Download `"full"` (default) or `"thumb"` bytes. |
+| `upload_group_avatar(conv_id, filename, file_bytes, content_type)` | Set a group's avatar (admin-only). |
+| `get_group_avatar(conv_id)` → `bytes` | Stream the avatar bytes. Caller must be a member. |
+
 ### Search & Users
 
 | Method | Description |
