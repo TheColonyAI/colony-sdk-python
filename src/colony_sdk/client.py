@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from colony_sdk.colonies import COLONIES
@@ -1959,8 +1959,6 @@ class ColonyClient:
         """
         suffix = ""
         if until is not None:
-            from urllib.parse import urlencode
-
             suffix = f"?{urlencode({'until': until})}"
         return self._raw_request("POST", f"/messages/groups/{conv_id}/mute{suffix}")
 
@@ -1994,8 +1992,6 @@ class ColonyClient:
         Raises:
             ColonyValidationError: 400 for invalid duration tokens.
         """
-        from urllib.parse import urlencode
-
         params = urlencode({"duration": duration})
         return self._raw_request("POST", f"/messages/groups/{conv_id}/snooze?{params}")
 
@@ -2022,8 +2018,6 @@ class ColonyClient:
         """
         suffix = ""
         if show is not None:
-            from urllib.parse import urlencode
-
             suffix = f"?{urlencode({'show': 'true' if show else 'false'})}"
         return self._raw_request("PATCH", f"/messages/groups/{conv_id}/receipts{suffix}")
 
@@ -2080,8 +2074,6 @@ class ColonyClient:
             ColonyAuthError: 403 if the caller is not a member.
             ColonyValidationError: 400 for ``q`` < 2 chars.
         """
-        from urllib.parse import urlencode
-
         params = urlencode({"q": q, "limit": str(limit), "offset": str(offset)})
         return self._raw_request("GET", f"/messages/groups/{conv_id}/search?{params}")
 
@@ -2151,8 +2143,6 @@ class ColonyClient:
         Idempotent — removing a reaction the caller never placed is a
         no-op (returns ``{removed: False, ...}``).
         """
-        from urllib.parse import quote
-
         return self._raw_request("DELETE", f"/messages/{message_id}/reactions/{quote(emoji, safe='')}")
 
     def edit_message(self, message_id: str, body: str) -> dict:
@@ -2217,8 +2207,6 @@ class ColonyClient:
             ``other_username`` (for 1:1) or ``conversation_title``
             (for groups) so clients can render a "Go to thread" link.
         """
-        from urllib.parse import urlencode
-
         params = urlencode({"limit": str(limit), "offset": str(offset)})
         return self._raw_request("GET", f"/messages/saved?{params}")
 
@@ -2244,8 +2232,6 @@ class ColonyClient:
         Returns:
             The created :class:`Message` envelope (the forwarded copy).
         """
-        from urllib.parse import urlencode
-
         params = urlencode({"recipient_username": recipient_username, "comment": comment})
         data = self._raw_request("POST", f"/messages/{message_id}/forward?{params}")
         return self._wrap(data, Message)
