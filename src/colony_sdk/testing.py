@@ -192,6 +192,88 @@ class MockColonyClient:
     def list_conversations(self) -> dict:
         return self._respond("list_conversations", {})
 
+    # ── Group conversations ──
+
+    def create_group_conversation(self, title: str, members: list[str]) -> dict:
+        return self._respond("create_group_conversation", {"title": title, "members": members})
+
+    def list_group_templates(self) -> dict:
+        return self._respond("list_group_templates", {})
+
+    def create_group_from_template(
+        self,
+        template: str,
+        members: list[str],
+        title_override: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "create_group_from_template",
+            {"template": template, "members": members, "title_override": title_override},
+        )
+
+    def get_group_conversation(self, conv_id: str, limit: int = 50, offset: int = 0) -> dict:
+        return self._respond(
+            "get_group_conversation",
+            {"conv_id": conv_id, "limit": limit, "offset": offset},
+        )
+
+    def update_group_conversation(
+        self,
+        conv_id: str,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "update_group_conversation",
+            {"conv_id": conv_id, "title": title, "description": description},
+        )
+
+    def send_group_message(
+        self,
+        conv_id: str,
+        body: str,
+        reply_to_message_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        # Mirror the sync ColonyClient signature exactly. The async
+        # counterpart drops idempotency_key (gap documented there).
+        return self._respond(
+            "send_group_message",
+            {
+                "conv_id": conv_id,
+                "body": body,
+                "reply_to_message_id": reply_to_message_id,
+                "idempotency_key": idempotency_key,
+            },
+        )
+
+    def list_group_members(self, conv_id: str) -> dict:
+        return self._respond("list_group_members", {"conv_id": conv_id})
+
+    def add_group_member(self, conv_id: str, username: str) -> dict:
+        return self._respond("add_group_member", {"conv_id": conv_id, "username": username})
+
+    def remove_group_member(self, conv_id: str, user_id: str) -> dict:
+        return self._respond("remove_group_member", {"conv_id": conv_id, "user_id": user_id})
+
+    def set_group_admin(self, conv_id: str, user_id: str, is_admin: bool) -> dict:
+        return self._respond(
+            "set_group_admin",
+            {"conv_id": conv_id, "user_id": user_id, "is_admin": is_admin},
+        )
+
+    def transfer_group_creator(self, conv_id: str, new_creator_username: str) -> dict:
+        return self._respond(
+            "transfer_group_creator",
+            {"conv_id": conv_id, "new_creator_username": new_creator_username},
+        )
+
+    def respond_to_group_invite(self, conv_id: str, accept: bool) -> dict:
+        return self._respond("respond_to_group_invite", {"conv_id": conv_id, "accept": accept})
+
+    def mark_group_all_read(self, conv_id: str) -> dict:
+        return self._respond("mark_group_all_read", {"conv_id": conv_id})
+
     # ── Search ──
 
     def search(self, query: str, **kwargs: Any) -> dict:

@@ -195,3 +195,105 @@ class TestMockClient:
     def test_can_write_vault_custom_response(self) -> None:
         client = MockColonyClient(responses={"can_write_vault": True})
         assert client.can_write_vault() is True
+
+    # ── Group conversations ───────────────────────────────────────────
+
+    def test_create_group_conversation_records_call(self) -> None:
+        client = MockColonyClient()
+        client.create_group_conversation("Team", ["alice", "bob"])
+        assert client.calls[-1] == (
+            "create_group_conversation",
+            {"title": "Team", "members": ["alice", "bob"]},
+        )
+
+    def test_list_group_templates_records_call(self) -> None:
+        client = MockColonyClient()
+        client.list_group_templates()
+        assert client.calls[-1] == ("list_group_templates", {})
+
+    def test_create_group_from_template_records_call(self) -> None:
+        client = MockColonyClient()
+        client.create_group_from_template("research-pod", ["alice"], title_override="ML")
+        assert client.calls[-1] == (
+            "create_group_from_template",
+            {"template": "research-pod", "members": ["alice"], "title_override": "ML"},
+        )
+
+    def test_get_group_conversation_records_pagination(self) -> None:
+        client = MockColonyClient()
+        client.get_group_conversation("g-1", limit=10, offset=5)
+        assert client.calls[-1] == (
+            "get_group_conversation",
+            {"conv_id": "g-1", "limit": 10, "offset": 5},
+        )
+
+    def test_update_group_conversation_records_call(self) -> None:
+        client = MockColonyClient()
+        client.update_group_conversation("g-1", title="New", description="d")
+        assert client.calls[-1] == (
+            "update_group_conversation",
+            {"conv_id": "g-1", "title": "New", "description": "d"},
+        )
+
+    def test_send_group_message_records_call(self) -> None:
+        client = MockColonyClient()
+        client.send_group_message("g-1", "Hi", reply_to_message_id="m-1", idempotency_key="k")
+        assert client.calls[-1] == (
+            "send_group_message",
+            {
+                "conv_id": "g-1",
+                "body": "Hi",
+                "reply_to_message_id": "m-1",
+                "idempotency_key": "k",
+            },
+        )
+
+    def test_list_group_members_records_call(self) -> None:
+        client = MockColonyClient()
+        client.list_group_members("g-1")
+        assert client.calls[-1] == ("list_group_members", {"conv_id": "g-1"})
+
+    def test_add_group_member_records_call(self) -> None:
+        client = MockColonyClient()
+        client.add_group_member("g-1", "carol")
+        assert client.calls[-1] == ("add_group_member", {"conv_id": "g-1", "username": "carol"})
+
+    def test_remove_group_member_records_call(self) -> None:
+        client = MockColonyClient()
+        client.remove_group_member("g-1", "u-1")
+        assert client.calls[-1] == ("remove_group_member", {"conv_id": "g-1", "user_id": "u-1"})
+
+    def test_set_group_admin_records_call(self) -> None:
+        client = MockColonyClient()
+        client.set_group_admin("g-1", "u-1", True)
+        assert client.calls[-1] == (
+            "set_group_admin",
+            {"conv_id": "g-1", "user_id": "u-1", "is_admin": True},
+        )
+
+    def test_transfer_group_creator_records_call(self) -> None:
+        client = MockColonyClient()
+        client.transfer_group_creator("g-1", "alice")
+        assert client.calls[-1] == (
+            "transfer_group_creator",
+            {"conv_id": "g-1", "new_creator_username": "alice"},
+        )
+
+    def test_respond_to_group_invite_records_call(self) -> None:
+        client = MockColonyClient()
+        client.respond_to_group_invite("g-1", False)
+        assert client.calls[-1] == (
+            "respond_to_group_invite",
+            {"conv_id": "g-1", "accept": False},
+        )
+
+    def test_mark_group_all_read_records_call(self) -> None:
+        client = MockColonyClient()
+        client.mark_group_all_read("g-1")
+        assert client.calls[-1] == ("mark_group_all_read", {"conv_id": "g-1"})
+
+    def test_send_group_message_custom_response(self) -> None:
+        # Custom responses can short-circuit any of the new methods,
+        # mirroring how the existing methods are tested.
+        client = MockColonyClient(responses={"send_group_message": {"id": "msg-x"}})
+        assert client.send_group_message("g-1", "Hi") == {"id": "msg-x"}
