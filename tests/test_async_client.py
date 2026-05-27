@@ -2161,3 +2161,160 @@ class TestAsyncGroupMembership:
         assert seen["method"] == "POST"
         assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/read-all"
         assert result["marked_read"] == 5
+
+
+# ---------------------------------------------------------------------------
+# Group conversations: state + search (async)
+# ---------------------------------------------------------------------------
+
+
+_MSG_ID = "22222222-3333-4444-5555-666666666666"
+
+
+class TestAsyncGroupConversationsState:
+    async def test_mute_group_forever_by_default(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"muted": True, "muted_until": None})
+
+        client = _make_client(handler)
+        await client.mute_group_conversation(_GROUP_ID)
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/mute"
+
+    async def test_mute_group_with_duration(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"muted": False, "muted_until": "2026-05-28T11:00:00Z"})
+
+        client = _make_client(handler)
+        await client.mute_group_conversation(_GROUP_ID, until="8h")
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/mute?until=8h"
+
+    async def test_unmute_group(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"muted": False})
+
+        client = _make_client(handler)
+        await client.unmute_group_conversation(_GROUP_ID)
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/unmute"
+
+    async def test_snooze_group(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"snoozed_until": "2026-05-27T16:00:00Z"})
+
+        client = _make_client(handler)
+        await client.snooze_group_conversation(_GROUP_ID, "1d")
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/snooze?duration=1d"
+
+    async def test_unsnooze_group(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"snoozed_until": None})
+
+        client = _make_client(handler)
+        await client.unsnooze_group_conversation(_GROUP_ID)
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/unsnooze"
+
+    async def test_set_group_read_receipts_explicit_true(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"override": True, "effective": True})
+
+        client = _make_client(handler)
+        await client.set_group_read_receipts(_GROUP_ID, show=True)
+        assert seen["method"] == "PATCH"
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/receipts?show=true"
+
+    async def test_set_group_read_receipts_explicit_false(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"override": False, "effective": False})
+
+        client = _make_client(handler)
+        await client.set_group_read_receipts(_GROUP_ID, show=False)
+        assert "show=false" in seen["url"]
+
+    async def test_set_group_read_receipts_clear_override(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"override": None, "effective": True})
+
+        client = _make_client(handler)
+        await client.set_group_read_receipts(_GROUP_ID)
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/receipts"
+
+    async def test_pin_group_message(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"pinned": True, "message_id": _MSG_ID})
+
+        client = _make_client(handler)
+        await client.pin_group_message(_GROUP_ID, _MSG_ID)
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/messages/{_MSG_ID}/pin"
+
+    async def test_unpin_group_message(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"pinned": False, "message_id": _MSG_ID})
+
+        client = _make_client(handler)
+        await client.unpin_group_message(_GROUP_ID, _MSG_ID)
+        assert seen["method"] == "DELETE"
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/messages/{_MSG_ID}/pin"
+
+
+class TestAsyncGroupSearch:
+    async def test_search_group_messages_default(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"hits": [], "total": 0})
+
+        client = _make_client(handler)
+        await client.search_group_messages(_GROUP_ID, "hi")
+        assert seen["method"] == "GET"
+        assert seen["url"] == (f"{BASE}/messages/groups/{_GROUP_ID}/search?q=hi&limit=50&offset=0")
+
+    async def test_search_group_messages_custom_pagination(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"hits": [], "total": 0})
+
+        client = _make_client(handler)
+        await client.search_group_messages(_GROUP_ID, "term", limit=20, offset=40)
+        assert "limit=20" in seen["url"]
+        assert "offset=40" in seen["url"]

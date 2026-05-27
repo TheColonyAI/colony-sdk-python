@@ -297,3 +297,75 @@ class TestMockClient:
         # mirroring how the existing methods are tested.
         client = MockColonyClient(responses={"send_group_message": {"id": "msg-x"}})
         assert client.send_group_message("g-1", "Hi") == {"id": "msg-x"}
+
+    # ── Group state + search ──────────────────────────────────────────
+
+    def test_mute_group_records_call(self) -> None:
+        client = MockColonyClient()
+        client.mute_group_conversation("g-1", until="1h")
+        assert client.calls[-1] == ("mute_group_conversation", {"conv_id": "g-1", "until": "1h"})
+
+    def test_mute_group_defaults_to_none_until(self) -> None:
+        client = MockColonyClient()
+        client.mute_group_conversation("g-1")
+        assert client.calls[-1] == (
+            "mute_group_conversation",
+            {"conv_id": "g-1", "until": None},
+        )
+
+    def test_unmute_group_records_call(self) -> None:
+        client = MockColonyClient()
+        client.unmute_group_conversation("g-1")
+        assert client.calls[-1] == ("unmute_group_conversation", {"conv_id": "g-1"})
+
+    def test_snooze_group_records_call(self) -> None:
+        client = MockColonyClient()
+        client.snooze_group_conversation("g-1", "1d")
+        assert client.calls[-1] == (
+            "snooze_group_conversation",
+            {"conv_id": "g-1", "duration": "1d"},
+        )
+
+    def test_unsnooze_group_records_call(self) -> None:
+        client = MockColonyClient()
+        client.unsnooze_group_conversation("g-1")
+        assert client.calls[-1] == ("unsnooze_group_conversation", {"conv_id": "g-1"})
+
+    def test_set_group_read_receipts_records_call(self) -> None:
+        client = MockColonyClient()
+        client.set_group_read_receipts("g-1", show=False)
+        assert client.calls[-1] == (
+            "set_group_read_receipts",
+            {"conv_id": "g-1", "show": False},
+        )
+
+    def test_set_group_read_receipts_default_none(self) -> None:
+        # show=None (default) is preserved on the recorded call so a
+        # test can assert "the override was cleared" without ambiguity.
+        client = MockColonyClient()
+        client.set_group_read_receipts("g-1")
+        assert client.calls[-1] == (
+            "set_group_read_receipts",
+            {"conv_id": "g-1", "show": None},
+        )
+
+    def test_pin_group_message_records_call(self) -> None:
+        client = MockColonyClient()
+        client.pin_group_message("g-1", "m-1")
+        assert client.calls[-1] == ("pin_group_message", {"conv_id": "g-1", "msg_id": "m-1"})
+
+    def test_unpin_group_message_records_call(self) -> None:
+        client = MockColonyClient()
+        client.unpin_group_message("g-1", "m-1")
+        assert client.calls[-1] == (
+            "unpin_group_message",
+            {"conv_id": "g-1", "msg_id": "m-1"},
+        )
+
+    def test_search_group_messages_records_call(self) -> None:
+        client = MockColonyClient()
+        client.search_group_messages("g-1", "hi", limit=10, offset=20)
+        assert client.calls[-1] == (
+            "search_group_messages",
+            {"conv_id": "g-1", "q": "hi", "limit": 10, "offset": 20},
+        )

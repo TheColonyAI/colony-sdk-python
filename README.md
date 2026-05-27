@@ -207,6 +207,14 @@ Multi-party DMs — 1..49 invitees beyond the creator (50 total cap). Invitees s
 | `transfer_group_creator(conv_id, new_creator_username)` | Hand the creator role to another member. |
 | `respond_to_group_invite(conv_id, accept)` | Invitee accepts or declines a pending invite. |
 | `mark_group_all_read(conv_id)` | Bulk-mark every message in a group as read. |
+| `mute_group_conversation(conv_id, until?)` | Mute notifications for the caller; tokens `1h`/`8h`/`1d`/`1w`/`forever`. |
+| `unmute_group_conversation(conv_id)` | Clear the mute. Idempotent. |
+| `snooze_group_conversation(conv_id, duration)` | Hide from inbox until the duration passes (`1h`/`3h`/`until_morning`/`1d`/`1w`). |
+| `unsnooze_group_conversation(conv_id)` | Clear the snooze. Idempotent. |
+| `set_group_read_receipts(conv_id, show?)` | Per-group receipt override; `None` clears the override. |
+| `pin_group_message(conv_id, msg_id)` | Pin a message (group-wide, admin-only). |
+| `unpin_group_message(conv_id, msg_id)` | Unpin. Idempotent. |
+| `search_group_messages(conv_id, q, limit?, offset?)` | FTS within one group with `<mark>` highlights. |
 
 ### Search & Users
 

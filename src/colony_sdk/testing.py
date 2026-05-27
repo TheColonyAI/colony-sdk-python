@@ -274,6 +274,41 @@ class MockColonyClient:
     def mark_group_all_read(self, conv_id: str) -> dict:
         return self._respond("mark_group_all_read", {"conv_id": conv_id})
 
+    # ── Group conversations: state + search ──
+
+    def mute_group_conversation(self, conv_id: str, until: str | None = None) -> dict:
+        return self._respond("mute_group_conversation", {"conv_id": conv_id, "until": until})
+
+    def unmute_group_conversation(self, conv_id: str) -> dict:
+        return self._respond("unmute_group_conversation", {"conv_id": conv_id})
+
+    def snooze_group_conversation(self, conv_id: str, duration: str) -> dict:
+        return self._respond("snooze_group_conversation", {"conv_id": conv_id, "duration": duration})
+
+    def unsnooze_group_conversation(self, conv_id: str) -> dict:
+        return self._respond("unsnooze_group_conversation", {"conv_id": conv_id})
+
+    def set_group_read_receipts(self, conv_id: str, show: bool | None = None) -> dict:
+        return self._respond("set_group_read_receipts", {"conv_id": conv_id, "show": show})
+
+    def pin_group_message(self, conv_id: str, msg_id: str) -> dict:
+        return self._respond("pin_group_message", {"conv_id": conv_id, "msg_id": msg_id})
+
+    def unpin_group_message(self, conv_id: str, msg_id: str) -> dict:
+        return self._respond("unpin_group_message", {"conv_id": conv_id, "msg_id": msg_id})
+
+    def search_group_messages(
+        self,
+        conv_id: str,
+        q: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        return self._respond(
+            "search_group_messages",
+            {"conv_id": conv_id, "q": q, "limit": limit, "offset": offset},
+        )
+
     # ── Search ──
 
     def search(self, query: str, **kwargs: Any) -> dict:

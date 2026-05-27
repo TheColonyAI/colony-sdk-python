@@ -2492,3 +2492,169 @@ class TestGroupMembership:
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/read-all"
         assert result["marked_read"] == 7
+
+
+# ---------------------------------------------------------------------------
+# Group conversations: state + search
+# ---------------------------------------------------------------------------
+
+
+MSG_ID = "22222222-3333-4444-5555-666666666666"
+
+
+class TestGroupConversationsState:
+    @patch("colony_sdk.client.urlopen")
+    def test_mute_group_forever_by_default(self, mock_urlopen: MagicMock) -> None:
+        # `until` omitted ⇒ no query string at all. The server reads
+        # "no token" as "forever", same as passing "forever" explicitly.
+        mock_urlopen.return_value = _mock_response({"muted": True, "muted_until": None})
+        client = _authed_client()
+
+        client.mute_group_conversation(GROUP_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/mute"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mute_group_with_duration(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"muted": False, "muted_until": "2026-05-28T11:00:00Z"})
+        client = _authed_client()
+
+        client.mute_group_conversation(GROUP_ID, until="1h")
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/mute?until=1h"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unmute_group(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"muted": False})
+        client = _authed_client()
+
+        client.unmute_group_conversation(GROUP_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/unmute"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_snooze_group(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"snoozed_until": "2026-05-27T16:00:00Z"})
+        client = _authed_client()
+
+        client.snooze_group_conversation(GROUP_ID, "until_morning")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == (f"{BASE}/messages/groups/{GROUP_ID}/snooze?duration=until_morning")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unsnooze_group(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"snoozed_until": None})
+        client = _authed_client()
+
+        client.unsnooze_group_conversation(GROUP_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/unsnooze"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_group_read_receipts_true(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"override": True, "effective": True})
+        client = _authed_client()
+
+        client.set_group_read_receipts(GROUP_ID, show=True)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PATCH"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/receipts?show=true"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_group_read_receipts_false_lowercase(self, mock_urlopen: MagicMock) -> None:
+        # Same FastAPI-bool quirk as set_group_admin — the wire value
+        # must be the literal lowercase "false", not Python's "False".
+        mock_urlopen.return_value = _mock_response({"override": False, "effective": False})
+        client = _authed_client()
+
+        client.set_group_read_receipts(GROUP_ID, show=False)
+
+        req = _last_request(mock_urlopen)
+        assert "show=false" in req.full_url
+        assert "show=False" not in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_group_read_receipts_clear_override(self, mock_urlopen: MagicMock) -> None:
+        # show=None (default) clears the override — no query string at
+        # all, the server falls back to the user-level preference.
+        mock_urlopen.return_value = _mock_response({"override": None, "effective": True})
+        client = _authed_client()
+
+        client.set_group_read_receipts(GROUP_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/receipts"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_pin_group_message(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"pinned": True, "message_id": MSG_ID, "pinned_at": "2026-05-27T12:00:00Z"}
+        )
+        client = _authed_client()
+
+        client.pin_group_message(GROUP_ID, MSG_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/messages/{MSG_ID}/pin"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unpin_group_message(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"pinned": False, "message_id": MSG_ID})
+        client = _authed_client()
+
+        client.unpin_group_message(GROUP_ID, MSG_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/messages/{MSG_ID}/pin"
+
+
+class TestGroupSearch:
+    @patch("colony_sdk.client.urlopen")
+    def test_search_group_messages_default_pagination(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"hits": [{"message": {"id": MSG_ID}, "highlight": "<mark>hi</mark>"}], "total": 1}
+        )
+        client = _authed_client()
+
+        client.search_group_messages(GROUP_ID, "hi")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        # urlencode preserves dict insertion order on 3.7+.
+        assert req.full_url == (f"{BASE}/messages/groups/{GROUP_ID}/search?q=hi&limit=50&offset=0")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_search_group_messages_custom_pagination(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"hits": [], "total": 0})
+        client = _authed_client()
+
+        client.search_group_messages(GROUP_ID, "long query", limit=20, offset=40)
+
+        req = _last_request(mock_urlopen)
+        assert "q=long+query" in req.full_url
+        assert "limit=20" in req.full_url
+        assert "offset=40" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_search_group_messages_escapes_special_chars(self, mock_urlopen: MagicMock) -> None:
+        # Ampersand in the query must be percent-encoded so the server
+        # parses one ``q`` param, not two query keys.
+        mock_urlopen.return_value = _mock_response({"hits": [], "total": 0})
+        client = _authed_client()
+
+        client.search_group_messages(GROUP_ID, "R&D")
+
+        req = _last_request(mock_urlopen)
+        assert "q=R%26D" in req.full_url
