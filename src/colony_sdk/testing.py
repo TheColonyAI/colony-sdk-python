@@ -309,6 +309,105 @@ class MockColonyClient:
             {"conv_id": conv_id, "q": q, "limit": limit, "offset": offset},
         )
 
+    # ── Per-message operations (1:1 + group) ──
+
+    def mark_message_read(self, message_id: str) -> dict:
+        return self._respond("mark_message_read", {"message_id": message_id})
+
+    def list_message_reads(self, message_id: str) -> dict:
+        return self._respond("list_message_reads", {"message_id": message_id})
+
+    def add_message_reaction(self, message_id: str, emoji: str) -> dict:
+        return self._respond("add_message_reaction", {"message_id": message_id, "emoji": emoji})
+
+    def remove_message_reaction(self, message_id: str, emoji: str) -> dict:
+        return self._respond("remove_message_reaction", {"message_id": message_id, "emoji": emoji})
+
+    def edit_message(self, message_id: str, body: str) -> dict:
+        return self._respond("edit_message", {"message_id": message_id, "body": body})
+
+    def list_message_edits(self, message_id: str) -> dict:
+        return self._respond("list_message_edits", {"message_id": message_id})
+
+    def delete_message(self, message_id: str) -> dict:
+        return self._respond("delete_message", {"message_id": message_id})
+
+    def toggle_star_message(self, message_id: str) -> dict:
+        return self._respond("toggle_star_message", {"message_id": message_id})
+
+    def list_saved_messages(self, limit: int = 50, offset: int = 0) -> dict:
+        return self._respond("list_saved_messages", {"limit": limit, "offset": offset})
+
+    def forward_message(
+        self,
+        message_id: str,
+        recipient_username: str,
+        comment: str = "",
+    ) -> dict:
+        return self._respond(
+            "forward_message",
+            {
+                "message_id": message_id,
+                "recipient_username": recipient_username,
+                "comment": comment,
+            },
+        )
+
+    # ── Attachments + group avatar (multipart) ──
+
+    def upload_message_attachment(
+        self,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        # The mock records the size rather than the raw bytes so
+        # the assertion shape stays grep-able even for large uploads.
+        return self._respond(
+            "upload_message_attachment",
+            {
+                "filename": filename,
+                "size_bytes": len(file_bytes),
+                "content_type": content_type,
+            },
+        )
+
+    def delete_message_attachment(self, attachment_id: str) -> None:
+        self.calls.append(("delete_message_attachment", {"attachment_id": attachment_id}))
+
+    def get_message_attachment(self, attachment_id: str, variant: str = "full") -> bytes:
+        # Mock returns a stable byte sentinel by default; callers can
+        # override via ``responses={"get_message_attachment": b"..."}``.
+        self.calls.append(("get_message_attachment", {"attachment_id": attachment_id, "variant": variant}))
+        resp = self._responses.get("get_message_attachment")
+        if isinstance(resp, bytes):
+            return resp
+        return b"mock-attachment-bytes"
+
+    def upload_group_avatar(
+        self,
+        conv_id: str,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        return self._respond(
+            "upload_group_avatar",
+            {
+                "conv_id": conv_id,
+                "filename": filename,
+                "size_bytes": len(file_bytes),
+                "content_type": content_type,
+            },
+        )
+
+    def get_group_avatar(self, conv_id: str) -> bytes:
+        self.calls.append(("get_group_avatar", {"conv_id": conv_id}))
+        resp = self._responses.get("get_group_avatar")
+        if isinstance(resp, bytes):
+            return resp
+        return b"mock-avatar-bytes"
+
     # ── Search ──
 
     def search(self, query: str, **kwargs: Any) -> dict:

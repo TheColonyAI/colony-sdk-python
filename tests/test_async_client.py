@@ -2318,3 +2318,367 @@ class TestAsyncGroupSearch:
         await client.search_group_messages(_GROUP_ID, "term", limit=20, offset=40)
         assert "limit=20" in seen["url"]
         assert "offset=40" in seen["url"]
+
+
+# ---------------------------------------------------------------------------
+# Per-message operations (async)
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncPerMessageOps:
+    async def test_mark_message_read(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"was_unread": True})
+
+        client = _make_client(handler)
+        await client.mark_message_read(_MSG_ID)
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/messages/{_MSG_ID}/read"
+
+    async def test_list_message_reads(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"is_group": False, "seen": [], "unseen": []})
+
+        client = _make_client(handler)
+        await client.list_message_reads(_MSG_ID)
+        assert seen["url"] == f"{BASE}/messages/{_MSG_ID}/reads"
+
+    async def test_add_message_reaction(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content.decode())
+            return _json_response({"emoji": "🎉"})
+
+        client = _make_client(handler)
+        await client.add_message_reaction(_MSG_ID, "🎉")
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/messages/{_MSG_ID}/reactions"
+        assert seen["body"] == {"emoji": "🎉"}
+
+    async def test_remove_message_reaction_url_encodes_emoji(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"removed": True})
+
+        client = _make_client(handler)
+        await client.remove_message_reaction(_MSG_ID, "🎉")
+        assert seen["method"] == "DELETE"
+        # 🎉 = U+1F389 → UTF-8 F0 9F 8E 89 → %F0%9F%8E%89
+        assert seen["url"] == f"{BASE}/messages/{_MSG_ID}/reactions/%F0%9F%8E%89"
+
+    async def test_edit_message(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["body"] = json.loads(request.content.decode())
+            return _json_response({"id": _MSG_ID, "body": "Fixed"})
+
+        client = _make_client(handler)
+        await client.edit_message(_MSG_ID, "Fixed")
+        assert seen["method"] == "PATCH"
+        assert seen["body"] == {"body": "Fixed"}
+
+    async def test_list_message_edits(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"message_id": _MSG_ID, "versions": []})
+
+        client = _make_client(handler)
+        await client.list_message_edits(_MSG_ID)
+        assert seen["url"] == f"{BASE}/messages/{_MSG_ID}/edits"
+
+    async def test_delete_message(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            return _json_response({"deleted": True})
+
+        client = _make_client(handler)
+        await client.delete_message(_MSG_ID)
+        assert seen["method"] == "DELETE"
+
+    async def test_toggle_star_message(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"saved": True})
+
+        client = _make_client(handler)
+        await client.toggle_star_message(_MSG_ID)
+        assert seen["url"] == f"{BASE}/messages/{_MSG_ID}/star"
+
+    async def test_list_saved_messages(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"messages": [], "pagination": {"total": 0}})
+
+        client = _make_client(handler)
+        await client.list_saved_messages(limit=10, offset=5)
+        assert seen["url"] == f"{BASE}/messages/saved?limit=10&offset=5"
+
+    async def test_forward_message(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"id": "fwd"})
+
+        client = _make_client(handler)
+        await client.forward_message(_MSG_ID, "carol", comment="FYI")
+        assert "recipient_username=carol" in seen["url"]
+        assert "comment=FYI" in seen["url"]
+
+
+# ---------------------------------------------------------------------------
+# Attachments + group avatar (async, multipart)
+# ---------------------------------------------------------------------------
+
+
+_ATTACHMENT_ID = "33333333-4444-5555-6666-777777777777"
+
+
+class TestAsyncAttachments:
+    async def test_upload_message_attachment_uses_httpx_multipart(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["content_type"] = request.headers.get("content-type", "")
+            seen["body"] = request.content
+            return _json_response(
+                {
+                    "id": _ATTACHMENT_ID,
+                    "mime_type": "image/png",
+                    "size_bytes": 4,
+                    "deduped": False,
+                }
+            )
+
+        client = _make_client(handler)
+        result = await client.upload_message_attachment("screenshot.png", b"\x89PNG", "image/png")
+
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/messages/attachments/upload"
+        # httpx generates its own boundary; the prefix is enough to
+        # confirm the multipart shape.
+        assert seen["content_type"].startswith("multipart/form-data; boundary=")
+        assert b'filename="screenshot.png"' in seen["body"]
+        assert b"\x89PNG" in seen["body"]
+        assert result["id"] == _ATTACHMENT_ID
+
+    async def test_delete_message_attachment(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({})
+
+        client = _make_client(handler)
+        await client.delete_message_attachment(_ATTACHMENT_ID)
+        assert seen["method"] == "DELETE"
+        assert seen["url"] == f"{BASE}/messages/attachments/{_ATTACHMENT_ID}"
+
+    async def test_get_message_attachment_returns_bytes(self) -> None:
+        seen: dict = {}
+        raw = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return httpx.Response(
+                200,
+                content=raw,
+                headers={"content-type": "image/png"},
+            )
+
+        client = _make_client(handler)
+        result = await client.get_message_attachment(_ATTACHMENT_ID)
+
+        assert result == raw
+        assert seen["method"] == "GET"
+        assert seen["url"] == f"{BASE}/messages/attachments/{_ATTACHMENT_ID}/full"
+
+    async def test_get_message_attachment_thumb_variant(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return httpx.Response(200, content=b"thumb")
+
+        client = _make_client(handler)
+        await client.get_message_attachment(_ATTACHMENT_ID, variant="thumb")
+        assert seen["url"] == f"{BASE}/messages/attachments/{_ATTACHMENT_ID}/thumb"
+
+    async def test_upload_group_avatar(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["body"] = request.content
+            return _json_response({"avatar_url": "/some-url"})
+
+        client = _make_client(handler)
+        await client.upload_group_avatar(_GROUP_ID, "team.png", b"\x89PNG", "image/png")
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/avatar"
+        assert b'filename="team.png"' in seen["body"]
+        assert b"\x89PNG" in seen["body"]
+
+    async def test_get_group_avatar(self) -> None:
+        seen: dict = {}
+        raw = b"avatar-bytes-here"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return httpx.Response(200, content=raw)
+
+        client = _make_client(handler)
+        result = await client.get_group_avatar(_GROUP_ID)
+        assert result == raw
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/avatar"
+
+    async def test_multipart_upload_propagates_413(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                413,
+                content=json.dumps({"detail": {"message": "Too big", "code": "LIMIT_EXCEEDED"}}).encode(),
+            )
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyAPIError) as exc:
+            await client.upload_message_attachment("huge.png", b"x" * 1024, "image/png")
+        assert exc.value.status == 413
+        assert exc.value.code == "LIMIT_EXCEEDED"
+
+    async def test_attachment_bytes_propagates_403(self) -> None:
+        from colony_sdk import ColonyAuthError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                403,
+                content=json.dumps({"detail": {"message": "Not a participant", "code": "FORBIDDEN"}}).encode(),
+            )
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyAuthError) as exc:
+            await client.get_message_attachment(_ATTACHMENT_ID)
+        assert exc.value.status == 403
+
+    async def test_multipart_upload_network_error_raises_colony_network_error(self) -> None:
+        from colony_sdk import ColonyNetworkError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused")
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyNetworkError):
+            await client.upload_message_attachment("x.png", b"\x89PNG", "image/png")
+
+    async def test_bytes_request_network_error_raises_colony_network_error(self) -> None:
+        from colony_sdk import ColonyNetworkError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("dns failure")
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyNetworkError):
+            await client.get_message_attachment(_ATTACHMENT_ID)
+
+    async def test_multipart_upload_triggers_ensure_token(self) -> None:
+        # No pre-seeded token; expect a request to /auth/token before
+        # the upload itself. Both go through the same mock handler.
+        seen_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            if request.url.path.endswith("/auth/token"):
+                return _json_response(
+                    {
+                        "access_token": "minted-jwt",
+                        "token_type": "bearer",
+                        "expires_in": 3600,
+                    }
+                )
+            return _json_response({"id": _ATTACHMENT_ID})
+
+        transport = httpx.MockTransport(handler)
+        httpx_client = httpx.AsyncClient(transport=transport)
+        client = AsyncColonyClient("col_test", client=httpx_client)
+        await client.upload_message_attachment("x.png", b"\x89PNG", "image/png")
+
+        assert "/api/v1/auth/token" in seen_paths
+        assert client._token == "minted-jwt"
+
+    async def test_bytes_request_triggers_ensure_token(self) -> None:
+        seen_paths: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            if request.url.path.endswith("/auth/token"):
+                return _json_response(
+                    {
+                        "access_token": "minted-jwt",
+                        "token_type": "bearer",
+                        "expires_in": 3600,
+                    }
+                )
+            return httpx.Response(200, content=b"bytes-payload")
+
+        transport = httpx.MockTransport(handler)
+        httpx_client = httpx.AsyncClient(transport=transport)
+        client = AsyncColonyClient("col_test", client=httpx_client)
+        await client.get_message_attachment(_ATTACHMENT_ID)
+
+        assert "/api/v1/auth/token" in seen_paths
+        assert client._token == "minted-jwt"
+
+    async def test_multipart_upload_fires_request_and_response_hooks(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"id": _ATTACHMENT_ID})
+
+        client = _make_client(handler)
+        req_calls: list[tuple] = []
+        resp_calls: list[tuple] = []
+        client.on_request(lambda m, u, b: req_calls.append((m, u)))
+        client.on_response(lambda m, u, s, d: resp_calls.append((m, u, s)))
+
+        await client.upload_message_attachment("x.png", b"\x89PNG", "image/png")
+
+        assert req_calls == [("POST", f"{BASE}/messages/attachments/upload")]
+        assert resp_calls and resp_calls[0][0] == "POST"
+
+    async def test_bytes_request_fires_request_and_response_hooks(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"bytes")
+
+        client = _make_client(handler)
+        req_calls: list[tuple] = []
+        resp_calls: list[tuple] = []
+        client.on_request(lambda m, u, b: req_calls.append((m, u)))
+        client.on_response(lambda m, u, s, d: resp_calls.append((m, u, s)))
+
+        await client.get_message_attachment(_ATTACHMENT_ID)
+
+        assert req_calls == [("GET", f"{BASE}/messages/attachments/{_ATTACHMENT_ID}/full")]
+        assert resp_calls and resp_calls[0][0] == "GET"

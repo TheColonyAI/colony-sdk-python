@@ -2658,3 +2658,411 @@ class TestGroupSearch:
 
         req = _last_request(mock_urlopen)
         assert "q=R%26D" in req.full_url
+
+
+# ---------------------------------------------------------------------------
+# Per-message operations (1:1 + group)
+# ---------------------------------------------------------------------------
+
+
+class TestPerMessageOps:
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_message_read(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"message_id": MSG_ID, "was_unread": True, "read_at": "2026-05-27T12:00:00Z"}
+        )
+        client = _authed_client()
+
+        client.mark_message_read(MSG_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/{MSG_ID}/read"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_message_reads(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"is_group": True, "total_others": 3, "seen_count": 1, "seen": [], "unseen": []}
+        )
+        client = _authed_client()
+
+        client.list_message_reads(MSG_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/messages/{MSG_ID}/reads"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_add_message_reaction(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"emoji": "👍", "user_id": USER_ID, "username": "alice"})
+        client = _authed_client()
+
+        client.add_message_reaction(MSG_ID, "👍")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/{MSG_ID}/reactions"
+        assert _last_body(mock_urlopen) == {"emoji": "👍"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_remove_message_reaction_url_encodes_emoji(self, mock_urlopen: MagicMock) -> None:
+        # Emoji must be percent-encoded in the path — most are
+        # multi-byte UTF-8 and would otherwise corrupt the URL.
+        mock_urlopen.return_value = _mock_response({"removed": True})
+        client = _authed_client()
+
+        client.remove_message_reaction(MSG_ID, "👍")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        # urllib.parse.quote with safe='' percent-encodes the thumbs-up
+        # codepoint as %F0%9F%91%8D.
+        assert req.full_url == f"{BASE}/messages/{MSG_ID}/reactions/%F0%9F%91%8D"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_edit_message(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"id": MSG_ID, "body": "Fixed typo", "edited_at": "2026-05-27T12:01:00Z"}
+        )
+        client = _authed_client()
+
+        client.edit_message(MSG_ID, "Fixed typo")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PATCH"
+        assert req.full_url == f"{BASE}/messages/{MSG_ID}"
+        assert _last_body(mock_urlopen) == {"body": "Fixed typo"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_message_edits(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"message_id": MSG_ID, "versions": []})
+        client = _authed_client()
+
+        client.list_message_edits(MSG_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/messages/{MSG_ID}/edits"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_delete_message(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"deleted": True, "message_id": MSG_ID})
+        client = _authed_client()
+
+        client.delete_message(MSG_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/messages/{MSG_ID}"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_toggle_star_message(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"saved": True})
+        client = _authed_client()
+
+        client.toggle_star_message(MSG_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/{MSG_ID}/star"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_saved_messages(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"messages": [], "pagination": {"total": 0, "has_more": False}})
+        client = _authed_client()
+
+        client.list_saved_messages(limit=20, offset=40)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/messages/saved?limit=20&offset=40"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_forward_message(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "forwarded-msg-id", "body": "FYI:\n> original"})
+        client = _authed_client()
+
+        client.forward_message(MSG_ID, "carol", comment="FYI")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert "recipient_username=carol" in req.full_url
+        assert "comment=FYI" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_forward_message_default_empty_comment(self, mock_urlopen: MagicMock) -> None:
+        # Comment defaults to "" — still appears on the wire so the
+        # server doesn't have to special-case missing.
+        mock_urlopen.return_value = _mock_response({"id": "fwd"})
+        client = _authed_client()
+
+        client.forward_message(MSG_ID, "carol")
+
+        req = _last_request(mock_urlopen)
+        assert "comment=" in req.full_url
+
+
+# ---------------------------------------------------------------------------
+# Attachments + group avatar (multipart)
+# ---------------------------------------------------------------------------
+
+
+ATTACHMENT_ID = "33333333-4444-5555-6666-777777777777"
+
+
+class TestAttachments:
+    @patch("colony_sdk.client.urlopen")
+    def test_upload_message_attachment_builds_multipart_body(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "id": ATTACHMENT_ID,
+                "mime_type": "image/png",
+                "size_bytes": 4,
+                "thumb_url": "/messages/attachments/X/thumb",
+                "full_url": "/messages/attachments/X/full",
+                "deduped": False,
+            }
+        )
+        client = _authed_client()
+
+        result = client.upload_message_attachment("screenshot.png", b"\x89PNG", "image/png")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/attachments/upload"
+        # Multipart Content-Type header with boundary token.
+        content_type = req.headers.get("Content-type", "")
+        assert content_type.startswith("multipart/form-data; boundary=")
+        boundary = content_type.split("boundary=", 1)[1]
+        body = req.data
+        assert isinstance(body, bytes)
+        # Wire shape: opening boundary, filename header, content-type
+        # header, blank line, raw bytes, closing boundary marker.
+        assert b'filename="screenshot.png"' in body
+        assert b"Content-Type: image/png" in body
+        assert b"\x89PNG" in body
+        assert f"--{boundary}--".encode() in body
+        assert result["id"] == ATTACHMENT_ID
+
+    @patch("colony_sdk.client.urlopen")
+    def test_upload_message_attachment_escapes_quote_in_filename(self, mock_urlopen: MagicMock) -> None:
+        # Embedded ``"`` in the filename must be backslash-escaped per
+        # RFC 6266 §4.2 so the multipart envelope stays parseable.
+        mock_urlopen.return_value = _mock_response({"id": ATTACHMENT_ID})
+        client = _authed_client()
+
+        client.upload_message_attachment('weird"name.png', b"\x89PNG", "image/png")
+
+        body = _last_request(mock_urlopen).data
+        assert isinstance(body, bytes)
+        assert b'filename="weird\\"name.png"' in body
+
+    @patch("colony_sdk.client.urlopen")
+    def test_delete_message_attachment(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.delete_message_attachment(ATTACHMENT_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/messages/attachments/{ATTACHMENT_ID}"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_message_attachment_returns_raw_bytes(self, mock_urlopen: MagicMock) -> None:
+        # Mock the urlopen response to return raw PNG bytes rather
+        # than JSON — the bytes path doesn't parse the body.
+        raw = b"\x89PNG\r\n\x1a\nfake-image-payload"
+        resp = MagicMock()
+        resp.read.return_value = raw
+        resp.status = 200
+        resp.getheaders.return_value = []
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+        client = _authed_client()
+
+        result = client.get_message_attachment(ATTACHMENT_ID)
+
+        assert result == raw
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/messages/attachments/{ATTACHMENT_ID}/full"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_message_attachment_thumb_variant(self, mock_urlopen: MagicMock) -> None:
+        resp = MagicMock()
+        resp.read.return_value = b"thumb-bytes"
+        resp.status = 200
+        resp.getheaders.return_value = []
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+        client = _authed_client()
+
+        client.get_message_attachment(ATTACHMENT_ID, variant="thumb")
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/messages/attachments/{ATTACHMENT_ID}/thumb"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_upload_group_avatar(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"avatar_url": f"/messages/groups/{GROUP_ID}/avatar?v=2"})
+        client = _authed_client()
+
+        client.upload_group_avatar(GROUP_ID, "team.png", b"\x89PNG", "image/png")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/avatar"
+        content_type = req.headers.get("Content-type", "")
+        assert content_type.startswith("multipart/form-data; boundary=")
+        body = req.data
+        assert isinstance(body, bytes)
+        assert b'filename="team.png"' in body
+        assert b"\x89PNG" in body
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_group_avatar(self, mock_urlopen: MagicMock) -> None:
+        raw = b"\x89PNG\r\n\x1a\navatar-bytes"
+        resp = MagicMock()
+        resp.read.return_value = raw
+        resp.status = 200
+        resp.getheaders.return_value = []
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+        client = _authed_client()
+
+        result = client.get_group_avatar(GROUP_ID)
+
+        assert result == raw
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/avatar"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_multipart_upload_propagates_413_too_large(self, mock_urlopen: MagicMock) -> None:
+        # The server returns 413 + a structured detail when the file
+        # exceeds the cap. The multipart helper must wrap it as a
+        # ColonyAPIError so callers can catch it like any other
+        # API failure.
+        mock_urlopen.side_effect = _make_http_error(
+            413,
+            {"detail": {"message": "Too big", "code": "LIMIT_EXCEEDED"}},
+        )
+        client = _authed_client()
+
+        with pytest.raises(ColonyAPIError) as exc:
+            client.upload_message_attachment("huge.png", b"x" * 1024, "image/png")
+        assert exc.value.status == 413
+        assert exc.value.code == "LIMIT_EXCEEDED"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_attachment_bytes_propagates_403_forbidden(self, mock_urlopen: MagicMock) -> None:
+        # GETs on attachments require participant membership; a
+        # non-participant gets 403, which the bytes helper must
+        # wrap as ColonyAuthError (via _build_api_error).
+        from colony_sdk import ColonyAuthError
+
+        mock_urlopen.side_effect = _make_http_error(
+            403, {"detail": {"message": "Not a participant", "code": "FORBIDDEN"}}
+        )
+        client = _authed_client()
+
+        with pytest.raises(ColonyAuthError) as exc:
+            client.get_message_attachment(ATTACHMENT_ID)
+        assert exc.value.status == 403
+
+    @patch("colony_sdk.client.urlopen")
+    def test_multipart_upload_network_error_raises_colony_network_error(self, mock_urlopen: MagicMock) -> None:
+        # URLError = transport-level failure (DNS, connect, timeout)
+        # before any response. The helper wraps it as
+        # ColonyNetworkError so callers can distinguish from API errors.
+        from urllib.error import URLError
+
+        from colony_sdk import ColonyNetworkError
+
+        mock_urlopen.side_effect = URLError("connection refused")
+        client = _authed_client()
+
+        with pytest.raises(ColonyNetworkError) as exc:
+            client.upload_message_attachment("x.png", b"\x89PNG", "image/png")
+        assert "connection refused" in str(exc.value)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_attachment_bytes_network_error_raises_colony_network_error(self, mock_urlopen: MagicMock) -> None:
+        from urllib.error import URLError
+
+        from colony_sdk import ColonyNetworkError
+
+        mock_urlopen.side_effect = URLError("dns failure")
+        client = _authed_client()
+
+        with pytest.raises(ColonyNetworkError):
+            client.get_message_attachment(ATTACHMENT_ID)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_multipart_upload_triggers_ensure_token(self, mock_urlopen: MagicMock) -> None:
+        # When the client has no token in memory, the multipart helper
+        # must trigger _ensure_token() before issuing the upload.
+        mock_urlopen.side_effect = [
+            _mock_response({"access_token": "minted-jwt", "token_type": "bearer", "expires_in": 3600}),
+            _mock_response({"id": ATTACHMENT_ID}),
+        ]
+
+        client = ColonyClient("col_test")  # No pre-seeded token.
+        client.upload_message_attachment("x.png", b"\x89PNG", "image/png")
+
+        assert client._token == "minted-jwt"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_bytes_request_triggers_ensure_token(self, mock_urlopen: MagicMock) -> None:
+        token_resp = _mock_response({"access_token": "minted-jwt", "token_type": "bearer", "expires_in": 3600})
+        bytes_resp = MagicMock()
+        bytes_resp.read.return_value = b"bytes"
+        bytes_resp.status = 200
+        bytes_resp.getheaders.return_value = []
+        bytes_resp.__enter__ = lambda s: s
+        bytes_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.side_effect = [token_resp, bytes_resp]
+
+        client = ColonyClient("col_test")
+        client.get_message_attachment(ATTACHMENT_ID)
+        assert client._token == "minted-jwt"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_multipart_upload_fires_request_and_response_hooks(self, mock_urlopen: MagicMock) -> None:
+        # Hook coverage — request and response callbacks must fire on
+        # the multipart path just like they do on _raw_request.
+        mock_urlopen.return_value = _mock_response({"id": ATTACHMENT_ID})
+        client = _authed_client()
+        req_calls: list[tuple] = []
+        resp_calls: list[tuple] = []
+        client.on_request(lambda m, u, b: req_calls.append((m, u)))
+        client.on_response(lambda m, u, s, d: resp_calls.append((m, u, s)))
+
+        client.upload_message_attachment("x.png", b"\x89PNG", "image/png")
+
+        assert req_calls == [("POST", f"{BASE}/messages/attachments/upload")]
+        assert resp_calls and resp_calls[0][0] == "POST"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_bytes_request_fires_request_and_response_hooks(self, mock_urlopen: MagicMock) -> None:
+        resp = MagicMock()
+        resp.read.return_value = b"bytes"
+        resp.status = 200
+        resp.getheaders.return_value = []
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+        client = _authed_client()
+        req_calls: list[tuple] = []
+        resp_calls: list[tuple] = []
+        client.on_request(lambda m, u, b: req_calls.append((m, u)))
+        client.on_response(lambda m, u, s, d: resp_calls.append((m, u, s)))
+
+        client.get_message_attachment(ATTACHMENT_ID)
+
+        assert req_calls == [("GET", f"{BASE}/messages/attachments/{ATTACHMENT_ID}/full")]
+        assert resp_calls and resp_calls[0][0] == "GET"

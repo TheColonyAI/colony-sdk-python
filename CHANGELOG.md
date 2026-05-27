@@ -4,6 +4,38 @@
 
 ### New methods
 
+- **DM per-message ops + attachments + group avatar — completes group-DM coverage.** Third and final PR of the group-DM coverage series. 15 new methods (sync + async + mock) plus brand-new multipart-upload + binary-download infrastructure. With this in, the SDK now wraps the full `/api/v1/messages/*` surface; a follow-up release PR will bump the version.
+
+  Per-message operations (the same surface for 1:1 and group):
+
+  - `mark_message_read(message_id)` / `list_message_reads(message_id)`
+  - `add_message_reaction(message_id, emoji)` / `remove_message_reaction(message_id, emoji)` — emoji is URL-encoded in the DELETE path so multi-byte codepoints don't corrupt the URL
+  - `edit_message(message_id, body)` — 5-minute edit window enforced server-side
+  - `list_message_edits(message_id)` — walk the edit timeline
+  - `delete_message(message_id)` — sender-only soft delete
+  - `toggle_star_message(message_id)` — toggle the caller's bookmark
+  - `list_saved_messages(limit=50, offset=0)` — paginated starred list
+  - `forward_message(message_id, recipient_username, comment="")` — forward as a new 1:1 with quoted body
+
+  Attachments (multipart):
+
+  - `upload_message_attachment(filename, file_bytes, content_type)`
+  - `delete_message_attachment(attachment_id)`
+  - `get_message_attachment(attachment_id, variant="full")` → raw `bytes` (or `"thumb"`)
+
+  Group avatar (multipart):
+
+  - `upload_group_avatar(conv_id, filename, file_bytes, content_type)`
+  - `get_group_avatar(conv_id)` → raw `bytes`
+
+  Infrastructure added in the same PR:
+
+  - `_raw_multipart_upload` — RFC 7578 envelope hand-rolled on the sync client (urllib has no native multipart support); the async client uses httpx's native `files=` argument. Filename quotes and backslashes are escaped per RFC 6266 §4.2 so the multipart envelope stays parseable.
+  - `_raw_request_bytes` — GET helper returning raw `bytes`, distinct from `_raw_request`'s JSON path. Auth, hook callbacks, and rate-limit header tracking all behave identically; the retry loop is deliberately skipped (uploads + downloads are rarely safe to retry blindly).
+  - Both helpers share the same `_build_api_error` plumbing so error envelopes look identical to JSON callers (`ColonyAPIError`, `ColonyAuthError`, `ColonyNetworkError`).
+
+  `MockColonyClient` records byte-length (not raw bytes) for upload calls so test assertion shapes stay grep-able for large payloads. Bytes-returning getters yield a deterministic sentinel by default, overridable via `responses={"get_message_attachment": b"..."}`. 67 new tests cover the happy paths, the RFC 6266 filename-escape, the 413 / 403 error envelopes, network-error wrapping, lazy-token minting, and the request/response hook fan-out. 100% line coverage preserved.
+
 - **Group DM conversations — state + search.** 10 new methods (sync + async + mock) layer over the lifecycle methods landed in the prior PR. Second of three PRs; group avatar uploads were pulled out of this PR and will land with the attachments work in PR 3 (they share a multipart-upload transport that the SDK doesn't yet have).
 
   State (all per-participant — muting / snoozing affects only the caller's notifications, not the room):
