@@ -1951,3 +1951,213 @@ class TestAsyncVault:
             await client._raw_request("POST", "/vault/purchase", body={"size_mb": 5})
         assert exc.value.status == 410
         assert exc.value.code == "VAULT_PURCHASE_DEPRECATED"
+
+
+# ---------------------------------------------------------------------------
+# Group conversations: lifecycle + members (async)
+# ---------------------------------------------------------------------------
+
+
+_GROUP_ID = "11111111-2222-3333-4444-555555555555"
+_USER_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+class TestAsyncGroupConversationsLifecycle:
+    async def test_create_group_conversation(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"id": _GROUP_ID, "title": "Team", "is_group": True})
+
+        client = _make_client(handler)
+        result = await client.create_group_conversation("Team", ["alice", "bob"])
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/messages/groups?title=Team&members=alice&members=bob"
+        assert result["id"] == _GROUP_ID
+
+    async def test_list_group_templates(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"templates": []})
+
+        client = _make_client(handler)
+        await client.list_group_templates()
+        assert seen["url"] == f"{BASE}/messages/groups/templates"
+
+    async def test_create_group_from_template(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"id": _GROUP_ID, "template": "research-pod"})
+
+        client = _make_client(handler)
+        await client.create_group_from_template("research-pod", ["alice"], title_override="ML lab")
+        assert "template=research-pod" in seen["url"]
+        assert "members=alice" in seen["url"]
+        assert "title_override=ML+lab" in seen["url"]
+
+    async def test_create_group_from_template_omits_title_override(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"id": _GROUP_ID})
+
+        client = _make_client(handler)
+        await client.create_group_from_template("research-pod", ["alice"])
+        assert "title_override" not in seen["url"]
+
+    async def test_get_group_conversation(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"id": _GROUP_ID, "messages": []})
+
+        client = _make_client(handler)
+        await client.get_group_conversation(_GROUP_ID, limit=10, offset=20)
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}?limit=10&offset=20"
+
+    async def test_update_group_conversation(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"id": _GROUP_ID, "title": "New"})
+
+        client = _make_client(handler)
+        await client.update_group_conversation(_GROUP_ID, title="New", description="Updated")
+        assert seen["method"] == "PATCH"
+        assert "title=New" in seen["url"]
+        assert "description=Updated" in seen["url"]
+
+    async def test_update_group_conversation_no_changes(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"id": _GROUP_ID})
+
+        client = _make_client(handler)
+        await client.update_group_conversation(_GROUP_ID)
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}"
+
+    async def test_send_group_message_minimal(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content.decode())
+            return _json_response({"id": "msg-1", "body": "Hi"})
+
+        client = _make_client(handler)
+        await client.send_group_message(_GROUP_ID, "Hi")
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/send"
+        assert seen["body"] == {"body": "Hi"}
+
+    async def test_send_group_message_with_reply(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content.decode())
+            return _json_response({"id": "msg-2", "body": "+1"})
+
+        client = _make_client(handler)
+        await client.send_group_message(_GROUP_ID, "+1", reply_to_message_id="msg-1")
+        assert seen["body"] == {"body": "+1", "reply_to_message_id": "msg-1"}
+
+
+class TestAsyncGroupMembership:
+    async def test_list_group_members(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"members": []})
+
+        client = _make_client(handler)
+        await client.list_group_members(_GROUP_ID)
+        assert seen["method"] == "GET"
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/members"
+
+    async def test_add_group_member(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"already_member": False, "username": "carol"})
+
+        client = _make_client(handler)
+        await client.add_group_member(_GROUP_ID, "carol")
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/members?username=carol"
+
+    async def test_remove_group_member(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"removed": True, "user_id": _USER_ID})
+
+        client = _make_client(handler)
+        await client.remove_group_member(_GROUP_ID, _USER_ID)
+        assert seen["method"] == "DELETE"
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/members/{_USER_ID}"
+
+    async def test_set_group_admin(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"user_id": _USER_ID, "is_admin": False})
+
+        client = _make_client(handler)
+        await client.set_group_admin(_GROUP_ID, _USER_ID, False)
+        assert seen["method"] == "PUT"
+        assert "is_admin=false" in seen["url"]
+
+    async def test_transfer_group_creator(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"conversation_id": _GROUP_ID, "new_creator_id": _USER_ID})
+
+        client = _make_client(handler)
+        await client.transfer_group_creator(_GROUP_ID, "alice")
+        assert seen["url"] == (f"{BASE}/messages/groups/{_GROUP_ID}/transfer-creator?new_creator_username=alice")
+
+    async def test_respond_to_group_invite(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"status": "accepted"})
+
+        client = _make_client(handler)
+        await client.respond_to_group_invite(_GROUP_ID, True)
+        assert "accept=true" in seen["url"]
+
+    async def test_mark_group_all_read(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"marked_read": 5})
+
+        client = _make_client(handler)
+        result = await client.mark_group_all_read(_GROUP_ID)
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/read-all"
+        assert result["marked_read"] == 5

@@ -2191,3 +2191,304 @@ class TestVault:
             client._raw_request("POST", "/vault/purchase", body={"size_mb": 5})
         assert exc.value.status == 410
         assert exc.value.code == "VAULT_PURCHASE_DEPRECATED"
+
+
+# ---------------------------------------------------------------------------
+# Group conversations: lifecycle + members
+# ---------------------------------------------------------------------------
+
+
+GROUP_ID = "11111111-2222-3333-4444-555555555555"
+USER_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+class TestGroupConversationsLifecycle:
+    @patch("colony_sdk.client.urlopen")
+    def test_create_group_conversation_request(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "id": GROUP_ID,
+                "title": "Team",
+                "description": None,
+                "is_group": True,
+                "creator_id": USER_ID,
+                "members": [],
+            }
+        )
+        client = _authed_client()
+
+        result = client.create_group_conversation("Team", ["alice", "bob"])
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        # urlencode preserves the order of tuples passed in.
+        assert req.full_url == f"{BASE}/messages/groups?title=Team&members=alice&members=bob"
+        # No JSON body — params travel as query string.
+        assert req.data is None
+        assert result["id"] == GROUP_ID
+        assert result["is_group"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_group_conversation_escapes_special_chars(self, mock_urlopen: MagicMock) -> None:
+        # Title with whitespace + ampersand must be URL-escaped so the
+        # server parses one title argument, not two query params.
+        mock_urlopen.return_value = _mock_response({"id": GROUP_ID})
+        client = _authed_client()
+
+        client.create_group_conversation("R&D Lab", ["dave"])
+
+        req = _last_request(mock_urlopen)
+        assert "title=R%26D+Lab" in req.full_url
+        assert "members=dave" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_group_templates_request(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"templates": [{"slug": "software-team", "title": "Software team"}]})
+        client = _authed_client()
+
+        result = client.list_group_templates()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/messages/groups/templates"
+        assert result["templates"][0]["slug"] == "software-team"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_group_from_template_minimal(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"id": GROUP_ID, "template": "research-pod", "starter_message_id": None}
+        )
+        client = _authed_client()
+
+        client.create_group_from_template("research-pod", ["alice"])
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == (f"{BASE}/messages/groups/from-template?template=research-pod&members=alice")
+        # title_override omitted when unset.
+        assert "title_override" not in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_group_from_template_with_title_override(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": GROUP_ID})
+        client = _authed_client()
+
+        client.create_group_from_template("research-pod", ["alice", "bob"], title_override="ML lab")
+
+        req = _last_request(mock_urlopen)
+        assert "template=research-pod" in req.full_url
+        assert "members=alice" in req.full_url
+        assert "members=bob" in req.full_url
+        assert "title_override=ML+lab" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_group_conversation_default_pagination(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": GROUP_ID, "messages": [], "members": [], "title": "Team"})
+        client = _authed_client()
+
+        client.get_group_conversation(GROUP_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}?limit=50&offset=0"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_group_conversation_custom_pagination(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": GROUP_ID, "messages": []})
+        client = _authed_client()
+
+        client.get_group_conversation(GROUP_ID, limit=10, offset=20)
+
+        req = _last_request(mock_urlopen)
+        assert "limit=10" in req.full_url
+        assert "offset=20" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_group_conversation_title_and_description(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": GROUP_ID, "title": "New", "description": "Now with topic"})
+        client = _authed_client()
+
+        client.update_group_conversation(GROUP_ID, title="New", description="Now with topic")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PATCH"
+        assert "title=New" in req.full_url
+        assert "description=Now+with+topic" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_group_conversation_omits_unset_fields(self, mock_urlopen: MagicMock) -> None:
+        # Only set fields end up on the wire; the server treats missing
+        # fields as "leave as-is" (a deliberate 3-state PATCH contract).
+        mock_urlopen.return_value = _mock_response({"id": GROUP_ID, "title": "T"})
+        client = _authed_client()
+
+        client.update_group_conversation(GROUP_ID, title="T")
+
+        req = _last_request(mock_urlopen)
+        assert "title=T" in req.full_url
+        assert "description" not in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_group_conversation_empty_clears_description(self, mock_urlopen: MagicMock) -> None:
+        # description="" must reach the server (clear), not be omitted
+        # like None (no change). Guard against accidental falsy collapse.
+        mock_urlopen.return_value = _mock_response({"id": GROUP_ID, "description": ""})
+        client = _authed_client()
+
+        client.update_group_conversation(GROUP_ID, description="")
+
+        req = _last_request(mock_urlopen)
+        assert "description=" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_group_conversation_no_changes(self, mock_urlopen: MagicMock) -> None:
+        # Both fields None → PATCH with no query string. The server
+        # decides whether to 400; the SDK just passes through.
+        mock_urlopen.return_value = _mock_response({"id": GROUP_ID})
+        client = _authed_client()
+
+        client.update_group_conversation(GROUP_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_send_group_message_minimal(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "msg-1", "body": "Hi team"})
+        client = _authed_client()
+
+        client.send_group_message(GROUP_ID, "Hi team")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/send"
+        assert _last_body(mock_urlopen) == {"body": "Hi team"}
+        # No X-Idempotency-Key header unless explicitly set.
+        # urllib normalises header names to title-case-with-rest-lowercase.
+        assert req.headers.get("X-idempotency-key") is None
+
+    @patch("colony_sdk.client.urlopen")
+    def test_send_group_message_with_reply(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "msg-2", "body": "+1"})
+        client = _authed_client()
+
+        client.send_group_message(GROUP_ID, "+1", reply_to_message_id="msg-1")
+
+        body = _last_body(mock_urlopen)
+        assert body == {"body": "+1", "reply_to_message_id": "msg-1"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_send_group_message_with_idempotency_key(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "msg-3", "body": "Hi"})
+        client = _authed_client()
+
+        client.send_group_message(GROUP_ID, "Hi", idempotency_key="abc-123")
+
+        req = _last_request(mock_urlopen)
+        # urllib normalises header names to title-case-with-rest-lowercase.
+        assert req.headers.get("X-idempotency-key") == "abc-123"
+
+
+class TestGroupMembership:
+    @patch("colony_sdk.client.urlopen")
+    def test_list_group_members(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"title": "Team", "creator_id": USER_ID, "members": []})
+        client = _authed_client()
+
+        result = client.list_group_members(GROUP_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/members"
+        assert result["title"] == "Team"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_add_group_member(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"already_member": False, "username": "carol"})
+        client = _authed_client()
+
+        client.add_group_member(GROUP_ID, "carol")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/members?username=carol"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_remove_group_member(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"removed": True, "user_id": USER_ID})
+        client = _authed_client()
+
+        client.remove_group_member(GROUP_ID, USER_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/members/{USER_ID}"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_group_admin_promote(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"user_id": USER_ID, "is_admin": True})
+        client = _authed_client()
+
+        client.set_group_admin(GROUP_ID, USER_ID, True)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == (f"{BASE}/messages/groups/{GROUP_ID}/members/{USER_ID}/admin?is_admin=true")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_group_admin_demote(self, mock_urlopen: MagicMock) -> None:
+        # Boolean must reach the server as the lowercase string ``"false"``
+        # (FastAPI's bool query coercion accepts this, not Python's
+        # ``"False"`` capitalised default from ``str(bool)``).
+        mock_urlopen.return_value = _mock_response({"user_id": USER_ID, "is_admin": False})
+        client = _authed_client()
+
+        client.set_group_admin(GROUP_ID, USER_ID, False)
+
+        req = _last_request(mock_urlopen)
+        assert "is_admin=false" in req.full_url
+        assert "is_admin=False" not in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_transfer_group_creator(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"conversation_id": GROUP_ID, "new_creator_id": USER_ID})
+        client = _authed_client()
+
+        client.transfer_group_creator(GROUP_ID, "alice")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == (f"{BASE}/messages/groups/{GROUP_ID}/transfer-creator?new_creator_username=alice")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_respond_to_group_invite_accept(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"status": "accepted"})
+        client = _authed_client()
+
+        client.respond_to_group_invite(GROUP_ID, True)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/invite/respond?accept=true"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_respond_to_group_invite_decline(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"status": "declined"})
+        client = _authed_client()
+
+        client.respond_to_group_invite(GROUP_ID, False)
+
+        req = _last_request(mock_urlopen)
+        assert "accept=false" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_group_all_read(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"marked_read": 7})
+        client = _authed_client()
+
+        result = client.mark_group_all_read(GROUP_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/read-all"
+        assert result["marked_read"] == 7

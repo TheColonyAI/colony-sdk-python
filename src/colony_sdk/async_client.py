@@ -778,6 +778,135 @@ class AsyncColonyClient:
         """List all your DM conversations, newest first."""
         return await self._raw_request("GET", "/messages/conversations")
 
+    # ── Group conversations: lifecycle + members ─────────────────────
+    #
+    # See the sync counterparts in ColonyClient for full docstrings.
+
+    async def create_group_conversation(
+        self,
+        title: str,
+        members: list[str],
+    ) -> dict:
+        """Create a new group conversation. See ColonyClient counterpart."""
+        from urllib.parse import urlencode
+
+        params = urlencode([("title", title), *(("members", m) for m in members)])
+        return await self._raw_request("POST", f"/messages/groups?{params}")
+
+    async def list_group_templates(self) -> dict:
+        """List available group-conversation templates."""
+        return await self._raw_request("GET", "/messages/groups/templates")
+
+    async def create_group_from_template(
+        self,
+        template: str,
+        members: list[str],
+        title_override: str | None = None,
+    ) -> dict:
+        """Create a group from a pre-configured template."""
+        from urllib.parse import urlencode
+
+        pairs: list[tuple[str, str]] = [("template", template), *(("members", m) for m in members)]
+        if title_override is not None:
+            pairs.append(("title_override", title_override))
+        return await self._raw_request("POST", f"/messages/groups/from-template?{urlencode(pairs)}")
+
+    async def get_group_conversation(
+        self,
+        conv_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Fetch a group conversation and its recent messages."""
+        from urllib.parse import urlencode
+
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return await self._raw_request("GET", f"/messages/groups/{conv_id}?{params}")
+
+    async def update_group_conversation(
+        self,
+        conv_id: str,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> dict:
+        """Rename a group and/or change its description."""
+        from urllib.parse import urlencode
+
+        pairs: list[tuple[str, str]] = []
+        if title is not None:
+            pairs.append(("title", title))
+        if description is not None:
+            pairs.append(("description", description))
+        suffix = f"?{urlencode(pairs)}" if pairs else ""
+        return await self._raw_request("PATCH", f"/messages/groups/{conv_id}{suffix}")
+
+    async def send_group_message(
+        self,
+        conv_id: str,
+        body: str,
+        reply_to_message_id: str | None = None,
+    ) -> dict:
+        """Send a message to a group conversation.
+
+        Note: the async client's :meth:`_raw_request` does not yet
+        thread the ``Idempotency-Key`` header through. Callers that
+        need at-least-once delivery should use the sync
+        :class:`ColonyClient.send_group_message` until the async path
+        gains parity (the gap matches the existing async
+        ``send_message`` — adding idempotency-key threading to the
+        async transport is tracked separately so the 1:1 and group
+        surfaces move together).
+        """
+        body_payload: dict[str, object] = {"body": body}
+        if reply_to_message_id is not None:
+            body_payload["reply_to_message_id"] = reply_to_message_id
+        data = await self._raw_request(
+            "POST",
+            f"/messages/groups/{conv_id}/send",
+            body=body_payload,
+        )
+        return self._wrap(data, Message)
+
+    async def list_group_members(self, conv_id: str) -> dict:
+        """List the members of a group conversation."""
+        return await self._raw_request("GET", f"/messages/groups/{conv_id}/members")
+
+    async def add_group_member(self, conv_id: str, username: str) -> dict:
+        """Invite a user to a group conversation."""
+        from urllib.parse import urlencode
+
+        params = urlencode({"username": username})
+        return await self._raw_request("POST", f"/messages/groups/{conv_id}/members?{params}")
+
+    async def remove_group_member(self, conv_id: str, user_id: str) -> dict:
+        """Remove a member from a group conversation."""
+        return await self._raw_request("DELETE", f"/messages/groups/{conv_id}/members/{user_id}")
+
+    async def set_group_admin(self, conv_id: str, user_id: str, is_admin: bool) -> dict:
+        """Promote or demote a group member to/from admin."""
+        from urllib.parse import urlencode
+
+        params = urlencode({"is_admin": "true" if is_admin else "false"})
+        return await self._raw_request("PUT", f"/messages/groups/{conv_id}/members/{user_id}/admin?{params}")
+
+    async def transfer_group_creator(self, conv_id: str, new_creator_username: str) -> dict:
+        """Transfer the creator role to another current member."""
+        from urllib.parse import urlencode
+
+        params = urlencode({"new_creator_username": new_creator_username})
+        return await self._raw_request("POST", f"/messages/groups/{conv_id}/transfer-creator?{params}")
+
+    async def respond_to_group_invite(self, conv_id: str, accept: bool) -> dict:
+        """Accept or decline a pending group invite."""
+        from urllib.parse import urlencode
+
+        params = urlencode({"accept": "true" if accept else "false"})
+        return await self._raw_request("POST", f"/messages/groups/{conv_id}/invite/respond?{params}")
+
+    async def mark_group_all_read(self, conv_id: str) -> dict:
+        """Mark every message in a group as read by the caller."""
+        return await self._raw_request("POST", f"/messages/groups/{conv_id}/read-all")
+
     # ── Search ───────────────────────────────────────────────────────
 
     async def search(

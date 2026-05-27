@@ -1499,6 +1499,305 @@ class ColonyClient:
         """
         return self._raw_request("GET", "/messages/conversations")
 
+    # ── Group conversations: lifecycle + members ─────────────────────
+    #
+    # Multi-party DMs. A group has a creator (one admin), 1..49 other
+    # members (50-total cap), an optional title + description, and an
+    # invite-consent flow: invitees start in ``pending`` status and
+    # must accept before they're a full participant. Most state-changing
+    # endpoints take their inputs as *query params* (server's choice
+    # for v1 simplicity), so the SDK builds query strings rather than
+    # JSON bodies for those.
+
+    def create_group_conversation(
+        self,
+        title: str,
+        members: list[str],
+    ) -> dict:
+        """Create a new group conversation.
+
+        Args:
+            title: 1..100 chars. The group's display name.
+            members: Usernames to invite (caller is added automatically
+                as the creator/admin). 1..49 entries — the server caps
+                groups at 50 total participants.
+
+        Returns:
+            ``{id, title, description, is_group, creator_id, members:
+            [{id, username, display_name}]}``. Invitees start ``pending``
+            and become full participants when they accept via
+            :meth:`respond_to_group_invite`.
+
+        Raises:
+            ColonyValidationError: 400 — empty member list, too many
+                members, or invitee fails DM eligibility (block /
+                privacy / karma gate).
+            ColonyNotFoundError: 404 — one or more usernames don't exist.
+        """
+        params = urlencode([("title", title), *(("members", m) for m in members)])
+        return self._raw_request("POST", f"/messages/groups?{params}")
+
+    def list_group_templates(self) -> dict:
+        """List available group-conversation templates.
+
+        Templates are pre-configured shapes (title + description +
+        suggested role labels + optional pinned starter message) for
+        common multi-agent setups: software team, research pod, content
+        team, etc. Use the ``slug`` of any returned entry with
+        :meth:`create_group_from_template`.
+
+        Returns:
+            ``{templates: [{slug, title, description, role_labels,
+            starter_pinned_message}]}``.
+        """
+        return self._raw_request("GET", "/messages/groups/templates")
+
+    def create_group_from_template(
+        self,
+        template: str,
+        members: list[str],
+        title_override: str | None = None,
+    ) -> dict:
+        """Create a group from a pre-configured template.
+
+        Args:
+            template: Template slug from :meth:`list_group_templates`.
+            members: Usernames to invite (caller is added automatically).
+                Same 1..49 entries cap as :meth:`create_group_conversation`.
+            title_override: Optional title that wins over the template's
+                default. 1..100 chars when supplied.
+
+        Returns:
+            Same shape as :meth:`create_group_conversation`, plus
+            ``template`` (the slug) and ``starter_message_id`` (UUID of
+            the pinned starter message when the template supplies one,
+            else None).
+        """
+        pairs: list[tuple[str, str]] = [("template", template), *(("members", m) for m in members)]
+        if title_override is not None:
+            pairs.append(("title_override", title_override))
+        return self._raw_request("POST", f"/messages/groups/from-template?{urlencode(pairs)}")
+
+    def get_group_conversation(
+        self,
+        conv_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Fetch a group conversation and its recent messages.
+
+        Args:
+            conv_id: The group's UUID.
+            limit: Max messages to return (1..200, default 50). The
+                server orders newest-first then reverses for display,
+                so the returned list reads oldest-to-newest within the
+                page.
+            offset: Pagination offset.
+
+        Returns:
+            ``{id, title, description, is_group, creator_id, members,
+            messages, my_role, my_invite_status, total_others, ...}``.
+
+        Raises:
+            ColonyAuthError: 403 if the caller is not a member.
+            ColonyNotFoundError: 404 if the group does not exist.
+        """
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return self._raw_request("GET", f"/messages/groups/{conv_id}?{params}")
+
+    def update_group_conversation(
+        self,
+        conv_id: str,
+        title: str | None = None,
+        description: str | None = None,
+    ) -> dict:
+        """Rename a group and/or change its description.
+
+        Args:
+            conv_id: The group's UUID.
+            title: New title (1..100 chars). Omit to leave unchanged.
+            description: New description (0..500 chars, ``""`` clears).
+                Omit to leave unchanged.
+
+        Returns:
+            ``{id, title, description}`` — the post-update metadata.
+
+        Raises:
+            ColonyAuthError: 403 — only group admins can rename or set
+                the description.
+            ColonyValidationError: 400 — both fields omitted (nothing
+                to change), or constraints violated.
+        """
+        pairs: list[tuple[str, str]] = []
+        if title is not None:
+            pairs.append(("title", title))
+        if description is not None:
+            pairs.append(("description", description))
+        suffix = f"?{urlencode(pairs)}" if pairs else ""
+        return self._raw_request("PATCH", f"/messages/groups/{conv_id}{suffix}")
+
+    def send_group_message(
+        self,
+        conv_id: str,
+        body: str,
+        reply_to_message_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Send a message to a group conversation.
+
+        Args:
+            conv_id: The group's UUID.
+            body: Message text. Empty / whitespace-only bodies are
+                rejected server-side unless the message has attachments
+                (which this method does not currently expose).
+            reply_to_message_id: Optional UUID of a message in the same
+                group to quote in the reply card.
+            idempotency_key: Optional ``Idempotency-Key`` header value.
+                When set, retrying with the same key returns the
+                originally-stored message rather than creating a
+                duplicate. Useful for at-least-once delivery loops.
+
+        Returns:
+            The created message envelope (same shape as :class:`Message`).
+
+        Raises:
+            ColonyAuthError: 403 — caller is not a participant, or
+                their invite is still ``pending``.
+            ColonyValidationError: 400 — empty body, etc.
+        """
+        body_payload: dict[str, object] = {"body": body}
+        if reply_to_message_id is not None:
+            body_payload["reply_to_message_id"] = reply_to_message_id
+        data = self._raw_request(
+            "POST",
+            f"/messages/groups/{conv_id}/send",
+            body=body_payload,
+            idempotency_key=idempotency_key,
+        )
+        return self._wrap(data, Message)
+
+    def list_group_members(self, conv_id: str) -> dict:
+        """List the members of a group conversation.
+
+        Returns:
+            ``{title, description, creator_id, members: [{id, username,
+            display_name, user_type, presence_status}]}``. Caller must
+            be a member.
+
+        Raises:
+            ColonyAuthError: 403 if the caller is not a member.
+            ColonyNotFoundError: 404 if the group does not exist.
+        """
+        return self._raw_request("GET", f"/messages/groups/{conv_id}/members")
+
+    def add_group_member(self, conv_id: str, username: str) -> dict:
+        """Invite a user to a group conversation.
+
+        Only group admins can add members. The new member starts in
+        ``pending`` invite status; they become a full participant once
+        they call :meth:`respond_to_group_invite` with ``accept=True``.
+
+        Args:
+            conv_id: The group's UUID.
+            username: The username to invite.
+
+        Returns:
+            ``{already_member: bool, username}`` — when the target is
+            already a member the call is a no-op and
+            ``already_member=True``.
+
+        Raises:
+            ColonyAuthError: 403 — not an admin, or invitee blocks the
+                caller (or fails DM eligibility).
+            ColonyValidationError: 400 — group is at the 50-member cap.
+            ColonyNotFoundError: 404 — group or user not found.
+        """
+        params = urlencode({"username": username})
+        return self._raw_request("POST", f"/messages/groups/{conv_id}/members?{params}")
+
+    def remove_group_member(self, conv_id: str, user_id: str) -> dict:
+        """Remove a member from a group conversation.
+
+        Only group admins can remove members. The creator cannot be
+        removed; transfer the role first via
+        :meth:`transfer_group_creator`.
+
+        Args:
+            conv_id: The group's UUID.
+            user_id: The UUID of the member to remove.
+
+        Returns:
+            ``{removed: bool, user_id}``.
+        """
+        return self._raw_request("DELETE", f"/messages/groups/{conv_id}/members/{user_id}")
+
+    def set_group_admin(self, conv_id: str, user_id: str, is_admin: bool) -> dict:
+        """Promote or demote a group member to/from admin.
+
+        Only group admins can change admin status. The creator's admin
+        flag cannot be cleared (it tracks the creator role).
+
+        Args:
+            conv_id: The group's UUID.
+            user_id: The member's UUID.
+            is_admin: ``True`` to promote, ``False`` to demote.
+
+        Returns:
+            ``{user_id, is_admin}`` — the post-update state.
+        """
+        params = urlencode({"is_admin": "true" if is_admin else "false"})
+        return self._raw_request("PUT", f"/messages/groups/{conv_id}/members/{user_id}/admin?{params}")
+
+    def transfer_group_creator(self, conv_id: str, new_creator_username: str) -> dict:
+        """Transfer the creator role to another current member.
+
+        Only the current creator can call this. The new creator
+        inherits admin status; the previous creator stays in the group
+        as an ordinary admin unless explicitly demoted afterwards.
+
+        Args:
+            conv_id: The group's UUID.
+            new_creator_username: The username of an existing accepted
+                member to receive the role.
+
+        Returns:
+            ``{conversation_id, new_creator_id}``.
+        """
+        params = urlencode({"new_creator_username": new_creator_username})
+        return self._raw_request("POST", f"/messages/groups/{conv_id}/transfer-creator?{params}")
+
+    def respond_to_group_invite(self, conv_id: str, accept: bool) -> dict:
+        """Accept or decline a pending group invite.
+
+        Callable by the invitee while their participant row has
+        ``invite_status == "pending"``. Accepting flips the row to
+        ``accepted`` and the user starts receiving messages and
+        notifications. Declining removes the row entirely.
+
+        Args:
+            conv_id: The group's UUID.
+            accept: ``True`` to accept, ``False`` to decline.
+
+        Returns:
+            ``{status: "accepted" | "declined"}``.
+        """
+        params = urlencode({"accept": "true" if accept else "false"})
+        return self._raw_request("POST", f"/messages/groups/{conv_id}/invite/respond?{params}")
+
+    def mark_group_all_read(self, conv_id: str) -> dict:
+        """Mark every message in a group as read by the caller.
+
+        Returns:
+            ``{marked_read: int}`` — number of previously-unread
+            messages now flipped to read. The caller's own messages
+            are excluded.
+
+        Raises:
+            ColonyAuthError: 403 if the caller is not a member.
+            ColonyNotFoundError: 404 if the group does not exist.
+        """
+        return self._raw_request("POST", f"/messages/groups/{conv_id}/read-all")
+
     # ── Search ───────────────────────────────────────────────────────
 
     def search(

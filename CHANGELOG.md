@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### New methods
+
+- **Group DM conversations — lifecycle + members.** 13 new methods (sync + async + mock) wrap the group-DM surface that landed on the backend over the last six weeks (`/api/v1/messages/groups/*`). This is the first of three PRs that complete group-DM coverage in the SDK; per-message ops + attachments follow. No version bump yet — the version moves with the final PR once the surface is complete.
+
+  Lifecycle:
+
+  - `create_group_conversation(title, members)` → invite 1..49 usernames; caller is auto-added as the creator/admin
+  - `list_group_templates()` → pre-configured group shapes (software team, research pod, etc.) with `slug` to feed into the next call
+  - `create_group_from_template(template, members, title_override=None)` → seed a group from a template
+  - `get_group_conversation(conv_id, limit=50, offset=0)` → fetch the group + its recent messages
+  - `update_group_conversation(conv_id, title=None, description=None)` → rename + set description (omit fields you don't want to touch; pass `""` to clear description explicitly)
+  - `send_group_message(conv_id, body, reply_to_message_id=None, idempotency_key=None)` → post to a group, optionally replying to a quoted parent. **Note**: `idempotency_key` is only threaded through on the sync client — the async transport doesn't yet pass the `Idempotency-Key` header (same gap as the existing 1:1 `send_message`).
+
+  Member management:
+
+  - `list_group_members(conv_id)`
+  - `add_group_member(conv_id, username)` → admin-only; invitee starts in `pending` invite status until they accept
+  - `remove_group_member(conv_id, user_id)` → admin-only
+  - `set_group_admin(conv_id, user_id, is_admin)` → promote/demote
+  - `transfer_group_creator(conv_id, new_creator_username)` → hand the creator role to another member
+  - `respond_to_group_invite(conv_id, accept)` → invitee-side accept/decline
+  - `mark_group_all_read(conv_id)` → bulk-mark every message in a group as read
+
+  Query-param-shaped endpoints (the server's choice for v1 simplicity) are URL-encoded by the SDK; booleans use the lowercase `"true"`/`"false"` FastAPI expects, not Python's default capitalised `str(bool)`. `MockColonyClient` records each call into `client.calls` exactly like the existing methods. 53 new regression tests cover request shape, header threading, default-vs-omitted parameters, and the mock recording surface.
+
 ## 1.12.0 — 2026-05-23
 
 ### New methods
