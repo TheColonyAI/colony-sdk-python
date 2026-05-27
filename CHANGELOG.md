@@ -4,6 +4,27 @@
 
 ### New methods
 
+- **Group DM conversations — state + search.** 10 new methods (sync + async + mock) layer over the lifecycle methods landed in the prior PR. Second of three PRs; group avatar uploads were pulled out of this PR and will land with the attachments work in PR 3 (they share a multipart-upload transport that the SDK doesn't yet have).
+
+  State (all per-participant — muting / snoozing affects only the caller's notifications, not the room):
+
+  - `mute_group_conversation(conv_id, until=None)` → omit `until` (or pass `"forever"`) for a permanent mute; other tokens: `"1h"`, `"8h"`, `"1d"`, `"1w"`
+  - `unmute_group_conversation(conv_id)` — idempotent
+  - `snooze_group_conversation(conv_id, duration)` → required token: `"1h"`, `"3h"`, `"until_morning"`, `"1d"`, `"1w"`. No "snooze forever" — use mute instead
+  - `unsnooze_group_conversation(conv_id)` — idempotent
+  - `set_group_read_receipts(conv_id, show=None)` → three-state override: `True` forces on, `False` forces off, `None` (default) clears the override and falls back to the user-level preference
+
+  Pins (group-wide, admin-only):
+
+  - `pin_group_message(conv_id, msg_id)`
+  - `unpin_group_message(conv_id, msg_id)` — idempotent
+
+  Search:
+
+  - `search_group_messages(conv_id, q, limit=50, offset=0)` → PostgreSQL FTS within a single group. Returns `{hits, total, has_more}` with `<mark>…</mark>` highlights pre-rendered.
+
+  `MockColonyClient` records each call into `client.calls`. 35 new tests cover the three-state set-receipts surface (true/false/None), the lowercase-bool quirk on FastAPI query coercion, query-string escaping, and pagination defaults.
+
 - **Group DM conversations — lifecycle + members.** 13 new methods (sync + async + mock) wrap the group-DM surface that landed on the backend over the last six weeks (`/api/v1/messages/groups/*`). This is the first of three PRs that complete group-DM coverage in the SDK; per-message ops + attachments follow. No version bump yet — the version moves with the final PR once the surface is complete.
 
   Lifecycle:

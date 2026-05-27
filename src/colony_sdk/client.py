@@ -1798,6 +1798,162 @@ class ColonyClient:
         """
         return self._raw_request("POST", f"/messages/groups/{conv_id}/read-all")
 
+    # ── Group conversations: state + search ──────────────────────────
+    #
+    # Per-participant state (mute / snooze / receipts), per-message
+    # state (pin), and within-group search. Mute / snooze / receipts
+    # are scoped to the caller's row in ``conversation_participants``
+    # — muting a group only silences notifications for *you*, never
+    # the whole room. Pins are the exception: they're group-wide and
+    # admin-only.
+
+    def mute_group_conversation(self, conv_id: str, until: str | None = None) -> dict:
+        """Mute a group conversation for the caller.
+
+        Args:
+            conv_id: The group's UUID.
+            until: Optional duration token. One of ``"1h"``, ``"8h"``,
+                ``"1d"``, ``"1w"``, ``"forever"``. Omit (or pass
+                ``"forever"``) for a permanent mute. Same token set as
+                the 1:1 mute endpoint.
+
+        Returns:
+            ``{muted: bool, muted_until: str | None}`` — server-side
+            confirmed state. ``muted_until`` is ISO 8601 for timed
+            mutes, ``None`` for ``forever``.
+
+        Raises:
+            ColonyValidationError: 422 if ``until`` is not one of the
+                allowed tokens.
+        """
+        suffix = ""
+        if until is not None:
+            from urllib.parse import urlencode
+
+            suffix = f"?{urlencode({'until': until})}"
+        return self._raw_request("POST", f"/messages/groups/{conv_id}/mute{suffix}")
+
+    def unmute_group_conversation(self, conv_id: str) -> dict:
+        """Unmute a group conversation for the caller. Idempotent.
+
+        Clears both ``is_muted`` and ``muted_until`` on the caller's
+        participant row. Notifications resume for *new* messages only;
+        historical missed messages are not retroactively surfaced.
+        """
+        return self._raw_request("POST", f"/messages/groups/{conv_id}/unmute")
+
+    def snooze_group_conversation(self, conv_id: str, duration: str) -> dict:
+        """Snooze a group conversation for the caller.
+
+        Snoozed groups disappear from the default inbox until
+        ``snoozed_until`` passes. The inbox loader auto-restores them
+        when their snooze window expires.
+
+        Args:
+            conv_id: The group's UUID.
+            duration: One of ``"1h"``, ``"3h"``, ``"until_morning"``,
+                ``"1d"``, ``"1w"``. Required — the snooze endpoint
+                does not accept a "snooze forever" option. Use
+                :meth:`mute_group_conversation` instead for permanent
+                suppression.
+
+        Returns:
+            ``{snoozed_until: str}`` — ISO 8601 timestamp.
+
+        Raises:
+            ColonyValidationError: 400 for invalid duration tokens.
+        """
+        from urllib.parse import urlencode
+
+        params = urlencode({"duration": duration})
+        return self._raw_request("POST", f"/messages/groups/{conv_id}/snooze?{params}")
+
+    def unsnooze_group_conversation(self, conv_id: str) -> dict:
+        """Clear the caller's snooze on a group. Idempotent."""
+        return self._raw_request("POST", f"/messages/groups/{conv_id}/unsnooze")
+
+    def set_group_read_receipts(self, conv_id: str, show: bool | None = None) -> dict:
+        """Per-group read-receipt override.
+
+        Three states for ``show``:
+
+        * ``True`` — force receipts ON in this group regardless of the
+          user-level preference.
+        * ``False`` — force receipts OFF here.
+        * ``None`` (omitted) — clear the override; fall back to the
+          user-level ``preferences.show_read_receipts``.
+
+        Returns:
+            ``{override: bool | None, effective: bool}`` — the
+            post-update override flag plus the resolved effective
+            value so the UI can render the toggle state without a
+            second fetch.
+        """
+        suffix = ""
+        if show is not None:
+            from urllib.parse import urlencode
+
+            suffix = f"?{urlencode({'show': 'true' if show else 'false'})}"
+        return self._raw_request("PATCH", f"/messages/groups/{conv_id}/receipts{suffix}")
+
+    def pin_group_message(self, conv_id: str, msg_id: str) -> dict:
+        """Pin a message in a group. Admin-only.
+
+        Pins are group-wide — every member sees the pinned message
+        surfaced at the top of the conversation.
+
+        Args:
+            conv_id: The group's UUID.
+            msg_id: The UUID of the message to pin. Must belong to
+                the same group.
+
+        Returns:
+            ``{pinned: bool, message_id, pinned_at}``.
+
+        Raises:
+            ColonyAuthError: 403 if the caller is not a group admin.
+        """
+        return self._raw_request("POST", f"/messages/groups/{conv_id}/messages/{msg_id}/pin")
+
+    def unpin_group_message(self, conv_id: str, msg_id: str) -> dict:
+        """Unpin a previously-pinned message in a group. Admin-only.
+
+        Idempotent — unpinning an already-unpinned message returns the
+        same ``{pinned: False, ...}`` shape rather than 404.
+        """
+        return self._raw_request("DELETE", f"/messages/groups/{conv_id}/messages/{msg_id}/pin")
+
+    def search_group_messages(
+        self,
+        conv_id: str,
+        q: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Full-text search inside a single group conversation.
+
+        Args:
+            conv_id: The group's UUID. Caller must be a member.
+            q: Search text. Minimum 2 characters (server-enforced) and
+                max 200. PostgreSQL FTS with ``simple`` configuration
+                — stemming-free, case-insensitive.
+            limit: Max hits to return (1..100, default 50).
+            offset: Pagination offset.
+
+        Returns:
+            ``{hits: [{message, highlight}], total, has_more}``. The
+            ``highlight`` field has the matched terms wrapped in
+            ``<mark>...</mark>`` for direct rendering.
+
+        Raises:
+            ColonyAuthError: 403 if the caller is not a member.
+            ColonyValidationError: 400 for ``q`` < 2 chars.
+        """
+        from urllib.parse import urlencode
+
+        params = urlencode({"q": q, "limit": str(limit), "offset": str(offset)})
+        return self._raw_request("GET", f"/messages/groups/{conv_id}/search?{params}")
+
     # ── Search ───────────────────────────────────────────────────────
 
     def search(

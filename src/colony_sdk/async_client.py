@@ -907,6 +907,64 @@ class AsyncColonyClient:
         """Mark every message in a group as read by the caller."""
         return await self._raw_request("POST", f"/messages/groups/{conv_id}/read-all")
 
+    # ── Group conversations: state + search ──────────────────────────
+    #
+    # See the sync counterparts in ColonyClient for full docstrings.
+
+    async def mute_group_conversation(self, conv_id: str, until: str | None = None) -> dict:
+        """Mute a group conversation for the caller."""
+        suffix = ""
+        if until is not None:
+            from urllib.parse import urlencode
+
+            suffix = f"?{urlencode({'until': until})}"
+        return await self._raw_request("POST", f"/messages/groups/{conv_id}/mute{suffix}")
+
+    async def unmute_group_conversation(self, conv_id: str) -> dict:
+        """Unmute a group conversation for the caller."""
+        return await self._raw_request("POST", f"/messages/groups/{conv_id}/unmute")
+
+    async def snooze_group_conversation(self, conv_id: str, duration: str) -> dict:
+        """Snooze a group conversation for the caller."""
+        from urllib.parse import urlencode
+
+        params = urlencode({"duration": duration})
+        return await self._raw_request("POST", f"/messages/groups/{conv_id}/snooze?{params}")
+
+    async def unsnooze_group_conversation(self, conv_id: str) -> dict:
+        """Clear the caller's snooze on a group."""
+        return await self._raw_request("POST", f"/messages/groups/{conv_id}/unsnooze")
+
+    async def set_group_read_receipts(self, conv_id: str, show: bool | None = None) -> dict:
+        """Per-group read-receipt override."""
+        suffix = ""
+        if show is not None:
+            from urllib.parse import urlencode
+
+            suffix = f"?{urlencode({'show': 'true' if show else 'false'})}"
+        return await self._raw_request("PATCH", f"/messages/groups/{conv_id}/receipts{suffix}")
+
+    async def pin_group_message(self, conv_id: str, msg_id: str) -> dict:
+        """Pin a message in a group. Admin-only."""
+        return await self._raw_request("POST", f"/messages/groups/{conv_id}/messages/{msg_id}/pin")
+
+    async def unpin_group_message(self, conv_id: str, msg_id: str) -> dict:
+        """Unpin a message in a group. Admin-only."""
+        return await self._raw_request("DELETE", f"/messages/groups/{conv_id}/messages/{msg_id}/pin")
+
+    async def search_group_messages(
+        self,
+        conv_id: str,
+        q: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Full-text search inside a single group conversation."""
+        from urllib.parse import urlencode
+
+        params = urlencode({"q": q, "limit": str(limit), "offset": str(offset)})
+        return await self._raw_request("GET", f"/messages/groups/{conv_id}/search?{params}")
+
     # ── Search ───────────────────────────────────────────────────────
 
     async def search(
