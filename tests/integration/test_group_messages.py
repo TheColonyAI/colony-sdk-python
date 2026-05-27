@@ -1,18 +1,45 @@
-"""Integration tests for group-DM lifecycle.
+"""Integration tests for the basic group-DM round trip.
 
-Covers the basic round trip:
+Covers:
 
-1. Primary creates a group conversation with the secondary as an invitee
-2. Secondary sees the pending invite via :meth:`get_group_conversation`
-3. Secondary accepts (or declines) the invite
-4. After acceptance, either side can send messages and read the room
-5. List membership from both sides
-6. Mark all read
+1. Primary creates a group conversation with the secondary as a member
+2. Both sides can list members and see each other
+3. Either side can ``send_group_message``; the other side reads it back
+4. Either side can ``mark_group_all_read``
+5. Best-effort ``respond_to_group_invite(accept=True)`` exercise — see
+   "Invite lifecycle" below
 
 Like :mod:`test_messages`, every test in this file requires
 ``COLONY_TEST_API_KEY_2`` and at least ``MIN_KARMA_FOR_DM`` karma on
 the sending account — the server runs the same DM-eligibility check
 (block / privacy / karma gate) against each group invitee.
+
+## Invite lifecycle (observed against the live API)
+
+Empirically against the integration-tester / integration-tester-2
+account pair (both at trust level "Member", 10+ karma), the server
+**auto-accepts** a fresh group invite at creation time — the secondary
+becomes a full participant immediately and ``respond_to_group_invite``
+returns 400 "Invite is not pending". So the explicit pending → accept
+path can't be reliably exercised from these accounts.
+
+:class:`TestGroupInviteAcceptPath` *probes* whether the secondary's
+invite is pending and either exercises the accept call or skips with
+a clear reason. If you re-run this suite against a pair of accounts
+with no trust relationship between them, that test should exercise
+the accept path instead of skipping.
+
+The decline path is not covered for the same reason.
+
+## Server-response shape notes
+
+- ``get_group_conversation(conv_id)`` returns a slim envelope:
+  ``{id, title, description, creator_id, member_count, messages,
+  pinned}``. Notably absent vs the docstring: ``is_group``,
+  ``my_invite_status``, ``my_role``, ``members``. Member listing is
+  via the dedicated ``list_group_members`` endpoint.
+- ``mark_group_all_read`` returns ``{marked: int}`` (not
+  ``{marked_read: int}`` as the docstring suggests).
 """
 
 from __future__ import annotations
@@ -38,11 +65,7 @@ def _skip_if_low_karma(profile: dict) -> None:
         )
 
 
-def _create_or_skip(
-    creator: ColonyClient,
-    title: str,
-    members: list[str],
-) -> dict:
+def _create_or_skip(creator: ColonyClient, title: str, members: list[str]) -> dict:
     """Create a group, skipping cleanly on karma / eligibility 403."""
     try:
         return creator.create_group_conversation(title=title, members=members)
@@ -55,130 +78,98 @@ def _create_or_skip(
 # ── Fixtures ────────────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def pending_group(
-    client: ColonyClient,
-    second_me: dict,
-    me: dict,
-) -> Iterator[dict]:
-    """Fresh group created by primary with secondary as a pending invitee.
-
-    Function-scoped so each test that wants to manipulate the invite
-    state (accept / decline / inspect "pending") gets a clean room.
-    """
-    _skip_if_low_karma(me)
-
-    title = f"sdk-it group pending {unique_suffix()}"
-    group = _create_or_skip(client, title=title, members=[second_me["username"]])
-
-    try:
-        yield group
-    finally:
-        # Best-effort cleanup: remove the invitee so the group becomes
-        # effectively dormant from the secondary's view. There's no
-        # delete_group_conversation endpoint — the row will persist on
-        # the primary's side, which is fine (test account, hidden from
-        # listings via is_tester).
-        with contextlib.suppress(ColonyAPIError):
-            client.remove_group_member(group["id"], second_me["id"])
-
-
 @pytest.fixture(scope="module")
-def accepted_group(
+def group(
     client: ColonyClient,
     second_client: ColonyClient,
     me: dict,
     second_me: dict,
 ) -> Iterator[dict]:
-    """Module-scoped group where the secondary has accepted the invite.
+    """Module-scoped group room, primary as creator + secondary as member.
 
-    Created once and reused by every test that just needs a live
-    accepted group (send, list members, mark-all-read). Module scope
-    keeps the create-group call count down: rate-limit budgets are
-    shared across the whole integration suite.
+    Created once and reused by every test in the messaging block so the
+    suite doesn't burn its create-group budget per test.
+
+    Defensively attempts ``respond_to_group_invite(accept=True)``: when
+    the server delivered a pending invite, this transitions it; when
+    the server auto-accepted (see module docstring), the 400 "Invite is
+    not pending" is suppressed and the room is already usable.
     """
     _skip_if_low_karma(me)
 
-    title = f"sdk-it group accepted {unique_suffix()}"
-    group = _create_or_skip(client, title=title, members=[second_me["username"]])
+    title = f"sdk-it group {unique_suffix()}"
+    g = _create_or_skip(client, title=title, members=[second_me["username"]])
 
-    # Secondary accepts the invite up front so the group is usable.
-    try:
-        response = second_client.respond_to_group_invite(group["id"], accept=True)
-    except ColonyAPIError as e:
-        pytest.skip(f"secondary could not accept group invite: {e}")
-    assert response.get("status") == "accepted", response
+    with contextlib.suppress(ColonyAPIError):
+        second_client.respond_to_group_invite(g["id"], accept=True)
 
     try:
-        yield group
+        yield g
     finally:
+        # Best-effort teardown: there's no delete_group_conversation
+        # endpoint, so the group row persists on the primary's side
+        # either way. Removing the secondary makes it effectively
+        # dormant from their inbox; the primary's row stays put (these
+        # are tester accounts whose content is hidden from listings).
         with contextlib.suppress(ColonyAPIError):
-            client.remove_group_member(group["id"], second_me["id"])
+            client.remove_group_member(g["id"], second_me["id"])
 
 
 # ── Tests ───────────────────────────────────────────────────────────────
 
 
-class TestGroupConversationLifecycle:
-    def test_create_group_visible_to_creator(
+class TestGroupCreation:
+    def test_create_group_returns_full_envelope(
         self,
         client: ColonyClient,
-        pending_group: dict,
+        me: dict,
+        second_me: dict,
     ) -> None:
-        """The creator can fetch their freshly-created group."""
-        fetched = client.get_group_conversation(pending_group["id"])
-        assert fetched["id"] == pending_group["id"]
-        assert fetched.get("is_group") is True
-        # The creator should not be a pending invitee on their own group.
-        assert fetched.get("my_invite_status") in (None, "accepted"), fetched.get("my_invite_status")
+        """``create_group_conversation`` returns ``{id, title, is_group, creator_id, members}``."""
+        _skip_if_low_karma(me)
 
-    def test_invitee_sees_pending_invite_status(
-        self,
-        second_client: ColonyClient,
-        pending_group: dict,
-    ) -> None:
-        """Before responding, the invitee's row reads ``pending``."""
-        fetched = second_client.get_group_conversation(pending_group["id"])
-        assert fetched["id"] == pending_group["id"]
-        assert fetched.get("my_invite_status") == "pending", fetched.get("my_invite_status")
+        title = f"sdk-it create {unique_suffix()}"
+        g = _create_or_skip(client, title=title, members=[second_me["username"]])
 
-    def test_decline_invite_removes_membership(
-        self,
-        second_client: ColonyClient,
-        pending_group: dict,
-    ) -> None:
-        """Declining flips the row to ``declined`` and the invitee loses access."""
-        response = second_client.respond_to_group_invite(pending_group["id"], accept=False)
-        assert response.get("status") == "declined", response
-
-        # After decline, the secondary is no longer a member — the group
-        # 403s or 404s. Either is correct contract per the docstring.
-        with pytest.raises(ColonyAPIError) as exc:
-            second_client.get_group_conversation(pending_group["id"])
-        assert exc.value.status in (403, 404), exc.value.status
+        try:
+            assert g["title"] == title
+            assert g.get("is_group") is True
+            assert g["creator_id"] == me["id"]
+            members = g.get("members", [])
+            usernames = {m["username"] for m in members}
+            assert me["username"] in usernames
+            assert second_me["username"] in usernames
+        finally:
+            with contextlib.suppress(ColonyAPIError):
+                client.remove_group_member(g["id"], second_me["id"])
 
 
 class TestGroupMessaging:
-    def test_accepted_group_status_is_accepted_for_invitee(
-        self,
-        second_client: ColonyClient,
-        accepted_group: dict,
-    ) -> None:
-        """Sanity check: the module fixture really did accept."""
-        fetched = second_client.get_group_conversation(accepted_group["id"])
-        assert fetched.get("my_invite_status") == "accepted", fetched.get("my_invite_status")
+    def test_creator_can_fetch_group(self, client: ColonyClient, group: dict) -> None:
+        """``get_group_conversation`` round-trips the room for the creator."""
+        fetched = client.get_group_conversation(group["id"])
+        assert fetched["id"] == group["id"]
+        assert fetched["title"] == group["title"]
+        # The slim GET envelope reports member_count, not the full member list.
+        assert fetched.get("member_count") == 2
 
-    def test_list_group_members_from_both_sides(
+    def test_invitee_can_fetch_group(self, second_client: ColonyClient, group: dict) -> None:
+        """The invitee can also fetch the room (read access works)."""
+        fetched = second_client.get_group_conversation(group["id"])
+        assert fetched["id"] == group["id"]
+        assert fetched.get("member_count") == 2
+
+    def test_list_group_members_consistent_across_sides(
         self,
         client: ColonyClient,
         second_client: ColonyClient,
         me: dict,
         second_me: dict,
-        accepted_group: dict,
+        group: dict,
     ) -> None:
-        """Both participants can list members; both users appear."""
-        from_primary = client.list_group_members(accepted_group["id"])
-        from_secondary = second_client.list_group_members(accepted_group["id"])
+        """Both participants see the same membership roster."""
+        from_primary = client.list_group_members(group["id"])
+        from_secondary = second_client.list_group_members(group["id"])
 
         primary_usernames = {m["username"] for m in from_primary.get("members", [])}
         secondary_usernames = {m["username"] for m in from_secondary.get("members", [])}
@@ -187,35 +178,35 @@ class TestGroupMessaging:
         assert second_me["username"] in primary_usernames
         assert primary_usernames == secondary_usernames, "creator and invitee see different membership rosters"
 
-    def test_send_group_message_round_trip(
+    def test_send_from_primary_visible_to_secondary(
         self,
         client: ColonyClient,
         second_client: ColonyClient,
-        accepted_group: dict,
+        group: dict,
     ) -> None:
-        """Primary sends → secondary's get_group_conversation sees the body."""
-        body = f"group round-trip {unique_suffix()}"
-        sent = client.send_group_message(accepted_group["id"], body)
+        """Primary sends → secondary's ``get_group_conversation`` sees the body."""
+        body = f"group probe primary {unique_suffix()}"
+        sent = client.send_group_message(group["id"], body)
         assert isinstance(sent, dict)
-        assert sent.get("body") == body or sent.get("id"), sent
+        assert sent.get("body") == body
 
-        fetched = second_client.get_group_conversation(accepted_group["id"], limit=20)
-        messages = fetched.get("messages", [])
-        bodies = [m.get("body") for m in messages]
-        assert body in bodies, f"sent body not visible to invitee; got {bodies}"
+        fetched = second_client.get_group_conversation(group["id"], limit=20)
+        bodies = [m.get("body") for m in fetched.get("messages", [])]
+        assert body in bodies, f"primary's message not visible to invitee; got {bodies}"
 
-    def test_secondary_can_send_after_accepting(
+    def test_send_from_secondary_visible_to_primary(
         self,
         client: ColonyClient,
         second_client: ColonyClient,
-        accepted_group: dict,
+        group: dict,
     ) -> None:
-        """Once accepted, the invitee can also post into the room."""
-        body = f"group reply {unique_suffix()}"
-        sent = second_client.send_group_message(accepted_group["id"], body)
+        """Secondary sends → primary's ``get_group_conversation`` sees the body."""
+        body = f"group probe secondary {unique_suffix()}"
+        sent = second_client.send_group_message(group["id"], body)
         assert isinstance(sent, dict)
+        assert sent.get("body") == body
 
-        fetched = client.get_group_conversation(accepted_group["id"], limit=20)
+        fetched = client.get_group_conversation(group["id"], limit=20)
         bodies = [m.get("body") for m in fetched.get("messages", [])]
         assert body in bodies, f"secondary's message not visible to creator; got {bodies}"
 
@@ -223,14 +214,55 @@ class TestGroupMessaging:
         self,
         client: ColonyClient,
         second_client: ColonyClient,
-        accepted_group: dict,
+        group: dict,
     ) -> None:
         """After a fresh message, the recipient can bulk-mark the room read."""
-        client.send_group_message(accepted_group["id"], f"unread probe {unique_suffix()}")
+        client.send_group_message(group["id"], f"unread probe {unique_suffix()}")
 
-        result = second_client.mark_group_all_read(accepted_group["id"])
+        result = second_client.mark_group_all_read(group["id"])
         assert isinstance(result, dict)
-        # Endpoint returns ``{marked_read: int}``; accept any int including 0
-        # (the message may already have been auto-marked by a prior fetch).
-        marked = result.get("marked_read")
+        # Server returns ``{marked: int}`` (the docstring's ``marked_read``
+        # is wrong); accept either key just in case the field rename ships.
+        marked = result.get("marked", result.get("marked_read"))
         assert isinstance(marked, int) and marked >= 0, result
+
+
+class TestGroupInviteAcceptPath:
+    """Exercise ``respond_to_group_invite(accept=True)`` when reachable.
+
+    Empirically, the server auto-accepts invites between accounts with
+    a trust relationship (see module docstring). This test probes
+    whether the secondary's invite is actually pending and either
+    exercises the accept path or skips with a clear reason — so a
+    future run against a fresh pair of accounts (no trust history)
+    automatically covers the lifecycle.
+    """
+
+    def test_accept_invite_when_pending(
+        self,
+        client: ColonyClient,
+        second_client: ColonyClient,
+        me: dict,
+        second_me: dict,
+    ) -> None:
+        _skip_if_low_karma(me)
+
+        title = f"sdk-it accept probe {unique_suffix()}"
+        g = _create_or_skip(client, title=title, members=[second_me["username"]])
+
+        try:
+            try:
+                response = second_client.respond_to_group_invite(g["id"], accept=True)
+            except ColonyAPIError as e:
+                if "not pending" in str(e).lower():
+                    pytest.skip(
+                        "secondary's invite was auto-accepted on creation "
+                        "(server trust-level / follow gate bypasses the pending lifecycle "
+                        "for this account pair). Re-run against accounts with no trust "
+                        "relationship to cover the accept path."
+                    )
+                raise
+            assert response.get("status") == "accepted", response
+        finally:
+            with contextlib.suppress(ColonyAPIError):
+                client.remove_group_member(g["id"], second_me["id"])
