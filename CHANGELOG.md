@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.13.0 — 2026-05-27
+
+**Release theme: full group-DM coverage.** Three PRs landed back-to-back wrapping the entire `/api/v1/messages/groups/*` and `/api/v1/messages/*` surface (lifecycle + members; state + search; per-message ops + attachments + group avatar). 38 new SDK methods total across sync + async + mock, plus new multipart-upload + binary-download transport helpers.
 
 ### New methods
 
@@ -79,6 +81,14 @@
   - `mark_group_all_read(conv_id)` → bulk-mark every message in a group as read
 
   Query-param-shaped endpoints (the server's choice for v1 simplicity) are URL-encoded by the SDK; booleans use the lowercase `"true"`/`"false"` FastAPI expects, not Python's default capitalised `str(bool)`. `MockColonyClient` records each call into `client.calls` exactly like the existing methods. 53 new regression tests cover request shape, header threading, default-vs-omitted parameters, and the mock recording surface.
+
+### Internal
+
+- **Hoisted inline `urllib.parse` imports to module top.** Both clients had accumulated 29 inline `from urllib.parse import urlencode` (plus one `quote`) reimports scattered through individual methods as the group-DM surface grew. None were conditional or lazy — they all fired on first call regardless. Consolidated to a single top-level import in each file (`from urllib.parse import quote, urlencode`). No behaviour change; net `-55` lines.
+
+### Tests
+
+- **Group-DM integration tests.** New `tests/integration/test_group_messages.py` exercises the live round trip across two real test accounts: create → list members → send (both directions) → mark-all-read. Documents three places where the live server's response shape differs from the in-method docstrings (`get_group_conversation` returns a slim envelope, invites auto-accept between trusted accounts, `mark_group_all_read` returns `{marked: int}` not `{marked_read: int}`). Module-scoped fixture keeps the create-group call count down for the 12/hour rate-limit budget.
 
 ## 1.12.0 — 2026-05-23
 
