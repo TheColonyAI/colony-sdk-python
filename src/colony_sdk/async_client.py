@@ -35,6 +35,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from types import TracebackType
 from typing import Any
+from urllib.parse import quote, urlencode
 
 from colony_sdk.client import (
     _UUID_RE,
@@ -473,8 +474,6 @@ class AsyncColonyClient:
         search: str | None = None,
     ) -> dict:
         """List posts with optional filtering. See :meth:`ColonyClient.get_posts`."""
-        from urllib.parse import urlencode
-
         params: dict[str, str] = {"sort": sort, "limit": str(limit)}
         if offset:
             params["offset"] = str(offset)
@@ -629,8 +628,6 @@ class AsyncColonyClient:
 
     async def get_comments(self, post_id: str, page: int = 1) -> dict:
         """Get comments on a post (20 per page)."""
-        from urllib.parse import urlencode
-
         params = urlencode({"page": str(page)})
         return await self._raw_request("GET", f"/posts/{post_id}/comments?{params}")
 
@@ -788,8 +785,6 @@ class AsyncColonyClient:
         members: list[str],
     ) -> dict:
         """Create a new group conversation. See ColonyClient counterpart."""
-        from urllib.parse import urlencode
-
         params = urlencode([("title", title), *(("members", m) for m in members)])
         return await self._raw_request("POST", f"/messages/groups?{params}")
 
@@ -804,8 +799,6 @@ class AsyncColonyClient:
         title_override: str | None = None,
     ) -> dict:
         """Create a group from a pre-configured template."""
-        from urllib.parse import urlencode
-
         pairs: list[tuple[str, str]] = [("template", template), *(("members", m) for m in members)]
         if title_override is not None:
             pairs.append(("title_override", title_override))
@@ -818,8 +811,6 @@ class AsyncColonyClient:
         offset: int = 0,
     ) -> dict:
         """Fetch a group conversation and its recent messages."""
-        from urllib.parse import urlencode
-
         params = urlencode({"limit": str(limit), "offset": str(offset)})
         return await self._raw_request("GET", f"/messages/groups/{conv_id}?{params}")
 
@@ -830,8 +821,6 @@ class AsyncColonyClient:
         description: str | None = None,
     ) -> dict:
         """Rename a group and/or change its description."""
-        from urllib.parse import urlencode
-
         pairs: list[tuple[str, str]] = []
         if title is not None:
             pairs.append(("title", title))
@@ -873,8 +862,6 @@ class AsyncColonyClient:
 
     async def add_group_member(self, conv_id: str, username: str) -> dict:
         """Invite a user to a group conversation."""
-        from urllib.parse import urlencode
-
         params = urlencode({"username": username})
         return await self._raw_request("POST", f"/messages/groups/{conv_id}/members?{params}")
 
@@ -884,22 +871,16 @@ class AsyncColonyClient:
 
     async def set_group_admin(self, conv_id: str, user_id: str, is_admin: bool) -> dict:
         """Promote or demote a group member to/from admin."""
-        from urllib.parse import urlencode
-
         params = urlencode({"is_admin": "true" if is_admin else "false"})
         return await self._raw_request("PUT", f"/messages/groups/{conv_id}/members/{user_id}/admin?{params}")
 
     async def transfer_group_creator(self, conv_id: str, new_creator_username: str) -> dict:
         """Transfer the creator role to another current member."""
-        from urllib.parse import urlencode
-
         params = urlencode({"new_creator_username": new_creator_username})
         return await self._raw_request("POST", f"/messages/groups/{conv_id}/transfer-creator?{params}")
 
     async def respond_to_group_invite(self, conv_id: str, accept: bool) -> dict:
         """Accept or decline a pending group invite."""
-        from urllib.parse import urlencode
-
         params = urlencode({"accept": "true" if accept else "false"})
         return await self._raw_request("POST", f"/messages/groups/{conv_id}/invite/respond?{params}")
 
@@ -915,8 +896,6 @@ class AsyncColonyClient:
         """Mute a group conversation for the caller."""
         suffix = ""
         if until is not None:
-            from urllib.parse import urlencode
-
             suffix = f"?{urlencode({'until': until})}"
         return await self._raw_request("POST", f"/messages/groups/{conv_id}/mute{suffix}")
 
@@ -926,8 +905,6 @@ class AsyncColonyClient:
 
     async def snooze_group_conversation(self, conv_id: str, duration: str) -> dict:
         """Snooze a group conversation for the caller."""
-        from urllib.parse import urlencode
-
         params = urlencode({"duration": duration})
         return await self._raw_request("POST", f"/messages/groups/{conv_id}/snooze?{params}")
 
@@ -939,8 +916,6 @@ class AsyncColonyClient:
         """Per-group read-receipt override."""
         suffix = ""
         if show is not None:
-            from urllib.parse import urlencode
-
             suffix = f"?{urlencode({'show': 'true' if show else 'false'})}"
         return await self._raw_request("PATCH", f"/messages/groups/{conv_id}/receipts{suffix}")
 
@@ -960,8 +935,6 @@ class AsyncColonyClient:
         offset: int = 0,
     ) -> dict:
         """Full-text search inside a single group conversation."""
-        from urllib.parse import urlencode
-
         params = urlencode({"q": q, "limit": str(limit), "offset": str(offset)})
         return await self._raw_request("GET", f"/messages/groups/{conv_id}/search?{params}")
 
@@ -987,8 +960,6 @@ class AsyncColonyClient:
 
     async def remove_message_reaction(self, message_id: str, emoji: str) -> dict:
         """Remove the caller's reaction with this emoji."""
-        from urllib.parse import quote
-
         return await self._raw_request("DELETE", f"/messages/{message_id}/reactions/{quote(emoji, safe='')}")
 
     async def edit_message(self, message_id: str, body: str) -> dict:
@@ -1010,8 +981,6 @@ class AsyncColonyClient:
 
     async def list_saved_messages(self, limit: int = 50, offset: int = 0) -> dict:
         """List the caller's starred messages, newest-saved first."""
-        from urllib.parse import urlencode
-
         params = urlencode({"limit": str(limit), "offset": str(offset)})
         return await self._raw_request("GET", f"/messages/saved?{params}")
 
@@ -1022,8 +991,6 @@ class AsyncColonyClient:
         comment: str = "",
     ) -> dict:
         """Forward a DM to another user as a new 1:1 message."""
-        from urllib.parse import urlencode
-
         params = urlencode({"recipient_username": recipient_username, "comment": comment})
         data = await self._raw_request("POST", f"/messages/{message_id}/forward?{params}")
         return self._wrap(data, Message)
@@ -1181,8 +1148,6 @@ class AsyncColonyClient:
 
         Mirrors :meth:`ColonyClient.search` — see that for full param docs.
         """
-        from urllib.parse import urlencode
-
         params: dict[str, str] = {"q": query, "limit": str(limit)}
         if offset:
             params["offset"] = str(offset)
@@ -1244,8 +1209,6 @@ class AsyncColonyClient:
 
         Mirrors :meth:`ColonyClient.directory`.
         """
-        from urllib.parse import urlencode
-
         params: dict[str, str] = {
             "user_type": user_type,
             "sort": sort,
@@ -1271,8 +1234,6 @@ class AsyncColonyClient:
 
     async def get_notifications(self, unread_only: bool = False, limit: int = 50) -> dict:
         """Get notifications (replies, mentions, etc.)."""
-        from urllib.parse import urlencode
-
         params: dict[str, str] = {"limit": str(limit)}
         if unread_only:
             params["unread_only"] = "true"
@@ -1297,8 +1258,6 @@ class AsyncColonyClient:
 
     async def get_colonies(self, limit: int = 50) -> dict:
         """List all colonies, sorted by member count."""
-        from urllib.parse import urlencode
-
         params = urlencode({"limit": str(limit)})
         return await self._raw_request("GET", f"/colonies?{params}")
 
