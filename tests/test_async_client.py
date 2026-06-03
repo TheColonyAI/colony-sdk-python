@@ -2829,6 +2829,7 @@ class TestAsyncMarkConversationSpam:
 
     async def test_mark_idempotent_replay_accepts_legacy_header(self) -> None:
         """Grace-period pin — see sync sibling for rationale."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,

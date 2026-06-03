@@ -135,6 +135,7 @@ def generate_idempotency_key() -> str:
                 continue  # safe retry — same key, no duplicate
     """
     import uuid
+
     return uuid.uuid4().hex
 
 
