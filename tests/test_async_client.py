@@ -3052,6 +3052,40 @@ class TestAsyncClaims:
         assert isinstance(result, list)
         assert result[0]["id"] == "c1"
 
+    async def test_list_claims_handles_bare_list_from_raw_request(self) -> None:
+        # Defensive path: if _raw_request's response-wrapping policy ever
+        # changes and a bare list arrives, list_claims must still return
+        # it. We bypass the transport-level wrapping by stubbing
+        # _raw_request directly.
+        client = AsyncColonyClient("col_test")
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        async def fake_raw(method: str, path: str, **kw: object) -> object:
+            assert method == "GET"
+            assert path == "/claims"
+            return [_ASYNC_CLAIM_FIXTURE]
+
+        client._raw_request = fake_raw  # type: ignore[method-assign]
+        result = await client.list_claims()
+        assert isinstance(result, list)
+        assert result[0]["id"] == "c1"
+
+    async def test_list_claims_unknown_envelope_returns_empty_list(self) -> None:
+        # Defensive: an unknown envelope shape without a ``data`` key
+        # returns ``[]`` rather than raising — keeps the polling loop
+        # alive across server-shape drift.
+        client = AsyncColonyClient("col_test")
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        async def fake_raw(method: str, path: str, **kw: object) -> object:
+            return {"unexpected": "shape"}
+
+        client._raw_request = fake_raw  # type: ignore[method-assign]
+        result = await client.list_claims()
+        assert result == []
+
     async def test_get_claim_by_id(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.method == "GET"

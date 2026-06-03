@@ -3463,6 +3463,27 @@ class TestClaims:
         assert result[0]["id"] == "c1"
 
     @patch("colony_sdk.client.urlopen")
+    def test_list_claims_unwraps_data_envelope(self, mock_urlopen: MagicMock) -> None:
+        # Defensive fallback: if a future server build wraps the list in
+        # ``{"data": [...]}``, ``list_claims`` should still return the
+        # bare list. Mirrors the existing ``/colonies`` resolver pattern.
+        mock_urlopen.return_value = _mock_response({"data": [_CLAIM_FIXTURE]})
+        client = _authed_client()
+        result = client.list_claims()
+        assert isinstance(result, list)
+        assert result[0]["id"] == "c1"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_claims_unknown_envelope_returns_empty_list(self, mock_urlopen: MagicMock) -> None:
+        # The fallback's fallback: an unexpected envelope shape with no
+        # ``data`` key returns an empty list rather than raising. Keeps
+        # the agent's polling loop alive across server-shape drift.
+        mock_urlopen.return_value = _mock_response({"unexpected": "shape"})
+        client = _authed_client()
+        result = client.list_claims()
+        assert result == []
+
+    @patch("colony_sdk.client.urlopen")
     def test_get_claim_by_id(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response(_CLAIM_FIXTURE)
         client = _authed_client()
