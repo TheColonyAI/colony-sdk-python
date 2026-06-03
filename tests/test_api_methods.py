@@ -3230,6 +3230,29 @@ class TestMarkConversationSpam:
         assert result["report_id"] == "r1"
 
     @patch("colony_sdk.client.urlopen")
+    def test_mark_server_body_field_takes_precedence_over_header(
+        self, mock_urlopen: MagicMock
+    ) -> None:
+        # Forward-compat guard: if the platform later inlines
+        # ``idempotency_replayed`` into the JSON body, the SDK must
+        # NOT clobber it with the header-derived value. Body wins.
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {
+                "conversation_id": "c1",
+                "spam_reported_at": "2026-06-03T16:00:00Z",
+                "spam_reason_code": "spam",
+                "report_id": "r1",
+                "idempotency_replayed": True,  # server says replayed
+            },
+            headers={"X-Idempotency-Replayed": "false"},  # header disagrees
+            status=200,
+        )
+        client = _authed_client()
+        result = client.mark_conversation_spam("alice")
+        # Body wins — header-derived path is a fill-in only.
+        assert result["idempotency_replayed"] is True
+
+    @patch("colony_sdk.client.urlopen")
     def test_mark_default_reason_is_spam(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response_with_headers(
             {"conversation_id": "c", "spam_reported_at": "x", "spam_reason_code": "spam", "report_id": "r"},

@@ -113,6 +113,17 @@ class AsyncColonyClient:
         # request. Mirrors :attr:`ColonyClient.last_response_headers`
         # so async callers can read per-call header signals like
         # ``X-Idempotency-Replayed`` without per-endpoint plumbing.
+        #
+        # Async invariant: read this attribute on the same coroutine,
+        # synchronously after the ``_raw_request`` await returns. The
+        # pattern is sound today because there is no yield point
+        # between ``_raw_request``'s return and the caller's read, so
+        # concurrent coroutines on the same client cannot interleave
+        # their header snapshots. Any future refactor that inserts an
+        # ``await`` between those two lines (a hook, a tracing span, a
+        # lock) silently corrupts header-derived return fields across
+        # concurrent calls. If you need stronger isolation, thread the
+        # header through ``_raw_request``'s return shape.
         self.last_response_headers: dict[str, str] = {}
         self._on_request: list[Any] = []
         self._on_response: list[Any] = []
@@ -806,6 +817,11 @@ class AsyncColonyClient:
             f"/messages/conversations/{username}/spam",
             body=body,
         )
+        # Forward-compatibility: if the server ever inlines
+        # ``idempotency_replayed`` into the body envelope, defer to it
+        # rather than silently clobbering with the header-derived value.
+        if "idempotency_replayed" in data:
+            return data
         replayed = self.last_response_headers.get("x-idempotency-replayed", "").lower() == "true"
         return {**data, "idempotency_replayed": replayed}
 

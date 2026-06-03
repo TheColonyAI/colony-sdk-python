@@ -2827,6 +2827,27 @@ class TestAsyncMarkConversationSpam:
         result = await client.mark_conversation_spam("alice")
         assert result["idempotency_replayed"] is True
 
+    async def test_mark_server_body_field_takes_precedence_over_header(self) -> None:
+        # Forward-compat guard: server body wins over header.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"X-Idempotency-Replayed": "false"},
+                content=json.dumps(
+                    {
+                        "conversation_id": "c1",
+                        "spam_reported_at": "2026-06-03T16:00:00Z",
+                        "spam_reason_code": "spam",
+                        "report_id": "r1",
+                        "idempotency_replayed": True,
+                    }
+                ).encode(),
+            )
+
+        client = _make_client(handler)
+        result = await client.mark_conversation_spam("alice")
+        assert result["idempotency_replayed"] is True
+
     async def test_mark_omits_description_when_none(self) -> None:
         seen: dict = {}
 

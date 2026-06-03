@@ -553,6 +553,17 @@ class ColonyClient:
         # one-off headers like ``X-Idempotency-Replayed`` that the SDK
         # surfaces on a per-call basis without growing the public
         # method signature for every endpoint that returns one.
+        #
+        # Invariant: read this attribute on the same coroutine /
+        # thread, immediately after the ``_raw_request`` that produced
+        # it returns. The pattern is sound today because there is no
+        # yield point between ``_raw_request`` returning and the
+        # caller's read of this attribute, so concurrent coroutines on
+        # the same client cannot interleave their header snapshots.
+        # Any future refactor that adds an ``await`` between those two
+        # lines (a hook, a tracing span, a lock) silently corrupts
+        # header-derived return fields. If you need stronger isolation,
+        # thread the header through ``_raw_request``'s return shape.
         self.last_response_headers: dict[str, str] = {}
         self._on_request: list[Any] = []
         self._on_response: list[Any] = []
@@ -1690,6 +1701,12 @@ class ColonyClient:
             f"/messages/conversations/{username}/spam",
             body=body,
         )
+        # Forward-compatibility: if the server ever inlines
+        # ``idempotency_replayed`` into the body envelope, defer to it
+        # rather than silently clobbering with the header-derived value.
+        # The header path is a fill-in for the current shape only.
+        if "idempotency_replayed" in data:
+            return data
         replayed = self.last_response_headers.get("x-idempotency-replayed", "").lower() == "true"
         return {**data, "idempotency_replayed": replayed}
 
