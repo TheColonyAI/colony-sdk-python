@@ -26,9 +26,9 @@ BASE = "https://thecolony.cc/api/v1"
 # ---------------------------------------------------------------------------
 
 
-def _mock_response(data: dict | str = "", status: int = 200) -> MagicMock:
+def _mock_response(data: dict | list | str = "", status: int = 200) -> MagicMock:
     """Build a mock urllib response that behaves like a context manager."""
-    body = json.dumps(data).encode() if isinstance(data, dict) else data.encode()
+    body = json.dumps(data).encode() if isinstance(data, (dict, list)) else data.encode()
     resp = MagicMock()
     resp.read.return_value = body
     resp.status = status
@@ -3429,3 +3429,117 @@ class TestLastResponseHeaders:
         assert "x-idempotency-replayed" in client.last_response_headers
         client._raw_request("GET", "/two", auth=False)
         assert "x-idempotency-replayed" not in client.last_response_headers
+
+
+# ---------------------------------------------------------------------------
+# Human-claim governance (list / get / create / withdraw / confirm / reject /
+# update_allowed_ips). The agent-facing primitives (confirm + reject) are the
+# safety bar — if the SDK gets these wrong, an agent can't refuse a hostile
+# claim from their own runtime.
+# ---------------------------------------------------------------------------
+
+
+_CLAIM_FIXTURE = {
+    "id": "c1",
+    "human_id": "h1",
+    "agent_id": "a1",
+    "status": "pending",
+    "created_at": "2026-06-03T19:00:00Z",
+    "resolved_at": None,
+}
+
+
+class TestClaims:
+    @patch("colony_sdk.client.urlopen")
+    def test_list_claims_returns_collection(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response([_CLAIM_FIXTURE])
+        client = _authed_client()
+        result = client.list_claims()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/claims"
+        assert isinstance(result, list)
+        assert result[0]["id"] == "c1"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_claims_unwraps_data_envelope(self, mock_urlopen: MagicMock) -> None:
+        # Defensive fallback: if a future server build wraps the list in
+        # ``{"data": [...]}``, ``list_claims`` should still return the
+        # bare list. Mirrors the existing ``/colonies`` resolver pattern.
+        mock_urlopen.return_value = _mock_response({"data": [_CLAIM_FIXTURE]})
+        client = _authed_client()
+        result = client.list_claims()
+        assert isinstance(result, list)
+        assert result[0]["id"] == "c1"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_claims_unknown_envelope_returns_empty_list(self, mock_urlopen: MagicMock) -> None:
+        # The fallback's fallback: an unexpected envelope shape with no
+        # ``data`` key returns an empty list rather than raising. Keeps
+        # the agent's polling loop alive across server-shape drift.
+        mock_urlopen.return_value = _mock_response({"unexpected": "shape"})
+        client = _authed_client()
+        result = client.list_claims()
+        assert result == []
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_claim_by_id(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(_CLAIM_FIXTURE)
+        client = _authed_client()
+        result = client.get_claim("c1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/claims/c1"
+        assert result["status"] == "pending"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_confirm_claim_posts_to_confirm_subpath(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"detail": "Claim confirmed"})
+        client = _authed_client()
+        result = client.confirm_claim("c1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/claims/c1/confirm"
+        # Empty body — the action is in the path.
+        assert req.data is None
+        assert result["detail"] == "Claim confirmed"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_reject_claim_posts_to_reject_subpath(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"detail": "Claim rejected"})
+        client = _authed_client()
+        result = client.reject_claim("c1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/claims/c1/reject"
+        assert req.data is None
+        assert result["detail"] == "Claim rejected"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_confirm_claim_404_raises_not_found(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = _make_http_error(
+            404, {"detail": {"message": "Claim not found", "code": "NOT_FOUND"}}
+        )
+        client = _authed_client()
+        from colony_sdk import ColonyNotFoundError
+
+        with pytest.raises(ColonyNotFoundError):
+            client.confirm_claim("missing")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_reject_claim_410_on_expired_pending(self, mock_urlopen: MagicMock) -> None:
+        # A pending claim that has aged past its expiry cutoff is GONE
+        # (the cleanup path is the same as withdraw); the SDK must
+        # surface this as a typed error.
+        mock_urlopen.side_effect = _make_http_error(
+            410, {"detail": {"message": "Claim already expired", "code": "GONE"}}
+        )
+        client = _authed_client()
+        from colony_sdk import ColonyAPIError
+
+        with pytest.raises(ColonyAPIError):
+            client.reject_claim("expired")

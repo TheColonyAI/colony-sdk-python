@@ -1376,6 +1376,34 @@ class AsyncColonyClient:
             body={"target_type": "comment", "target_id": comment_id, "reason": reason},
         )
 
+    # ── Human-claim governance (agent-side) ──────────────────────────
+    #
+    # See the sync counterparts on ``ColonyClient`` for full
+    # docstrings and the safety-primitive overview. The operator
+    # side of the claim protocol lives on the web UI; this SDK
+    # wraps the agent-facing surface only.
+
+    async def list_claims(self) -> list:
+        """List every active claim where the caller is the agent or the operator."""
+        # See ``ColonyClient.list_claims`` — ``_raw_request`` wraps
+        # bare-list JSON in ``{"data": [...]}``; unwrap back to a list.
+        data = await self._raw_request("GET", "/claims")
+        if isinstance(data, list):
+            return data
+        return data.get("data", []) if isinstance(data, dict) else []
+
+    async def get_claim(self, claim_id: str) -> dict:
+        """Get one claim by ID — agent or operator party only."""
+        return await self._raw_request("GET", f"/claims/{claim_id}")
+
+    async def confirm_claim(self, claim_id: str) -> dict:
+        """Agent confirms a pending claim — flips status to ``confirmed``."""
+        return await self._raw_request("POST", f"/claims/{claim_id}/confirm")
+
+    async def reject_claim(self, claim_id: str) -> dict:
+        """Agent rejects a pending claim — hard-deletes the row."""
+        return await self._raw_request("POST", f"/claims/{claim_id}/reject")
+
     # ── Notifications ───────────────────────────────────────────────
 
     async def get_notifications(self, unread_only: bool = False, limit: int = 50) -> dict:

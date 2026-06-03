@@ -75,6 +75,26 @@ _DEFAULTS: dict[str, Any] = {
     "report_message": {"id": "mock-report-id", "status": "received"},
     "report_post": {"id": "mock-report-id", "status": "received"},
     "report_comment": {"id": "mock-report-id", "status": "received"},
+    "list_claims": [
+        {
+            "id": "mock-claim-id",
+            "human_id": "mock-human-id",
+            "agent_id": "mock-agent-id",
+            "status": "confirmed",
+            "created_at": "2026-01-01T00:00:00Z",
+            "resolved_at": "2026-01-02T00:00:00Z",
+        },
+    ],
+    "get_claim": {
+        "id": "mock-claim-id",
+        "human_id": "mock-human-id",
+        "agent_id": "mock-agent-id",
+        "status": "pending",
+        "created_at": "2026-01-01T00:00:00Z",
+        "resolved_at": None,
+    },
+    "confirm_claim": {"detail": "Claim confirmed"},
+    "reject_claim": {"detail": "Claim rejected"},
     "get_notifications": {"items": [], "total": 0},
     "get_notification_count": {"count": 0},
     "get_colonies": {"items": [], "total": 0},
@@ -508,6 +528,20 @@ class MockColonyClient:
 
     def report_comment(self, comment_id: str, reason: str) -> dict:
         return self._respond("report_comment", {"comment_id": comment_id, "reason": reason})
+
+    # ── Human-claim governance ──
+
+    def list_claims(self) -> list:
+        return self._respond("list_claims", {})
+
+    def get_claim(self, claim_id: str) -> dict:
+        return self._respond("get_claim", {"claim_id": claim_id})
+
+    def confirm_claim(self, claim_id: str) -> dict:
+        return self._respond("confirm_claim", {"claim_id": claim_id})
+
+    def reject_claim(self, claim_id: str) -> dict:
+        return self._respond("reject_claim", {"claim_id": claim_id})
 
     # ── Notifications ──
 

@@ -38,7 +38,7 @@ def _make_client(handler) -> AsyncColonyClient:
     return client
 
 
-def _json_response(body: dict, status: int = 200) -> httpx.Response:
+def _json_response(body: dict | list, status: int = 200) -> httpx.Response:
     return httpx.Response(status, content=json.dumps(body).encode())
 
 
@@ -3019,3 +3019,134 @@ class TestAsyncIdempotencyKeyHeader:
         assert len(calls) == 2
         assert calls[0]["headers"].get("idempotency-key") == "retry-survive-key"
         assert calls[1]["headers"].get("idempotency-key") == "retry-survive-key"
+
+
+# ---------------------------------------------------------------------------
+# Async human-claim governance — parity with the sync surface.
+# ---------------------------------------------------------------------------
+
+
+_ASYNC_CLAIM_FIXTURE = {
+    "id": "c1",
+    "human_id": "h1",
+    "agent_id": "a1",
+    "status": "pending",
+    "created_at": "2026-06-03T19:00:00Z",
+    "resolved_at": None,
+}
+
+
+class TestAsyncClaims:
+    async def test_list_claims_returns_collection(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response([_ASYNC_CLAIM_FIXTURE])
+
+        client = _make_client(handler)
+        result = await client.list_claims()
+        assert seen["method"] == "GET"
+        assert "/claims" in seen["url"]
+        assert isinstance(result, list)
+        assert result[0]["id"] == "c1"
+
+    async def test_list_claims_handles_bare_list_from_raw_request(self) -> None:
+        # Defensive path: if _raw_request's response-wrapping policy ever
+        # changes and a bare list arrives, list_claims must still return
+        # it. We bypass the transport-level wrapping by stubbing
+        # _raw_request directly.
+        client = AsyncColonyClient("col_test")
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        async def fake_raw(method: str, path: str, **kw: object) -> object:
+            assert method == "GET"
+            assert path == "/claims"
+            return [_ASYNC_CLAIM_FIXTURE]
+
+        client._raw_request = fake_raw  # type: ignore[method-assign]
+        result = await client.list_claims()
+        assert isinstance(result, list)
+        assert result[0]["id"] == "c1"
+
+    async def test_list_claims_unknown_envelope_returns_empty_list(self) -> None:
+        # Defensive: an unknown envelope shape without a ``data`` key
+        # returns ``[]`` rather than raising — keeps the polling loop
+        # alive across server-shape drift.
+        client = AsyncColonyClient("col_test")
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        async def fake_raw(method: str, path: str, **kw: object) -> object:
+            return {"unexpected": "shape"}
+
+        client._raw_request = fake_raw  # type: ignore[method-assign]
+        result = await client.list_claims()
+        assert result == []
+
+    async def test_get_claim_by_id(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.method == "GET"
+            assert str(request.url).endswith("/claims/c1")
+            return _json_response(_ASYNC_CLAIM_FIXTURE)
+
+        client = _make_client(handler)
+        result = await client.get_claim("c1")
+        assert result["id"] == "c1"
+
+    async def test_confirm_claim_posts_to_confirm_subpath(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["content"] = request.content
+            return _json_response({"detail": "Claim confirmed"})
+
+        client = _make_client(handler)
+        await client.confirm_claim("c1")
+        assert seen["method"] == "POST"
+        assert "/claims/c1/confirm" in seen["url"]
+        # No body — the action is in the path.
+        assert seen["content"] in (b"", None)
+
+    async def test_reject_claim_posts_to_reject_subpath(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"detail": "Claim rejected"})
+
+        client = _make_client(handler)
+        await client.reject_claim("c1")
+        assert seen["method"] == "POST"
+        assert "/claims/c1/reject" in seen["url"]
+
+    async def test_confirm_claim_404_raises_not_found(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {"detail": {"message": "Claim not found", "code": "NOT_FOUND"}},
+                status=404,
+            )
+
+        client = _make_client(handler)
+        from colony_sdk import ColonyNotFoundError
+
+        with pytest.raises(ColonyNotFoundError):
+            await client.confirm_claim("missing")
+
+    async def test_reject_claim_410_on_expired_pending(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {"detail": {"message": "Claim already expired", "code": "GONE"}},
+                status=410,
+            )
+
+        client = _make_client(handler)
+        from colony_sdk import ColonyAPIError
+
+        with pytest.raises(ColonyAPIError):
+            await client.reject_claim("expired")
