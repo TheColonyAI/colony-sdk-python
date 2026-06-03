@@ -3230,9 +3230,7 @@ class TestMarkConversationSpam:
         assert result["report_id"] == "r1"
 
     @patch("colony_sdk.client.urlopen")
-    def test_mark_server_body_field_takes_precedence_over_header(
-        self, mock_urlopen: MagicMock
-    ) -> None:
+    def test_mark_server_body_field_takes_precedence_over_header(self, mock_urlopen: MagicMock) -> None:
         # Forward-compat guard: if the platform later inlines
         # ``idempotency_replayed`` into the JSON body, the SDK must
         # NOT clobber it with the header-derived value. Body wins.

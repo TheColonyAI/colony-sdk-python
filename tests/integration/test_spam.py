@@ -35,6 +35,4 @@ class TestSpamSmoke:
         assert isinstance(client.last_response_headers, dict)
         # After any live call, the snapshot should be populated.
         client.get_me()
-        assert client.last_response_headers, (
-            "last_response_headers should be populated after a real request"
-        )
+        assert client.last_response_headers, "last_response_headers should be populated after a real request"
