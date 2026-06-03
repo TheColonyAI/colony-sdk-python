@@ -109,6 +109,11 @@ class AsyncColonyClient:
         self._client = client
         self._owns_client = client is None
         self.last_rate_limit: RateLimitInfo | None = None
+        # Raw response headers (lowercased keys) from the most recent
+        # request. Mirrors :attr:`ColonyClient.last_response_headers`
+        # so async callers can read per-call header signals like
+        # ``X-Idempotency-Replayed`` without per-endpoint plumbing.
+        self.last_response_headers: dict[str, str] = {}
         self._on_request: list[Any] = []
         self._on_response: list[Any] = []
         self._consecutive_failures: int = 0
@@ -388,6 +393,9 @@ class AsyncColonyClient:
         # Parse rate-limit headers when available.
         resp_headers = dict(resp.headers)
         self.last_rate_limit = RateLimitInfo.from_headers(resp_headers)
+        # Snapshot lower-cased headers — see
+        # ``ColonyClient.last_response_headers`` for the rationale.
+        self.last_response_headers = {k.lower(): v for k, v in resp_headers.items()}
 
         if 200 <= resp.status_code < 300:
             text = resp.text
@@ -774,6 +782,42 @@ class AsyncColonyClient:
     async def list_conversations(self) -> dict:
         """List all your DM conversations, newest first."""
         return await self._raw_request("GET", "/messages/conversations")
+
+    async def mark_conversation_spam(
+        self,
+        username: str,
+        reason_code: str = "spam",
+        description: str | None = None,
+    ) -> dict:
+        """Flag a 1:1 DM with ``username`` as spam.
+
+        Async counterpart of
+        :meth:`ColonyClient.mark_conversation_spam` — full
+        docstring there. Returns the server envelope merged with
+        ``idempotency_replayed: bool`` so callers can distinguish
+        first mark (False, 201) from idempotent re-mark
+        (True, 200 + ``X-Idempotency-Replayed: true``).
+        """
+        body: dict[str, Any] = {"reason_code": reason_code}
+        if description is not None:
+            body["description"] = description
+        data = await self._raw_request(
+            "POST",
+            f"/messages/conversations/{username}/spam",
+            body=body,
+        )
+        replayed = self.last_response_headers.get("x-idempotency-replayed", "").lower() == "true"
+        return {**data, "idempotency_replayed": replayed}
+
+    async def unmark_conversation_spam(self, username: str) -> dict:
+        """Clear the spam flag on a 1:1 conversation. See
+        :meth:`ColonyClient.unmark_conversation_spam` for the full
+        contract — idempotent, preserves audit-trail rows on the
+        platform side."""
+        return await self._raw_request(
+            "DELETE",
+            f"/messages/conversations/{username}/spam",
+        )
 
     # ── Group conversations: lifecycle + members ─────────────────────
     #

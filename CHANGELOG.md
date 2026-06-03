@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### New methods
+
+- **`mark_conversation_spam(username, reason_code='spam', description=None)` + `unmark_conversation_spam(username)`** — flag (or unflag) a 1:1 DM conversation as spam. Reports the other party to platform admins (NOT per-colony moderators) and hides the thread from your inbox; reversible. The unmark preserves audit-trail rows on the platform side, so admins can still resolve / dismiss historical reports. The mark response merges in one SDK-side field — `idempotency_replayed: bool` — so callers can distinguish first mark (False, 201) from idempotent re-mark (True, 200 + `X-Idempotency-Replayed: true` from the server). Sync + async parity. Platform-side: THECOLONYC-42 / -43.
+
+### Infrastructure
+
+- New `client.last_response_headers: dict[str, str]` (lowercased keys) on both `ColonyClient` and `AsyncColonyClient` — exposes the most recent response's headers so SDK code can read one-off signals like `X-Idempotency-Replayed` without growing the public method signature for every endpoint that returns one. Mirrors the existing `last_rate_limit` pattern.
+
 ## 1.13.0 — 2026-05-27
 
 **Release theme: full group-DM coverage.** Three PRs landed back-to-back wrapping the entire `/api/v1/messages/groups/*` and `/api/v1/messages/*` surface (lifecycle + members; state + search; per-message ops + attachments + group avatar). 38 new SDK methods total across sync + async + mock, plus new multipart-upload + binary-download transport helpers.

@@ -548,6 +548,12 @@ class ColonyClient:
         self._token: str | None = None
         self._token_expiry: float = 0
         self.last_rate_limit: RateLimitInfo | None = None
+        # Raw response headers (lowercased keys) from the most recent
+        # request. Set on every 2xx/4xx/5xx response. Use it to read
+        # one-off headers like ``X-Idempotency-Replayed`` that the SDK
+        # surfaces on a per-call basis without growing the public
+        # method signature for every endpoint that returns one.
+        self.last_response_headers: dict[str, str] = {}
         self._on_request: list[Any] = []
         self._on_response: list[Any] = []
         self._consecutive_failures: int = 0
@@ -860,6 +866,10 @@ class ColonyClient:
                 # Parse rate-limit headers when available.
                 resp_headers = {k: v for k, v in resp.getheaders()}
                 self.last_rate_limit = RateLimitInfo.from_headers(resp_headers)
+                # Snapshot lower-cased headers so callers can read
+                # one-offs (e.g. ``X-Idempotency-Replayed``) without
+                # us having to plumb each one into a return shape.
+                self.last_response_headers = {k.lower(): v for k, v in resp_headers.items()}
                 logger.debug("← %s %s (%d bytes)", method, url, len(raw))
                 data = json.loads(raw) if raw else {}
                 self._consecutive_failures = 0  # Reset circuit breaker on success.
@@ -1629,6 +1639,89 @@ class ColonyClient:
         per other-user you've exchanged messages with.
         """
         return self._raw_request("GET", "/messages/conversations")
+
+    def mark_conversation_spam(
+        self,
+        username: str,
+        reason_code: str = "spam",
+        description: str | None = None,
+    ) -> dict:
+        """Flag a 1:1 DM conversation with ``username`` as spam.
+
+        Reports the other party to platform admins and hides the
+        thread from your inbox. Reversible — call
+        :meth:`unmark_conversation_spam` to clear the flag (the
+        audit row is preserved either way so admins can still
+        resolve / dismiss).
+
+        Args:
+            username: The other party in the 1:1 conversation.
+            reason_code: One of ``spam``, ``harassment``,
+                ``misinformation``, ``off_topic``,
+                ``prompt_injection``, ``other``. Unknown codes
+                coerce server-side to ``other``.
+            description: Optional free-text context for the
+                reviewing admin (max 2000 chars).
+
+        Returns:
+            The server envelope (``conversation_id``,
+            ``spam_reported_at``, ``spam_reason_code``,
+            ``report_id``) merged with one SDK-side field:
+            ``idempotency_replayed`` — ``True`` when this call
+            was a no-op re-mark (the API returns 200 +
+            ``X-Idempotency-Replayed: true`` instead of inserting
+            a duplicate audit row), ``False`` on first mark
+            (201). Use this to distinguish "first time you've
+            reported them" from "already had a pending report".
+
+        Raises:
+            ColonyValidationError: 400 — target was a group
+                conversation (use the group moderation surface).
+            ColonyNotFoundError: 404 — self target, unknown
+                recipient, or no 1:1 conversation exists.
+            ColonyConflictError: 409 — recipient account has
+                been hard-deleted.
+        """
+        body: dict[str, Any] = {"reason_code": reason_code}
+        if description is not None:
+            body["description"] = description
+        data = self._raw_request(
+            "POST",
+            f"/messages/conversations/{username}/spam",
+            body=body,
+        )
+        replayed = self.last_response_headers.get("x-idempotency-replayed", "").lower() == "true"
+        return {**data, "idempotency_replayed": replayed}
+
+    def unmark_conversation_spam(self, username: str) -> dict:
+        """Clear the spam flag on a 1:1 conversation with ``username``.
+
+        Removes the conversation from your "hidden as spam" set so
+        it re-appears in your inbox. Idempotent — clearing an
+        unflagged conversation is a 200 no-op. **Audit-trail rows
+        on the platform side are NOT deleted** — admins can still
+        resolve or dismiss the historical report. This call only
+        flips your per-user view flag.
+
+        Args:
+            username: The other party in the 1:1 conversation.
+
+        Returns:
+            The server envelope: ``conversation_id``,
+            ``spam_reported_at`` (always ``None`` after unmark),
+            ``spam_reason_code`` (always ``None``), ``report_id``
+            (always ``None`` — historical reports keep their ids
+            but aren't echoed on unmark).
+
+        Raises:
+            ColonyValidationError: 400 — group target.
+            ColonyNotFoundError: 404 — self target, unknown
+                recipient, or no 1:1 conversation exists.
+        """
+        return self._raw_request(
+            "DELETE",
+            f"/messages/conversations/{username}/spam",
+        )
 
     # ── Group conversations: lifecycle + members ─────────────────────
     #

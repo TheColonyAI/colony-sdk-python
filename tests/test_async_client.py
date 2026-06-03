@@ -2769,3 +2769,150 @@ class TestAsyncAttachments:
 
         assert req_calls == [("GET", f"{BASE}/messages/attachments/{_ATTACHMENT_ID}/full")]
         assert resp_calls and resp_calls[0][0] == "GET"
+
+
+# ---------------------------------------------------------------------------
+# DM-spam reporting (THECOLONYC-44 / async parity)
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncMarkConversationSpam:
+    async def test_mark_first_time_201(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(
+                201,
+                content=json.dumps(
+                    {
+                        "conversation_id": "c1",
+                        "spam_reported_at": "2026-06-03T16:00:00Z",
+                        "spam_reason_code": "spam",
+                        "report_id": "r1",
+                    }
+                ).encode(),
+            )
+
+        client = _make_client(handler)
+        result = await client.mark_conversation_spam(
+            "alice",
+            reason_code="spam",
+            description="repeat spammer",
+        )
+        assert seen["method"] == "POST"
+        assert "/messages/conversations/alice/spam" in seen["url"]
+        assert seen["body"] == {"reason_code": "spam", "description": "repeat spammer"}
+        assert result["idempotency_replayed"] is False
+        assert result["report_id"] == "r1"
+
+    async def test_mark_idempotent_replay_sets_flag(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"X-Idempotency-Replayed": "true"},
+                content=json.dumps(
+                    {
+                        "conversation_id": "c1",
+                        "spam_reported_at": "2026-06-03T16:00:00Z",
+                        "spam_reason_code": "spam",
+                        "report_id": "r1",
+                    }
+                ).encode(),
+            )
+
+        client = _make_client(handler)
+        result = await client.mark_conversation_spam("alice")
+        assert result["idempotency_replayed"] is True
+
+    async def test_mark_omits_description_when_none(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response(
+                {
+                    "conversation_id": "c",
+                    "spam_reported_at": "x",
+                    "spam_reason_code": "spam",
+                    "report_id": "r",
+                },
+                status=201,
+            )
+
+        client = _make_client(handler)
+        await client.mark_conversation_spam("alice")
+        assert seen["body"] == {"reason_code": "spam"}
+        assert "description" not in seen["body"]
+
+    async def test_mark_group_target_raises_validation(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {
+                    "detail": {
+                        "message": "Group conversations cannot be marked as spam through this endpoint",
+                        "code": "INVALID_INPUT",
+                    },
+                },
+                status=400,
+            )
+
+        client = _make_client(handler)
+        from colony_sdk import ColonyValidationError
+
+        with pytest.raises(ColonyValidationError):
+            await client.mark_conversation_spam("alice")
+
+    async def test_mark_self_target_raises_not_found(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {"detail": {"message": "Conversation not found", "code": "NOT_FOUND"}},
+                status=404,
+            )
+
+        client = _make_client(handler)
+        from colony_sdk import ColonyNotFoundError
+
+        with pytest.raises(ColonyNotFoundError):
+            await client.mark_conversation_spam("self")
+
+
+class TestAsyncUnmarkConversationSpam:
+    async def test_unmark_sends_delete(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response(
+                {
+                    "conversation_id": "c1",
+                    "spam_reported_at": None,
+                    "spam_reason_code": None,
+                    "report_id": None,
+                },
+                status=200,
+            )
+
+        client = _make_client(handler)
+        result = await client.unmark_conversation_spam("alice")
+        assert seen["method"] == "DELETE"
+        assert "/messages/conversations/alice/spam" in seen["url"]
+        assert result["spam_reported_at"] is None
+
+
+class TestAsyncLastResponseHeaders:
+    async def test_last_response_headers_lowercased(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"X-Idempotency-Replayed": "true", "X-Custom": "x"},
+                content=b'{"ok":true}',
+            )
+
+        client = _make_client(handler)
+        await client._raw_request("GET", "/whatever", auth=False)
+        assert client.last_response_headers["x-idempotency-replayed"] == "true"
+        assert client.last_response_headers["x-custom"] == "x"
