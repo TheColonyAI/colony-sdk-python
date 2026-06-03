@@ -3158,3 +3158,233 @@ class TestAttachments:
 
         assert req_calls == [("GET", f"{BASE}/messages/attachments/{ATTACHMENT_ID}/full")]
         assert resp_calls and resp_calls[0][0] == "GET"
+
+
+# ---------------------------------------------------------------------------
+# DM-spam reporting (THECOLONYC-44 / 1:1 conversations only)
+# ---------------------------------------------------------------------------
+
+
+def _mock_response_with_headers(data: dict, headers: dict[str, str], status: int = 200) -> MagicMock:
+    """Variant of ``_mock_response`` that exposes specific response
+    headers via ``getheaders()`` so per-call header signals like
+    ``X-Idempotency-Replayed`` are reachable by the SDK code under
+    test. The default ``_mock_response`` relies on MagicMock's
+    iter-as-empty default for ``getheaders()`` which is the right
+    shape only when callers ignore headers."""
+    resp = _mock_response(data, status=status)
+    resp.getheaders.return_value = list(headers.items())
+    return resp
+
+
+class TestMarkConversationSpam:
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_first_time_201(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {
+                "conversation_id": "c1",
+                "spam_reported_at": "2026-06-03T16:00:00Z",
+                "spam_reason_code": "spam",
+                "report_id": "r1",
+            },
+            headers={},
+            status=201,
+        )
+        client = _authed_client()
+        result = client.mark_conversation_spam(
+            "alice",
+            reason_code="spam",
+            description="repeat spammer",
+        )
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/conversations/alice/spam"
+        assert _last_body(mock_urlopen) == {
+            "reason_code": "spam",
+            "description": "repeat spammer",
+        }
+        # No replay header → False, NOT missing or None — explicit bool
+        # so callers can branch without an ``is None`` check.
+        assert result["idempotency_replayed"] is False
+        assert result["report_id"] == "r1"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_idempotent_replay_sets_flag(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {
+                "conversation_id": "c1",
+                "spam_reported_at": "2026-06-03T16:00:00Z",
+                "spam_reason_code": "spam",
+                "report_id": "r1",
+            },
+            headers={"X-Idempotency-Replayed": "true"},
+            status=200,
+        )
+        client = _authed_client()
+        result = client.mark_conversation_spam("alice")
+
+        assert result["idempotency_replayed"] is True
+        # Same report_id echoed back — the audit row was the one from
+        # the first mark.
+        assert result["report_id"] == "r1"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_server_body_field_takes_precedence_over_header(self, mock_urlopen: MagicMock) -> None:
+        # Forward-compat guard: if the platform later inlines
+        # ``idempotency_replayed`` into the JSON body, the SDK must
+        # NOT clobber it with the header-derived value. Body wins.
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {
+                "conversation_id": "c1",
+                "spam_reported_at": "2026-06-03T16:00:00Z",
+                "spam_reason_code": "spam",
+                "report_id": "r1",
+                "idempotency_replayed": True,  # server says replayed
+            },
+            headers={"X-Idempotency-Replayed": "false"},  # header disagrees
+            status=200,
+        )
+        client = _authed_client()
+        result = client.mark_conversation_spam("alice")
+        # Body wins — header-derived path is a fill-in only.
+        assert result["idempotency_replayed"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_default_reason_is_spam(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {"conversation_id": "c", "spam_reported_at": "x", "spam_reason_code": "spam", "report_id": "r"},
+            headers={},
+            status=201,
+        )
+        client = _authed_client()
+        client.mark_conversation_spam("alice")
+        assert _last_body(mock_urlopen) == {"reason_code": "spam"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_omits_description_when_none(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {"conversation_id": "c", "spam_reported_at": "x", "spam_reason_code": "harassment", "report_id": "r"},
+            headers={},
+            status=201,
+        )
+        client = _authed_client()
+        client.mark_conversation_spam("bob", reason_code="harassment")
+        body = _last_body(mock_urlopen)
+        assert body == {"reason_code": "harassment"}
+        assert "description" not in body
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_group_target_raises_validation(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = _make_http_error(
+            400,
+            {
+                "detail": {
+                    "message": "Group conversations cannot be marked as spam through this endpoint",
+                    "code": "INVALID_INPUT",
+                },
+            },
+        )
+        client = _authed_client()
+        from colony_sdk import ColonyValidationError
+
+        with pytest.raises(ColonyValidationError):
+            client.mark_conversation_spam("alice")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_self_target_raises_not_found(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = _make_http_error(
+            404,
+            {"detail": {"message": "Conversation not found", "code": "NOT_FOUND"}},
+        )
+        client = _authed_client()
+        from colony_sdk import ColonyNotFoundError
+
+        with pytest.raises(ColonyNotFoundError):
+            client.mark_conversation_spam("self")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_hard_deleted_recipient_raises_conflict(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = _make_http_error(
+            409,
+            {
+                "detail": {
+                    "message": "This account has been removed; the report cannot be filed",
+                    "code": "CONFLICT",
+                },
+            },
+        )
+        client = _authed_client()
+        from colony_sdk import ColonyConflictError
+
+        with pytest.raises(ColonyConflictError):
+            client.mark_conversation_spam("ghosted")
+
+
+class TestUnmarkConversationSpam:
+    @patch("colony_sdk.client.urlopen")
+    def test_unmark_sends_delete(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {
+                "conversation_id": "c1",
+                "spam_reported_at": None,
+                "spam_reason_code": None,
+                "report_id": None,
+            },
+            headers={},
+            status=200,
+        )
+        client = _authed_client()
+        result = client.unmark_conversation_spam("alice")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/messages/conversations/alice/spam"
+        assert result["spam_reported_at"] is None
+        assert result["spam_reason_code"] is None
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unmark_unflagged_is_200_noop(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {
+                "conversation_id": "c1",
+                "spam_reported_at": None,
+                "spam_reason_code": None,
+                "report_id": None,
+            },
+            headers={},
+            status=200,
+        )
+        client = _authed_client()
+        # Server returns a 200 with the cleared envelope regardless of
+        # whether the flag was set — the SDK doesn't try to distinguish.
+        result = client.unmark_conversation_spam("alice")
+        assert result["spam_reported_at"] is None
+
+
+class TestLastResponseHeaders:
+    @patch("colony_sdk.client.urlopen")
+    def test_last_response_headers_lowercased(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {"ok": True},
+            headers={"X-Custom-Thing": "value", "X-Idempotency-Replayed": "true"},
+            status=200,
+        )
+        client = _authed_client()
+        client._raw_request("GET", "/whatever", auth=False)
+        # Keys are lower-cased so case-insensitive lookup is trivial.
+        assert client.last_response_headers["x-custom-thing"] == "value"
+        assert client.last_response_headers["x-idempotency-replayed"] == "true"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_last_response_headers_resets_per_call(self, mock_urlopen: MagicMock) -> None:
+        # First call carries the replayed flag; the second does not.
+        mock_urlopen.side_effect = [
+            _mock_response_with_headers({"a": 1}, headers={"X-Idempotency-Replayed": "true"}),
+            _mock_response_with_headers({"b": 2}, headers={}),
+        ]
+        client = _authed_client()
+        client._raw_request("GET", "/one", auth=False)
+        assert "x-idempotency-replayed" in client.last_response_headers
+        client._raw_request("GET", "/two", auth=False)
+        assert "x-idempotency-replayed" not in client.last_response_headers

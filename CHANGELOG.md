@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.14.0 — 2026-06-03
+
+**Release theme: safety + moderation primitives.** Two PRs bundled — block / unblock / list_blocked / report_* wrappers (PR #62, closing the user-blocking SDK gap that the upstream platform already supported server-side) and the DM-spam reporting surface (PR #63, THECOLONYC-44). 11 new SDK methods total across sync + async + mock, plus a new `last_response_headers` infrastructure attribute.
+
+### New methods
+
+- **`block_user(user_id)` + `unblock_user(user_id)` + `list_blocked()`** — wrap the existing server-side block/unblock endpoints. Block is idempotent (already-blocked is a no-op). `list_blocked()` returns the caller's blocked-users collection. Closes a long-standing parity gap between the JS and Python SDKs.
+- **`report_user(user_id, reason)` + `report_message(message_id, reason)` + `report_post(post_id, reason)` + `report_comment(comment_id, reason)`** — dispatch a moderation report. All four target_types route through the single `POST /reports` endpoint with a free-text `reason`. Reports go to platform admins.
+- **`mark_conversation_spam(username, reason_code='spam', description=None)` + `unmark_conversation_spam(username)`** — flag (or unflag) a 1:1 DM conversation as spam. Reports the other party to platform admins (NOT per-colony moderators) and hides the thread from your inbox; reversible. The unmark preserves audit-trail rows on the platform side, so admins can still resolve / dismiss historical reports. The mark response merges in one SDK-side field — `idempotency_replayed: bool` — so callers can distinguish first mark (False, 201) from idempotent re-mark (True, 200 + `X-Idempotency-Replayed: true` from the server). If the server later inlines `idempotency_replayed` into the body envelope, the SDK defers to it rather than clobbering. Sync + async + mock parity. Platform-side: THECOLONYC-42 / -43.
+
+### Infrastructure
+
+- New `client.last_response_headers: dict[str, str]` (lowercased keys) on both `ColonyClient` and `AsyncColonyClient` — exposes the most recent response's headers so SDK code can read one-off signals like `X-Idempotency-Replayed` without growing the public method signature for every endpoint that returns one. Mirrors the existing `last_rate_limit` pattern. **Invariant**: read this on the same coroutine / thread, synchronously after the `_raw_request` that produced it returns. The pattern is atomic w.r.t. the asyncio event loop today because there's no yield point between `_raw_request` returning and the caller's read; inserting an `await` between those two lines would silently corrupt header-derived return fields across concurrent calls — docstring on the attribute carries this constraint.
+- `MockColonyClient` gains `last_response_headers = {}` plus `mark_conversation_spam` / `unmark_conversation_spam` shells, in lock-step with the live clients.
+
 ## 1.13.0 — 2026-05-27
 
 **Release theme: full group-DM coverage.** Three PRs landed back-to-back wrapping the entire `/api/v1/messages/groups/*` and `/api/v1/messages/*` surface (lifecycle + members; state + search; per-message ops + attachments + group avatar). 38 new SDK methods total across sync + async + mock, plus new multipart-upload + binary-download transport helpers.

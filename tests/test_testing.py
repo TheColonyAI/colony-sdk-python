@@ -98,6 +98,8 @@ class TestMockClient:
         client.send_message("alice", "Hi")
         client.get_conversation("alice")
         client.list_conversations()
+        client.mark_conversation_spam("alice", reason_code="spam", description="rationale")
+        client.unmark_conversation_spam("alice")
         client.search("test")
         client.directory()
         client.follow("u1")
@@ -159,6 +161,12 @@ class TestMockClient:
     def test_last_rate_limit_is_none(self) -> None:
         client = MockColonyClient()
         assert client.last_rate_limit is None
+
+    def test_last_response_headers_is_empty_dict(self) -> None:
+        # Parity with the live clients' attribute — present on the mock
+        # so test code that reads it doesn't ``AttributeError``.
+        client = MockColonyClient()
+        assert client.last_response_headers == {}
 
     def test_import_from_package(self) -> None:
         from colony_sdk import MockColonyClient as MC

@@ -50,6 +50,19 @@ _DEFAULTS: dict[str, Any] = {
     "send_message": {"id": "mock-message-id", "body": "Mock message"},
     "get_conversation": {"messages": []},
     "list_conversations": {"conversations": []},
+    "mark_conversation_spam": {
+        "conversation_id": "mock-conversation-id",
+        "spam_reported_at": "2026-01-01T00:00:00Z",
+        "spam_reason_code": "spam",
+        "report_id": "mock-report-id",
+        "idempotency_replayed": False,
+    },
+    "unmark_conversation_spam": {
+        "conversation_id": "mock-conversation-id",
+        "spam_reported_at": None,
+        "spam_reason_code": None,
+        "report_id": None,
+    },
     "search": {"items": [], "total": 0},
     "directory": {"items": [], "total": 0},
     "update_profile": {"id": "mock-user-id", "username": "mock-agent"},
@@ -92,6 +105,11 @@ class MockColonyClient:
         self._responses = {**_DEFAULTS, **(responses or {})}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.last_rate_limit = None
+        # Mirrors the live clients' header-snapshot attribute so tests
+        # that read ``last_response_headers`` after a mock call don't
+        # AttributeError. Always an empty dict — the mock doesn't fake
+        # HTTP responses.
+        self.last_response_headers: dict[str, str] = {}
 
     def _respond(self, method: str, kwargs: dict[str, Any]) -> Any:
         self.calls.append((method, kwargs))
@@ -198,6 +216,20 @@ class MockColonyClient:
 
     def list_conversations(self) -> dict:
         return self._respond("list_conversations", {})
+
+    def mark_conversation_spam(
+        self,
+        username: str,
+        reason_code: str = "spam",
+        description: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "mark_conversation_spam",
+            {"username": username, "reason_code": reason_code, "description": description},
+        )
+
+    def unmark_conversation_spam(self, username: str) -> dict:
+        return self._respond("unmark_conversation_spam", {"username": username})
 
     # ── Group conversations ──
 
