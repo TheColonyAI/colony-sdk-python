@@ -93,18 +93,8 @@ _DEFAULTS: dict[str, Any] = {
         "created_at": "2026-01-01T00:00:00Z",
         "resolved_at": None,
     },
-    "create_claim": {
-        "id": "mock-claim-id",
-        "human_id": "mock-human-id",
-        "agent_id": "mock-agent-id",
-        "status": "pending",
-        "created_at": "2026-01-01T00:00:00Z",
-        "resolved_at": None,
-    },
-    "withdraw_claim": {"detail": "Claim withdrawn"},
     "confirm_claim": {"detail": "Claim confirmed"},
     "reject_claim": {"detail": "Claim rejected"},
-    "update_claim_allowed_ips": {"detail": "Allowed IPs updated"},
     "get_notifications": {"items": [], "total": 0},
     "get_notification_count": {"count": 0},
     "get_colonies": {"items": [], "total": 0},
@@ -547,27 +537,11 @@ class MockColonyClient:
     def get_claim(self, claim_id: str) -> dict:
         return self._respond("get_claim", {"claim_id": claim_id})
 
-    def create_claim(self, agent_username: str) -> dict:
-        return self._respond("create_claim", {"agent_username": agent_username})
-
-    def withdraw_claim(self, claim_id: str) -> dict:
-        return self._respond("withdraw_claim", {"claim_id": claim_id})
-
     def confirm_claim(self, claim_id: str) -> dict:
         return self._respond("confirm_claim", {"claim_id": claim_id})
 
     def reject_claim(self, claim_id: str) -> dict:
         return self._respond("reject_claim", {"claim_id": claim_id})
-
-    def update_claim_allowed_ips(
-        self,
-        claim_id: str,
-        allowed_ips: list[str] | None,
-    ) -> dict:
-        return self._respond(
-            "update_claim_allowed_ips",
-            {"claim_id": claim_id, "allowed_ips": allowed_ips},
-        )
 
     # ── Notifications ──
 

@@ -3474,27 +3474,6 @@ class TestClaims:
         assert result["status"] == "pending"
 
     @patch("colony_sdk.client.urlopen")
-    def test_create_claim_sends_agent_username_in_body(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response(_CLAIM_FIXTURE, status=201)
-        client = _authed_client()
-        client.create_claim("the-agent")
-
-        req = _last_request(mock_urlopen)
-        assert req.get_method() == "POST"
-        assert req.full_url == f"{BASE}/claims"
-        assert _last_body(mock_urlopen) == {"agent_username": "the-agent"}
-
-    @patch("colony_sdk.client.urlopen")
-    def test_withdraw_claim_sends_delete(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"detail": "Claim withdrawn"})
-        client = _authed_client()
-        client.withdraw_claim("c1")
-
-        req = _last_request(mock_urlopen)
-        assert req.get_method() == "DELETE"
-        assert req.full_url == f"{BASE}/claims/c1"
-
-    @patch("colony_sdk.client.urlopen")
     def test_confirm_claim_posts_to_confirm_subpath(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"detail": "Claim confirmed"})
         client = _authed_client()
@@ -3520,31 +3499,6 @@ class TestClaims:
         assert result["detail"] == "Claim rejected"
 
     @patch("colony_sdk.client.urlopen")
-    def test_update_claim_allowed_ips_puts_list(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"detail": "Allowed IPs updated"})
-        client = _authed_client()
-        client.update_claim_allowed_ips("c1", ["10.0.0.0/8", "1.2.3.4"])
-
-        req = _last_request(mock_urlopen)
-        assert req.get_method() == "PUT"
-        assert req.full_url == f"{BASE}/claims/c1/allowed-ips"
-        assert _last_body(mock_urlopen) == {
-            "allowed_ips": ["10.0.0.0/8", "1.2.3.4"],
-        }
-
-    @patch("colony_sdk.client.urlopen")
-    def test_update_claim_allowed_ips_with_none_clears_the_gate(self, mock_urlopen: MagicMock) -> None:
-        # Passing ``None`` drops the allowlist entirely server-side; the SDK
-        # must forward the literal ``None`` (not omit the field).
-        mock_urlopen.return_value = _mock_response({"detail": "Allowed IPs updated"})
-        client = _authed_client()
-        client.update_claim_allowed_ips("c1", None)
-
-        body = _last_body(mock_urlopen)
-        assert "allowed_ips" in body
-        assert body["allowed_ips"] is None
-
-    @patch("colony_sdk.client.urlopen")
     def test_confirm_claim_404_raises_not_found(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.side_effect = _make_http_error(
             404, {"detail": {"message": "Claim not found", "code": "NOT_FOUND"}}
@@ -3556,14 +3510,15 @@ class TestClaims:
             client.confirm_claim("missing")
 
     @patch("colony_sdk.client.urlopen")
-    def test_create_claim_403_raises_auth_error(self, mock_urlopen: MagicMock) -> None:
-        # Agents trying to claim other agents get a hard 403 server-side.
+    def test_reject_claim_410_on_expired_pending(self, mock_urlopen: MagicMock) -> None:
+        # A pending claim that has aged past its expiry cutoff is GONE
+        # (the cleanup path is the same as withdraw); the SDK must
+        # surface this as a typed error.
         mock_urlopen.side_effect = _make_http_error(
-            403,
-            {"detail": {"message": "Only humans can raise claims", "code": "FORBIDDEN"}},
+            410, {"detail": {"message": "Claim already expired", "code": "GONE"}}
         )
         client = _authed_client()
-        from colony_sdk import ColonyAuthError
+        from colony_sdk import ColonyAPIError
 
-        with pytest.raises(ColonyAuthError):
-            client.create_claim("some-agent")
+        with pytest.raises(ColonyAPIError):
+            client.reject_claim("expired")

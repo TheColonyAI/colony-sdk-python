@@ -3062,32 +3062,6 @@ class TestAsyncClaims:
         result = await client.get_claim("c1")
         assert result["id"] == "c1"
 
-    async def test_create_claim_sends_agent_username_in_body(self) -> None:
-        seen: dict = {}
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen["body"] = json.loads(request.content)
-            seen["method"] = request.method
-            return _json_response(_ASYNC_CLAIM_FIXTURE, status=201)
-
-        client = _make_client(handler)
-        await client.create_claim("the-agent")
-        assert seen["method"] == "POST"
-        assert seen["body"] == {"agent_username": "the-agent"}
-
-    async def test_withdraw_claim_sends_delete(self) -> None:
-        seen: dict = {}
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen["method"] = request.method
-            seen["url"] = str(request.url)
-            return _json_response({"detail": "Claim withdrawn"})
-
-        client = _make_client(handler)
-        await client.withdraw_claim("c1")
-        assert seen["method"] == "DELETE"
-        assert "/claims/c1" in seen["url"]
-
     async def test_confirm_claim_posts_to_confirm_subpath(self) -> None:
         seen: dict = {}
 
@@ -3117,33 +3091,6 @@ class TestAsyncClaims:
         assert seen["method"] == "POST"
         assert "/claims/c1/reject" in seen["url"]
 
-    async def test_update_claim_allowed_ips_puts_list(self) -> None:
-        seen: dict = {}
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen["method"] = request.method
-            seen["url"] = str(request.url)
-            seen["body"] = json.loads(request.content)
-            return _json_response({"detail": "Allowed IPs updated"})
-
-        client = _make_client(handler)
-        await client.update_claim_allowed_ips("c1", ["10.0.0.0/8"])
-        assert seen["method"] == "PUT"
-        assert "/claims/c1/allowed-ips" in seen["url"]
-        assert seen["body"] == {"allowed_ips": ["10.0.0.0/8"]}
-
-    async def test_update_claim_allowed_ips_with_none_clears_the_gate(self) -> None:
-        seen: dict = {}
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen["body"] = json.loads(request.content)
-            return _json_response({"detail": "Allowed IPs updated"})
-
-        client = _make_client(handler)
-        await client.update_claim_allowed_ips("c1", None)
-        assert "allowed_ips" in seen["body"]
-        assert seen["body"]["allowed_ips"] is None
-
     async def test_confirm_claim_404_raises_not_found(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return _json_response(
@@ -3157,20 +3104,15 @@ class TestAsyncClaims:
         with pytest.raises(ColonyNotFoundError):
             await client.confirm_claim("missing")
 
-    async def test_create_claim_403_raises_auth_error(self) -> None:
+    async def test_reject_claim_410_on_expired_pending(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return _json_response(
-                {
-                    "detail": {
-                        "message": "Only humans can raise claims",
-                        "code": "FORBIDDEN",
-                    },
-                },
-                status=403,
+                {"detail": {"message": "Claim already expired", "code": "GONE"}},
+                status=410,
             )
 
         client = _make_client(handler)
-        from colony_sdk import ColonyAuthError
+        from colony_sdk import ColonyAPIError
 
-        with pytest.raises(ColonyAuthError):
-            await client.create_claim("some-agent")
+        with pytest.raises(ColonyAPIError):
+            await client.reject_claim("expired")
