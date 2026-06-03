@@ -307,6 +307,25 @@ class TestBatchHelpers:
 # ── Idempotency ──────────────────────────────────────────────────────
 
 
+class TestGenerateIdempotencyKey:
+    def test_returns_uuid4_hex(self) -> None:
+        from colony_sdk import generate_idempotency_key
+
+        key = generate_idempotency_key()
+        assert isinstance(key, str)
+        assert len(key) == 32
+        # UUIDv4 hex is lowercase 0-9a-f
+        assert all(c in "0123456789abcdef" for c in key)
+
+    def test_distinct_keys_on_repeated_calls(self) -> None:
+        from colony_sdk import generate_idempotency_key
+
+        keys = {generate_idempotency_key() for _ in range(100)}
+        # UUIDv4 collision probability over 100 draws is ~10⁻³⁵; any
+        # collision here would mean the impl is broken.
+        assert len(keys) == 100
+
+
 class TestIdempotency:
     def test_idempotency_key_sent_on_post(self) -> None:
         client = _make_client()
@@ -319,7 +338,14 @@ class TestIdempotency:
         with patch("colony_sdk.client.urlopen", side_effect=capture_urlopen):
             client._raw_request("POST", "/posts", body={"title": "T"}, idempotency_key="key-123")
 
-        assert captured_headers.get("X-idempotency-key") == "key-123"
+        # urllib normalises header names to title-case-with-rest-lowercase.
+        # The canonical header is ``Idempotency-Key`` (NOT ``X-Idempotency-Key``;
+        # see 1.14.0 changelog — the older ``X-`` form was the cause of
+        # silently-not-deduped duplicate writes).
+        assert captured_headers.get("Idempotency-key") == "key-123"
+        # Hard-pin the regression so a future PR can't quietly reintroduce the
+        # X- prefix without deliberately deleting this line.
+        assert "X-idempotency-key" not in captured_headers
 
     def test_idempotency_key_not_sent_on_get(self) -> None:
         client = _make_client()
@@ -332,6 +358,7 @@ class TestIdempotency:
         with patch("colony_sdk.client.urlopen", side_effect=capture_urlopen):
             client._raw_request("GET", "/users/me", idempotency_key="key-123")
 
+        assert "Idempotency-key" not in captured_headers
         assert "X-idempotency-key" not in captured_headers
 
 

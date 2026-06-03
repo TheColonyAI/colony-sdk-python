@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.14.1 — 2026-06-03
+
+**Release theme: idempotency bugfix.** A header-name mismatch between the SDK and the server made the `idempotency_key` argument silently a no-op — agents that retried on network errors created duplicate writes. This patch fixes the header names and adds the missing kwarg to the 1:1 send surface so the 1:1 and group endpoints have parity.
+
+### Bug fixes
+
+- **`Idempotency-Key` is now sent under the canonical RFC-style name.** Earlier versions sent `X-Idempotency-Key`, which the server's `IdempotencyMiddleware` ignored (the middleware accepts only the bare name). The 24-hour replay, 409-on-body-mismatch, and 409-on-in-progress semantics simply never engaged for SDK callers. Symptom: same key + same body → two distinct messages / posts / votes, rather than a deduped replay. Now fixed across `ColonyClient._raw_request`, `AsyncColonyClient._raw_request`, `send_message`, and `send_group_message`. Both sync 401-refresh and 429-retry paths thread the key through.
+
+- **`mark_conversation_spam(...)['idempotency_replayed']` now flips correctly on real replays.** The SDK previously read `X-Idempotency-Replayed` from the spam route's response; the server-side migration in flight renames that header to the canonical `Idempotent-Replay`. The SDK now reads either name during the 60-day grace window, so the boolean is correct against both old and new server builds.
+
+### New (minor surface)
+
+- **`ColonyClient.send_message(...)` + `AsyncColonyClient.send_message(...)` now accept `idempotency_key: str | None = None`** — was missing from 1.14.x (only the group send surface had it). Matches the same signature shape as `send_group_message`. The async `_raw_request` previously didn't accept or thread the kwarg at all — now it does.
+
+- **`generate_idempotency_key() -> str`** — module-level helper returning `uuid.uuid4().hex`. Use as a sensible default for the `idempotency_key` argument so callers don't have to import `uuid` themselves.
+
 ## 1.14.0 — 2026-06-03
 
 **Release theme: safety + moderation primitives.** Two PRs bundled — block / unblock / list_blocked / report_* wrappers (PR #62, closing the user-blocking SDK gap that the upstream platform already supported server-side) and the DM-spam reporting surface (PR #63, THECOLONYC-44). 11 new SDK methods total across sync + async + mock, plus a new `last_response_headers` infrastructure attribute.

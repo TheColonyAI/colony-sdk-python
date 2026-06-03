@@ -792,6 +792,24 @@ class TestMessaging:
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/messages/send/alice"
         assert _last_body(mock_urlopen) == {"body": "Hello!"}
+        # No idempotency header unless explicitly requested.
+        assert req.headers.get("Idempotency-key") is None
+
+    @patch("colony_sdk.client.urlopen")
+    def test_send_message_with_idempotency_key(self, mock_urlopen: MagicMock) -> None:
+        """1.14.0 SDK threads the ``Idempotency-Key`` header through
+        the 1:1 send surface, matching ``send_group_message``."""
+        mock_urlopen.return_value = _mock_response({"id": "msg-1"})
+        client = _authed_client()
+
+        client.send_message("alice", "Hello!", idempotency_key="dm-key-abc")
+
+        req = _last_request(mock_urlopen)
+        # urllib normalises header names to title-case-with-rest-lowercase.
+        assert req.headers.get("Idempotency-key") == "dm-key-abc"
+        # The old X- form must never come back — regression pin for the
+        # bug that was silently producing duplicate DMs.
+        assert "X-idempotency-key" not in req.headers
 
     @patch("colony_sdk.client.urlopen")
     def test_get_conversation(self, mock_urlopen: MagicMock) -> None:
@@ -2455,8 +2473,10 @@ class TestGroupConversationsLifecycle:
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/send"
         assert _last_body(mock_urlopen) == {"body": "Hi team"}
-        # No X-Idempotency-Key header unless explicitly set.
+        # No Idempotency-Key header unless explicitly set.
         # urllib normalises header names to title-case-with-rest-lowercase.
+        assert req.headers.get("Idempotency-key") is None
+        # Pin the X- form to never be emitted again — see 1.14.0 notes.
         assert req.headers.get("X-idempotency-key") is None
 
     @patch("colony_sdk.client.urlopen")
@@ -2478,7 +2498,8 @@ class TestGroupConversationsLifecycle:
 
         req = _last_request(mock_urlopen)
         # urllib normalises header names to title-case-with-rest-lowercase.
-        assert req.headers.get("X-idempotency-key") == "abc-123"
+        assert req.headers.get("Idempotency-key") == "abc-123"
+        assert "X-idempotency-key" not in req.headers
 
 
 class TestGroupMembership:
@@ -3168,7 +3189,7 @@ class TestAttachments:
 def _mock_response_with_headers(data: dict, headers: dict[str, str], status: int = 200) -> MagicMock:
     """Variant of ``_mock_response`` that exposes specific response
     headers via ``getheaders()`` so per-call header signals like
-    ``X-Idempotency-Replayed`` are reachable by the SDK code under
+    ``Idempotent-Replay`` are reachable by the SDK code under
     test. The default ``_mock_response`` relies on MagicMock's
     iter-as-empty default for ``getheaders()`` which is the right
     shape only when callers ignore headers."""
@@ -3218,7 +3239,7 @@ class TestMarkConversationSpam:
                 "spam_reason_code": "spam",
                 "report_id": "r1",
             },
-            headers={"X-Idempotency-Replayed": "true"},
+            headers={"Idempotent-Replay": "true"},
             status=200,
         )
         client = _authed_client()
@@ -3248,6 +3269,26 @@ class TestMarkConversationSpam:
         client = _authed_client()
         result = client.mark_conversation_spam("alice")
         # Body wins — header-derived path is a fill-in only.
+        assert result["idempotency_replayed"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_idempotent_replay_accepts_canonical_header(self, mock_urlopen: MagicMock) -> None:
+        """1.14.1 reads the canonical ``Idempotent-Replay`` header — the
+        server-side spam-route migration emits this once the grace
+        window ends. Pin so future SDK changes can't quietly stop
+        recognising it."""
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {
+                "conversation_id": "c1",
+                "spam_reported_at": "2026-06-03T16:00:00Z",
+                "spam_reason_code": "spam",
+                "report_id": "r1",
+            },
+            headers={"Idempotent-Replay": "true"},
+            status=200,
+        )
+        client = _authed_client()
+        result = client.mark_conversation_spam("alice")
         assert result["idempotency_replayed"] is True
 
     @patch("colony_sdk.client.urlopen")

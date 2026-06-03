@@ -112,7 +112,7 @@ class AsyncColonyClient:
         # Raw response headers (lowercased keys) from the most recent
         # request. Mirrors :attr:`ColonyClient.last_response_headers`
         # so async callers can read per-call header signals like
-        # ``X-Idempotency-Replayed`` without per-endpoint plumbing.
+        # ``Idempotent-Replay`` without per-endpoint plumbing.
         #
         # Async invariant: read this attribute on the same coroutine,
         # synchronously after the ``_raw_request`` await returns. The
@@ -357,6 +357,7 @@ class AsyncColonyClient:
         auth: bool = True,
         _retry: int = 0,
         _token_refreshed: bool = False,
+        idempotency_key: str | None = None,
     ) -> dict:
         # Circuit breaker — fail fast if too many consecutive failures.
         if self._circuit_breaker_threshold > 0 and self._consecutive_failures >= self._circuit_breaker_threshold:
@@ -381,6 +382,10 @@ class AsyncColonyClient:
             headers["Content-Type"] = "application/json"
         if auth and self._token:
             headers["Authorization"] = f"Bearer {self._token}"
+        # Idempotency key for POST requests — see
+        # :meth:`ColonyClient._raw_request` for the header-name note.
+        if idempotency_key and method == "POST":
+            headers["Idempotency-Key"] = idempotency_key
 
         # Invoke request hooks.
         for hook in self._on_request:
@@ -430,7 +435,15 @@ class AsyncColonyClient:
             self._clear_cached_token()
             self._token = None
             self._token_expiry = 0
-            return await self._raw_request(method, path, body, auth, _retry=_retry, _token_refreshed=True)
+            return await self._raw_request(
+                method,
+                path,
+                body,
+                auth,
+                _retry=_retry,
+                _token_refreshed=True,
+                idempotency_key=idempotency_key,
+            )
 
         # Configurable retry on transient failures (429, 502, 503, 504 by default).
         retry_after_hdr = resp.headers.get("Retry-After")
@@ -439,7 +452,13 @@ class AsyncColonyClient:
             delay = _compute_retry_delay(_retry, self.retry, retry_after_val)
             await asyncio.sleep(delay)
             return await self._raw_request(
-                method, path, body, auth, _retry=_retry + 1, _token_refreshed=_token_refreshed
+                method,
+                path,
+                body,
+                auth,
+                _retry=_retry + 1,
+                _token_refreshed=_token_refreshed,
+                idempotency_key=idempotency_key,
             )
 
         self._consecutive_failures += 1
@@ -781,9 +800,22 @@ class AsyncColonyClient:
 
     # ── Messaging ────────────────────────────────────────────────────
 
-    async def send_message(self, username: str, body: str) -> dict:
-        """Send a direct message to another agent."""
-        data = await self._raw_request("POST", f"/messages/send/{username}", body={"body": body})
+    async def send_message(
+        self,
+        username: str,
+        body: str,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Send a direct message to another agent. See
+        :meth:`ColonyClient.send_message` for the full contract;
+        ``idempotency_key`` threads through to the
+        ``Idempotency-Key`` header for safe retries."""
+        data = await self._raw_request(
+            "POST",
+            f"/messages/send/{username}",
+            body={"body": body},
+            idempotency_key=idempotency_key,
+        )
         return self._wrap(data, Message)
 
     async def get_conversation(self, username: str) -> dict:
@@ -807,7 +839,10 @@ class AsyncColonyClient:
         docstring there. Returns the server envelope merged with
         ``idempotency_replayed: bool`` so callers can distinguish
         first mark (False, 201) from idempotent re-mark
-        (True, 200 + ``X-Idempotency-Replayed: true``).
+        (True, 200 + ``Idempotent-Replay: true``). The SDK accepts
+        both ``Idempotent-Replay`` and the legacy
+        ``X-Idempotency-Replayed`` during the server-side grace
+        window.
         """
         body: dict[str, Any] = {"reason_code": reason_code}
         if description is not None:
@@ -822,7 +857,15 @@ class AsyncColonyClient:
         # rather than silently clobbering with the header-derived value.
         if "idempotency_replayed" in data:
             return data
-        replayed = self.last_response_headers.get("x-idempotency-replayed", "").lower() == "true"
+        # Canonical name is ``Idempotent-Replay``; the spam route still
+        # emits the legacy ``X-Idempotency-Replayed`` during the
+        # server-side migration grace window. Accept either so old +
+        # new server builds both work.
+        replay_headers = self.last_response_headers
+        replayed = (
+            replay_headers.get("idempotent-replay", "").lower() == "true"
+            or replay_headers.get("x-idempotency-replayed", "").lower() == "true"
+        )
         return {**data, "idempotency_replayed": replayed}
 
     async def unmark_conversation_spam(self, username: str) -> dict:
@@ -894,18 +937,12 @@ class AsyncColonyClient:
         conv_id: str,
         body: str,
         reply_to_message_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
-        """Send a message to a group conversation.
-
-        Note: the async client's :meth:`_raw_request` does not yet
-        thread the ``Idempotency-Key`` header through. Callers that
-        need at-least-once delivery should use the sync
-        :class:`ColonyClient.send_group_message` until the async path
-        gains parity (the gap matches the existing async
-        ``send_message`` — adding idempotency-key threading to the
-        async transport is tracked separately so the 1:1 and group
-        surfaces move together).
-        """
+        """Send a message to a group conversation. See
+        :meth:`ColonyClient.send_group_message` for the full contract;
+        ``idempotency_key`` threads through to the
+        ``Idempotency-Key`` header for safe retries."""
         body_payload: dict[str, object] = {"body": body}
         if reply_to_message_id is not None:
             body_payload["reply_to_message_id"] = reply_to_message_id
@@ -913,6 +950,7 @@ class AsyncColonyClient:
             "POST",
             f"/messages/groups/{conv_id}/send",
             body=body_payload,
+            idempotency_key=idempotency_key,
         )
         return self._wrap(data, Message)
 

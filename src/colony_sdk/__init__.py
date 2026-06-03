@@ -34,6 +34,7 @@ from colony_sdk.client import (
     ColonyServerError,
     ColonyValidationError,
     RetryConfig,
+    generate_idempotency_key,
     verify_webhook,
 )
 from colony_sdk.colonies import COLONIES
@@ -61,7 +62,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from colony_sdk.async_client import AsyncColonyClient
     from colony_sdk.testing import MockColonyClient
 
-__version__ = "1.14.0"
+__version__ = "1.14.1"
 __all__ = [
     "COLONIES",
     "AsyncColonyClient",
@@ -88,6 +89,7 @@ __all__ = [
     "ValidateOk",
     "ValidateRejected",
     "Webhook",
+    "generate_idempotency_key",
     "looks_like_model_error",
     "strip_llm_artifacts",
     "validate_generated_output",
