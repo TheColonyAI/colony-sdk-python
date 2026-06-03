@@ -340,7 +340,7 @@ class TestIdempotency:
 
         # urllib normalises header names to title-case-with-rest-lowercase.
         # The canonical header is ``Idempotency-Key`` (NOT ``X-Idempotency-Key``;
-        # see 1.14.0 changelog — the older ``X-`` form was the cause of
+        # see 1.14.1 changelog — the older ``X-`` form was the cause of
         # silently-not-deduped duplicate writes).
         assert captured_headers.get("Idempotency-key") == "key-123"
         # Hard-pin the regression so a future PR can't quietly reintroduce the

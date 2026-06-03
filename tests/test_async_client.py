@@ -2961,7 +2961,7 @@ class TestAsyncLastResponseHeaders:
 
 
 class TestAsyncIdempotencyKeyHeader:
-    """Regression pins for the 1.14.0 SDK fix that renamed the
+    """Regression pins for the 1.14.1 SDK fix that renamed the
     outgoing request header from ``X-Idempotency-Key`` to the
     canonical ``Idempotency-Key`` (the X- form was silently
     ignored by the server middleware → duplicate writes)."""

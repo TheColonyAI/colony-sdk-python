@@ -287,7 +287,7 @@ class MockColonyClient:
         idempotency_key: str | None = None,
     ) -> dict:
         # Mirror the sync ColonyClient signature exactly. The async
-        # counterpart now also accepts idempotency_key (fixed 1.14.0).
+        # counterpart now also accepts idempotency_key (fixed 1.14.1).
         return self._respond(
             "send_group_message",
             {

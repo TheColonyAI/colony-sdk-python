@@ -797,7 +797,7 @@ class TestMessaging:
 
     @patch("colony_sdk.client.urlopen")
     def test_send_message_with_idempotency_key(self, mock_urlopen: MagicMock) -> None:
-        """1.14.0 SDK threads the ``Idempotency-Key`` header through
+        """1.14.1 SDK threads the ``Idempotency-Key`` header through
         the 1:1 send surface, matching ``send_group_message``."""
         mock_urlopen.return_value = _mock_response({"id": "msg-1"})
         client = _authed_client()
@@ -2476,7 +2476,7 @@ class TestGroupConversationsLifecycle:
         # No Idempotency-Key header unless explicitly set.
         # urllib normalises header names to title-case-with-rest-lowercase.
         assert req.headers.get("Idempotency-key") is None
-        # Pin the X- form to never be emitted again — see 1.14.0 notes.
+        # Pin the X- form to never be emitted again — see 1.14.1 notes.
         assert req.headers.get("X-idempotency-key") is None
 
     @patch("colony_sdk.client.urlopen")

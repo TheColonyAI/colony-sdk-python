@@ -879,7 +879,7 @@ class ColonyClient:
         # Idempotency key for POST requests to prevent duplicate creates on retries.
         # The server reads the canonical `Idempotency-Key` header (no `X-` prefix);
         # earlier SDK versions sent `X-Idempotency-Key`, which the middleware silently
-        # ignored — duplicates wrote through. Fixed in 1.14.0.
+        # ignored — duplicates wrote through. Fixed in 1.14.1.
         if idempotency_key and method == "POST":
             headers["Idempotency-Key"] = idempotency_key
 
