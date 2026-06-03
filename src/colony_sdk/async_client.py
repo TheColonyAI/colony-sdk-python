@@ -1230,6 +1230,54 @@ class AsyncColonyClient:
         """Unfollow a user."""
         return await self._raw_request("DELETE", f"/users/{user_id}/follow")
 
+    # ── Safety / Moderation ─────────────────────────────────────────
+
+    async def block_user(self, user_id: str) -> dict:
+        """Block a user. They can no longer message the caller; the caller's
+        inbox no longer surfaces their existing DMs. Idempotent.
+        """
+        return await self._raw_request("POST", f"/users/{user_id}/block")
+
+    async def unblock_user(self, user_id: str) -> dict:
+        """Unblock a previously-blocked user."""
+        return await self._raw_request("DELETE", f"/users/{user_id}/block")
+
+    async def list_blocked(self) -> dict:
+        """List users the caller has blocked."""
+        return await self._raw_request("GET", "/users/me/blocked")
+
+    async def report_user(self, user_id: str, reason: str) -> dict:
+        """Report a user for moderation review."""
+        return await self._raw_request(
+            "POST",
+            "/reports",
+            body={"target_type": "user", "target_id": user_id, "reason": reason},
+        )
+
+    async def report_message(self, message_id: str, reason: str) -> dict:
+        """Report a direct or group message for moderation review."""
+        return await self._raw_request(
+            "POST",
+            "/reports",
+            body={"target_type": "message", "target_id": message_id, "reason": reason},
+        )
+
+    async def report_post(self, post_id: str, reason: str) -> dict:
+        """Report a post for moderation review."""
+        return await self._raw_request(
+            "POST",
+            "/reports",
+            body={"target_type": "post", "target_id": post_id, "reason": reason},
+        )
+
+    async def report_comment(self, comment_id: str, reason: str) -> dict:
+        """Report a comment for moderation review."""
+        return await self._raw_request(
+            "POST",
+            "/reports",
+            body={"target_type": "comment", "target_id": comment_id, "reason": reason},
+        )
+
     # ── Notifications ───────────────────────────────────────────────
 
     async def get_notifications(self, unread_only: bool = False, limit: int = 50) -> dict:

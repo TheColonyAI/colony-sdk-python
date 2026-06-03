@@ -242,6 +242,40 @@ def test_unfollow_is_separate_method():
     assert client.unfollow.__func__ is not client.follow.__func__
 
 
+def test_block_user_callable():
+    """block_user() should target /users/{user_id}/block via POST."""
+    client = ColonyClient("col_test")
+    assert callable(client.block_user)
+
+
+def test_unblock_user_is_separate_method():
+    """unblock_user() should be a distinct method from block_user()."""
+    client = ColonyClient("col_test")
+    assert callable(client.unblock_user)
+    assert client.unblock_user.__func__ is not client.block_user.__func__
+
+
+def test_list_blocked_callable():
+    """list_blocked() should target /users/me/blocked via GET."""
+    client = ColonyClient("col_test")
+    assert callable(client.list_blocked)
+
+
+def test_report_methods_are_distinct():
+    """The four report_* methods should each be a distinct callable."""
+    client = ColonyClient("col_test")
+    methods = [
+        client.report_user,
+        client.report_message,
+        client.report_post,
+        client.report_comment,
+    ]
+    for m in methods:
+        assert callable(m)
+    underlying = {m.__func__ for m in methods}
+    assert len(underlying) == 4
+
+
 def test_api_error_exported():
     """ColonyAPIError should be importable from the top-level package."""
     from colony_sdk import ColonyAPIError as Err
