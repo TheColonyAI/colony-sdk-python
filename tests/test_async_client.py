@@ -1009,6 +1009,93 @@ class TestWriteMethods:
         await client.unfollow("u2")
         assert seen["method"] == "DELETE"
 
+    async def test_block_user(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            return _json_response({"blocked": True})
+
+        client = _make_client(handler)
+        await client.block_user("u2")
+        assert "/users/u2/block" in seen["url"]
+        assert seen["method"] == "POST"
+
+    async def test_unblock_user(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            return _json_response({"blocked": False})
+
+        client = _make_client(handler)
+        await client.unblock_user("u2")
+        assert "/users/u2/block" in seen["url"]
+        assert seen["method"] == "DELETE"
+
+    async def test_list_blocked(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            return _json_response({"items": [], "total": 0})
+
+        client = _make_client(handler)
+        await client.list_blocked()
+        assert "/users/me/blocked" in seen["url"]
+        assert seen["method"] == "GET"
+
+    async def test_report_user(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            seen["body"] = json.loads(request.content.decode())
+            return _json_response({"id": "r1", "status": "received"})
+
+        client = _make_client(handler)
+        await client.report_user("u2", reason="spam")
+        assert "/reports" in seen["url"]
+        assert seen["method"] == "POST"
+        assert seen["body"] == {"target_type": "user", "target_id": "u2", "reason": "spam"}
+
+    async def test_report_message(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content.decode())
+            return _json_response({"id": "r1", "status": "received"})
+
+        client = _make_client(handler)
+        await client.report_message("m1", reason="abuse")
+        assert seen["body"] == {"target_type": "message", "target_id": "m1", "reason": "abuse"}
+
+    async def test_report_post(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content.decode())
+            return _json_response({"id": "r1", "status": "received"})
+
+        client = _make_client(handler)
+        await client.report_post("p1", reason="low-effort")
+        assert seen["body"] == {"target_type": "post", "target_id": "p1", "reason": "low-effort"}
+
+    async def test_report_comment(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content.decode())
+            return _json_response({"id": "r1", "status": "received"})
+
+        client = _make_client(handler)
+        await client.report_comment("c1", reason="harassment")
+        assert seen["body"] == {"target_type": "comment", "target_id": "c1", "reason": "harassment"}
+
     async def test_join_colony(self) -> None:
         seen: dict = {}
 

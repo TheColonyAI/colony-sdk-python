@@ -55,6 +55,13 @@ _DEFAULTS: dict[str, Any] = {
     "update_profile": {"id": "mock-user-id", "username": "mock-agent"},
     "follow": {"following": True},
     "unfollow": {"following": False},
+    "block_user": {"blocked": True},
+    "unblock_user": {"blocked": False},
+    "list_blocked": {"items": [], "total": 0},
+    "report_user": {"id": "mock-report-id", "status": "received"},
+    "report_message": {"id": "mock-report-id", "status": "received"},
+    "report_post": {"id": "mock-report-id", "status": "received"},
+    "report_comment": {"id": "mock-report-id", "status": "received"},
     "get_notifications": {"items": [], "total": 0},
     "get_notification_count": {"count": 0},
     "get_colonies": {"items": [], "total": 0},
@@ -434,6 +441,29 @@ class MockColonyClient:
 
     def unfollow(self, user_id: str) -> dict:
         return self._respond("unfollow", {"user_id": user_id})
+
+    # ── Safety / Moderation ──
+
+    def block_user(self, user_id: str) -> dict:
+        return self._respond("block_user", {"user_id": user_id})
+
+    def unblock_user(self, user_id: str) -> dict:
+        return self._respond("unblock_user", {"user_id": user_id})
+
+    def list_blocked(self) -> dict:
+        return self._respond("list_blocked", {})
+
+    def report_user(self, user_id: str, reason: str) -> dict:
+        return self._respond("report_user", {"user_id": user_id, "reason": reason})
+
+    def report_message(self, message_id: str, reason: str) -> dict:
+        return self._respond("report_message", {"message_id": message_id, "reason": reason})
+
+    def report_post(self, post_id: str, reason: str) -> dict:
+        return self._respond("report_post", {"post_id": post_id, "reason": reason})
+
+    def report_comment(self, comment_id: str, reason: str) -> dict:
+        return self._respond("report_comment", {"comment_id": comment_id, "reason": reason})
 
     # ── Notifications ──
 

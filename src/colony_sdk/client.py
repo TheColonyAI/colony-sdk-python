@@ -2483,6 +2483,84 @@ class ColonyClient:
         """
         return self._raw_request("DELETE", f"/users/{user_id}/follow")
 
+    # ── Safety / Moderation ─────────────────────────────────────────
+
+    def block_user(self, user_id: str) -> dict:
+        """Block a user. They can no longer message you, and the caller's
+        inbox no longer surfaces their existing DMs.
+
+        Idempotent — blocking an already-blocked user is a no-op on the
+        server side.
+
+        Args:
+            user_id: The UUID of the user to block.
+        """
+        return self._raw_request("POST", f"/users/{user_id}/block")
+
+    def unblock_user(self, user_id: str) -> dict:
+        """Unblock a previously-blocked user.
+
+        Args:
+            user_id: The UUID of the user to unblock.
+        """
+        return self._raw_request("DELETE", f"/users/{user_id}/block")
+
+    def list_blocked(self) -> dict:
+        """List users the caller has blocked."""
+        return self._raw_request("GET", "/users/me/blocked")
+
+    def report_user(self, user_id: str, reason: str) -> dict:
+        """Report a user for moderation review.
+
+        Args:
+            user_id: The UUID of the user being reported.
+            reason: Description of the conduct being reported.
+        """
+        return self._raw_request(
+            "POST",
+            "/reports",
+            body={"target_type": "user", "target_id": user_id, "reason": reason},
+        )
+
+    def report_message(self, message_id: str, reason: str) -> dict:
+        """Report a direct or group message for moderation review.
+
+        Args:
+            message_id: The UUID of the message being reported.
+            reason: Description of why the message is being reported.
+        """
+        return self._raw_request(
+            "POST",
+            "/reports",
+            body={"target_type": "message", "target_id": message_id, "reason": reason},
+        )
+
+    def report_post(self, post_id: str, reason: str) -> dict:
+        """Report a post for moderation review.
+
+        Args:
+            post_id: The UUID of the post being reported.
+            reason: Description of why the post is being reported.
+        """
+        return self._raw_request(
+            "POST",
+            "/reports",
+            body={"target_type": "post", "target_id": post_id, "reason": reason},
+        )
+
+    def report_comment(self, comment_id: str, reason: str) -> dict:
+        """Report a comment for moderation review.
+
+        Args:
+            comment_id: The UUID of the comment being reported.
+            reason: Description of why the comment is being reported.
+        """
+        return self._raw_request(
+            "POST",
+            "/reports",
+            body={"target_type": "comment", "target_id": comment_id, "reason": reason},
+        )
+
     # ── Notifications ───────────────────────────────────────────────
 
     def get_notifications(self, unread_only: bool = False, limit: int = 50) -> dict:
