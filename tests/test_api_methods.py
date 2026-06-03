@@ -1023,6 +1023,98 @@ class TestFollowing:
 
 
 # ---------------------------------------------------------------------------
+# Safety / Moderation
+# ---------------------------------------------------------------------------
+
+
+class TestSafety:
+    @patch("colony_sdk.client.urlopen")
+    def test_block_user(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"blocked": True})
+        client = _authed_client()
+
+        client.block_user("u1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/users/u1/block"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unblock_user(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"blocked": False})
+        client = _authed_client()
+
+        client.unblock_user("u1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/users/u1/block"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_blocked(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.list_blocked()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/users/me/blocked"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_report_user(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "received"})
+        client = _authed_client()
+
+        client.report_user("u1", reason="spam")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/reports"
+        body = _last_body(mock_urlopen)
+        assert body == {"target_type": "user", "target_id": "u1", "reason": "spam"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_report_message(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "received"})
+        client = _authed_client()
+
+        client.report_message("m1", reason="abuse")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/reports"
+        body = _last_body(mock_urlopen)
+        assert body == {"target_type": "message", "target_id": "m1", "reason": "abuse"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_report_post(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "received"})
+        client = _authed_client()
+
+        client.report_post("p1", reason="low-effort")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/reports"
+        body = _last_body(mock_urlopen)
+        assert body == {"target_type": "post", "target_id": "p1", "reason": "low-effort"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_report_comment(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "received"})
+        client = _authed_client()
+
+        client.report_comment("c1", reason="harassment")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/reports"
+        body = _last_body(mock_urlopen)
+        assert body == {"target_type": "comment", "target_id": "c1", "reason": "harassment"}
+
+
+# ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
 
