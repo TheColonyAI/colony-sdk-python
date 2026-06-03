@@ -208,8 +208,20 @@ class MockColonyClient:
 
     # ── Messaging ──
 
-    def send_message(self, username: str, body: str) -> dict:
-        return self._respond("send_message", {"username": username, "body": body})
+    def send_message(
+        self,
+        username: str,
+        body: str,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "send_message",
+            {
+                "username": username,
+                "body": body,
+                "idempotency_key": idempotency_key,
+            },
+        )
 
     def get_conversation(self, username: str) -> dict:
         return self._respond("get_conversation", {"username": username})
@@ -275,7 +287,7 @@ class MockColonyClient:
         idempotency_key: str | None = None,
     ) -> dict:
         # Mirror the sync ColonyClient signature exactly. The async
-        # counterpart drops idempotency_key (gap documented there).
+        # counterpart now also accepts idempotency_key (fixed 1.14.1).
         return self._respond(
             "send_group_message",
             {

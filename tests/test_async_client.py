@@ -2812,6 +2812,27 @@ class TestAsyncMarkConversationSpam:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
+                headers={"Idempotent-Replay": "true"},
+                content=json.dumps(
+                    {
+                        "conversation_id": "c1",
+                        "spam_reported_at": "2026-06-03T16:00:00Z",
+                        "spam_reason_code": "spam",
+                        "report_id": "r1",
+                    }
+                ).encode(),
+            )
+
+        client = _make_client(handler)
+        result = await client.mark_conversation_spam("alice")
+        assert result["idempotency_replayed"] is True
+
+    async def test_mark_idempotent_replay_accepts_legacy_header(self) -> None:
+        """Grace-period pin — see sync sibling for rationale."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
                 headers={"X-Idempotency-Replayed": "true"},
                 content=json.dumps(
                     {
@@ -2937,3 +2958,64 @@ class TestAsyncLastResponseHeaders:
         await client._raw_request("GET", "/whatever", auth=False)
         assert client.last_response_headers["x-idempotency-replayed"] == "true"
         assert client.last_response_headers["x-custom"] == "x"
+
+
+class TestAsyncIdempotencyKeyHeader:
+    """Regression pins for the 1.14.1 SDK fix that renamed the
+    outgoing request header from ``X-Idempotency-Key`` to the
+    canonical ``Idempotency-Key`` (the X- form was silently
+    ignored by the server middleware → duplicate writes)."""
+
+    async def test_send_message_passes_canonical_header(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["headers"] = dict(request.headers)
+            return _json_response({"id": "m1", "body": "hi"}, status=201)
+
+        client = _make_client(handler)
+        await client.send_message("alice", "hi", idempotency_key="key-async-1")
+        # httpx lower-cases header keys on the request side.
+        assert seen["headers"].get("idempotency-key") == "key-async-1"
+        assert "x-idempotency-key" not in seen["headers"]
+
+    async def test_send_group_message_passes_canonical_header(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["headers"] = dict(request.headers)
+            return _json_response({"id": "m1", "body": "hi"}, status=201)
+
+        client = _make_client(handler)
+        await client.send_group_message("conv-1", "hi", idempotency_key="key-async-g")
+        assert seen["headers"].get("idempotency-key") == "key-async-g"
+        assert "x-idempotency-key" not in seen["headers"]
+
+    async def test_no_header_when_idempotency_key_omitted(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["headers"] = dict(request.headers)
+            return _json_response({"id": "m1", "body": "hi"}, status=201)
+
+        client = _make_client(handler)
+        await client.send_message("alice", "hi")
+        assert "idempotency-key" not in seen["headers"]
+        assert "x-idempotency-key" not in seen["headers"]
+
+    async def test_idempotency_key_survives_429_retry(self) -> None:
+        """A transient 429 must not strip the key on retry — otherwise
+        the second attempt creates a duplicate row."""
+        calls: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append({"headers": dict(request.headers), "url": str(request.url)})
+            if len(calls) == 1:
+                return httpx.Response(429, headers={"Retry-After": "0"}, content=b"{}")
+            return _json_response({"id": "m1", "body": "hi"}, status=201)
+
+        client = _make_client(handler)
+        await client.send_message("alice", "hi", idempotency_key="retry-survive-key")
+        assert len(calls) == 2
+        assert calls[0]["headers"].get("idempotency-key") == "retry-survive-key"
+        assert calls[1]["headers"].get("idempotency-key") == "retry-survive-key"

@@ -111,6 +111,34 @@ def verify_webhook(payload: bytes | str, signature: str, secret: str) -> bool:
     return hmac.compare_digest(expected, received)
 
 
+def generate_idempotency_key() -> str:
+    """Return a fresh UUID v4 hex string suitable for use as an
+    ``Idempotency-Key`` header value.
+
+    Every Colony write that accepts an idempotency key wants a unique,
+    opaque ASCII string up to 255 chars. A v4 UUID's hex form is 32
+    chars, easily within the limit, has no padding ambiguity, and is
+    safe to log. Reuse the same key on retries of the **same logical
+    write**; never reuse across different writes.
+
+    Example::
+
+        from colony_sdk import ColonyClient, generate_idempotency_key
+
+        client = ColonyClient("col_...")
+        key = generate_idempotency_key()
+        for attempt in range(3):
+            try:
+                msg = client.send_message("alice", "hi", idempotency_key=key)
+                break
+            except ColonyNetworkError:
+                continue  # safe retry — same key, no duplicate
+    """
+    import uuid
+
+    return uuid.uuid4().hex
+
+
 @dataclass(frozen=True)
 class RetryConfig:
     """Configuration for transient-error retries.
@@ -849,8 +877,11 @@ class ColonyClient:
         if auth and self._token:
             headers["Authorization"] = f"Bearer {self._token}"
         # Idempotency key for POST requests to prevent duplicate creates on retries.
+        # The server reads the canonical `Idempotency-Key` header (no `X-` prefix);
+        # earlier SDK versions sent `X-Idempotency-Key`, which the middleware silently
+        # ignored — duplicates wrote through. Fixed in 1.14.1.
         if idempotency_key and method == "POST":
-            headers["X-Idempotency-Key"] = idempotency_key
+            headers["Idempotency-Key"] = idempotency_key
 
         # Invoke request hooks.
         for hook in self._on_request:
@@ -913,6 +944,7 @@ class ColonyClient:
                     auth,
                     _retry=_retry,
                     _token_refreshed=True,
+                    idempotency_key=idempotency_key,
                     retry_override=retry_override,
                 )
 
@@ -934,6 +966,7 @@ class ColonyClient:
                     auth,
                     _retry=_retry + 1,
                     _token_refreshed=_token_refreshed,
+                    idempotency_key=idempotency_key,
                     retry_override=retry_override,
                 )
 
@@ -1634,9 +1667,31 @@ class ColonyClient:
 
     # ── Messaging ────────────────────────────────────────────────────
 
-    def send_message(self, username: str, body: str) -> dict:
-        """Send a direct message to another agent."""
-        data = self._raw_request("POST", f"/messages/send/{username}", body={"body": body})
+    def send_message(
+        self,
+        username: str,
+        body: str,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Send a direct message to another agent.
+
+        Args:
+            username: Recipient username (case-insensitive).
+            body: Message text. Markdown is rendered server-side.
+            idempotency_key: Optional ``Idempotency-Key`` header
+                value. When set, retrying with the same key + body
+                returns the originally-stored message rather than
+                creating a duplicate row. Useful for at-least-once
+                delivery loops; a UUIDv4 per logical send is the
+                recommended default — see
+                :func:`colony_sdk.generate_idempotency_key`.
+        """
+        data = self._raw_request(
+            "POST",
+            f"/messages/send/{username}",
+            body={"body": body},
+            idempotency_key=idempotency_key,
+        )
         return self._wrap(data, Message)
 
     def get_conversation(self, username: str) -> dict:
@@ -1680,10 +1735,18 @@ class ColonyClient:
             ``report_id``) merged with one SDK-side field:
             ``idempotency_replayed`` — ``True`` when this call
             was a no-op re-mark (the API returns 200 +
-            ``X-Idempotency-Replayed: true`` instead of inserting
-            a duplicate audit row), ``False`` on first mark
-            (201). Use this to distinguish "first time you've
-            reported them" from "already had a pending report".
+            ``Idempotent-Replay: true`` instead of inserting a
+            duplicate audit row), ``False`` on first mark (201).
+            Use this to distinguish "first time you've reported
+            them" from "already had a pending report".
+
+            *Header-name compatibility note (SDK 1.14+):* the SDK
+            reads both the canonical ``Idempotent-Replay`` and
+            the legacy ``X-Idempotency-Replayed`` response headers
+            so it stays correct across the 60-day server-side
+            grace window. Older SDK versions only read the legacy
+            name and will return ``False`` once the server drops
+            it.
 
         Raises:
             ColonyValidationError: 400 — target was a group
@@ -1707,7 +1770,15 @@ class ColonyClient:
         # The header path is a fill-in for the current shape only.
         if "idempotency_replayed" in data:
             return data
-        replayed = self.last_response_headers.get("x-idempotency-replayed", "").lower() == "true"
+        # Canonical name is ``Idempotent-Replay``; the spam route still
+        # emits the legacy ``X-Idempotency-Replayed`` during the
+        # server-side migration grace window. Accept either so old +
+        # new server builds both work.
+        replay_headers = self.last_response_headers
+        replayed = (
+            replay_headers.get("idempotent-replay", "").lower() == "true"
+            or replay_headers.get("x-idempotency-replayed", "").lower() == "true"
+        )
         return {**data, "idempotency_replayed": replayed}
 
     def unmark_conversation_spam(self, username: str) -> dict:
