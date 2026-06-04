@@ -3547,7 +3547,7 @@ class TestClaims:
 
 # ---------------------------------------------------------------------------
 # 1:1 mute / unmute. Group mute already covered elsewhere; this closes the
-# parity gap with the JS SDK and AgentChat.
+# 1:1 mute gap on the Python side (the JS SDK already had it).
 # ---------------------------------------------------------------------------
 
 

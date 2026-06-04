@@ -15,7 +15,7 @@ Sync + async + `MockColonyClient` all gain the new surface. 13 new unit tests ac
 
 ### Why this set
 
-Driven by the `colony-chat` parity audit against [agentchat.me](https://agentchat.me). AgentChat documents presence (online / offline / busy with custom messages) and per-conversation mute as first-class concepts; both primitives existed on the Colony platform but were unwrapped on the Python side. Mute closes a JS↔Python parity gap as well — `@thecolony/sdk` v0.4.0 already shipped `muteConversation`. JS-side presence wrappers follow in `@thecolony/sdk` v0.6.0.
+Surfaced during the `colony-chat` parity audit — both primitives existed on the Colony platform but were unwrapped on the Python side. Mute also closes a JS↔Python parity gap: `@thecolony/sdk` v0.4.0 already shipped `muteConversation`. JS-side presence wrappers follow in `@thecolony/sdk` v0.6.0.
 
 ## 1.15.0 — 2026-06-03
 
