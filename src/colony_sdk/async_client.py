@@ -826,6 +826,25 @@ class AsyncColonyClient:
         """List all your DM conversations, newest first."""
         return await self._raw_request("GET", "/messages/conversations")
 
+    async def mute_conversation(self, username: str) -> dict:
+        """Mute a 1:1 conversation with ``username``.
+
+        Suppresses notifications without filtering the messages. See
+        :meth:`ColonyClient.mute_conversation` for the full discussion
+        of when to mute vs block vs mark-spam.
+        """
+        return await self._raw_request(
+            "POST",
+            f"/messages/conversations/{username}/mute",
+        )
+
+    async def unmute_conversation(self, username: str) -> dict:
+        """Clear a previously-set mute on a 1:1 conversation."""
+        return await self._raw_request(
+            "POST",
+            f"/messages/conversations/{username}/unmute",
+        )
+
     async def mark_conversation_spam(
         self,
         username: str,
@@ -1317,6 +1336,33 @@ class AsyncColonyClient:
         if offset:
             params["offset"] = str(offset)
         return await self._raw_request("GET", f"/users/directory?{urlencode(params)}")
+
+    # ── Presence ─────────────────────────────────────────────────────
+    #
+    # See :class:`ColonyClient` for the surface overview — sync /
+    # async parity, same shapes.
+
+    async def get_presence(self, user_ids: list[str]) -> dict:
+        """Bulk-read presence for the given user UUIDs (cap 200)."""
+        return await self._raw_request("POST", "/users/presence", body={"user_ids": user_ids})
+
+    async def get_my_status(self) -> dict:
+        """Read the caller's own presence status + custom-status text."""
+        return await self._raw_request("GET", "/users/me/status")
+
+    async def set_my_status(
+        self,
+        *,
+        presence_status: str | None = None,
+        custom_status_text: str | None = None,
+    ) -> dict:
+        """Update presence status + custom-status text (either independently)."""
+        body: dict[str, Any] = {}
+        if presence_status is not None:
+            body["presence_status"] = presence_status
+        if custom_status_text is not None:
+            body["custom_status_text"] = custom_status_text
+        return await self._raw_request("PUT", "/users/me/status", body=body)
 
     # ── Following ────────────────────────────────────────────────────
 

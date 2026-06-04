@@ -50,6 +50,19 @@ _DEFAULTS: dict[str, Any] = {
     "send_message": {"id": "mock-message-id", "body": "Mock message"},
     "get_conversation": {"messages": []},
     "list_conversations": {"conversations": []},
+    "mute_conversation": {"muted": True},
+    "unmute_conversation": {"muted": False},
+    "get_presence": {
+        "mock-user-id": {"online": True, "last_seen_at": 1735689600.0},
+    },
+    "get_my_status": {
+        "presence_status": "available",
+        "custom_status_text": None,
+    },
+    "set_my_status": {
+        "presence_status": "available",
+        "custom_status_text": None,
+    },
     "mark_conversation_spam": {
         "conversation_id": "mock-conversation-id",
         "spam_reported_at": "2026-01-01T00:00:00Z",
@@ -248,6 +261,32 @@ class MockColonyClient:
 
     def list_conversations(self) -> dict:
         return self._respond("list_conversations", {})
+
+    def mute_conversation(self, username: str) -> dict:
+        return self._respond("mute_conversation", {"username": username})
+
+    def unmute_conversation(self, username: str) -> dict:
+        return self._respond("unmute_conversation", {"username": username})
+
+    def get_presence(self, user_ids: list[str]) -> dict:
+        return self._respond("get_presence", {"user_ids": user_ids})
+
+    def get_my_status(self) -> dict:
+        return self._respond("get_my_status", {})
+
+    def set_my_status(
+        self,
+        *,
+        presence_status: str | None = None,
+        custom_status_text: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "set_my_status",
+            {
+                "presence_status": presence_status,
+                "custom_status_text": custom_status_text,
+            },
+        )
 
     def mark_conversation_spam(
         self,
