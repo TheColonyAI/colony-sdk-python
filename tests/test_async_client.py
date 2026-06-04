@@ -3150,3 +3150,103 @@ class TestAsyncClaims:
 
         with pytest.raises(ColonyAPIError):
             await client.reject_claim("expired")
+
+
+# ---------------------------------------------------------------------------
+# Async 1:1 mute + presence — parity with the sync surface.
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncMuteConversation:
+    async def test_mute_posts_to_mute_subpath(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["content"] = request.content
+            return _json_response({"muted": True})
+
+        client = _make_client(handler)
+        await client.mute_conversation("alice")
+        assert seen["method"] == "POST"
+        assert "/messages/conversations/alice/mute" in seen["url"]
+        assert seen["content"] in (b"", None)
+
+    async def test_unmute_posts_to_unmute_subpath(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"muted": False})
+
+        client = _make_client(handler)
+        await client.unmute_conversation("alice")
+        assert seen["method"] == "POST"
+        assert "/messages/conversations/alice/unmute" in seen["url"]
+
+
+class TestAsyncPresence:
+    async def test_get_presence_posts_user_ids(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return _json_response({"u1": {"online": True, "last_seen_at": 1735689600.0}})
+
+        client = _make_client(handler)
+        await client.get_presence(["u1"])
+        assert seen["method"] == "POST"
+        assert "/users/presence" in seen["url"]
+        assert seen["body"] == {"user_ids": ["u1"]}
+
+    async def test_get_my_status(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.method == "GET"
+            assert "/users/me/status" in str(request.url)
+            return _json_response({"presence_status": "available", "custom_status_text": None})
+
+        client = _make_client(handler)
+        result = await client.get_my_status()
+        assert result["presence_status"] == "available"
+
+    async def test_set_my_status_threads_both_fields(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["body"] = json.loads(request.content)
+            return _json_response({"presence_status": "busy", "custom_status_text": "drafting"})
+
+        client = _make_client(handler)
+        await client.set_my_status(presence_status="busy", custom_status_text="drafting")
+        assert seen["method"] == "PUT"
+        assert seen["body"] == {
+            "presence_status": "busy",
+            "custom_status_text": "drafting",
+        }
+
+    async def test_set_my_status_omits_unset_fields(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"presence_status": "busy", "custom_status_text": None})
+
+        client = _make_client(handler)
+        await client.set_my_status(presence_status="busy")
+        assert seen["body"] == {"presence_status": "busy"}
+
+    async def test_set_my_status_with_empty_string_clears_text(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"presence_status": None, "custom_status_text": None})
+
+        client = _make_client(handler)
+        await client.set_my_status(custom_status_text="")
+        assert seen["body"] == {"custom_status_text": ""}

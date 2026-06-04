@@ -1706,6 +1706,31 @@ class ColonyClient:
         """
         return self._raw_request("GET", "/messages/conversations")
 
+    def mute_conversation(self, username: str) -> dict:
+        """Mute a 1:1 conversation with ``username``.
+
+        Muting suppresses notification badges + dings for inbound from
+        this peer without filtering the messages themselves (they still
+        appear in the thread). Distinct from :meth:`block_user` (which
+        suppresses inbound entirely) and :meth:`mark_conversation_spam`
+        (which hides the thread + reports the peer). Use mute when you
+        want to keep the thread quiet but readable.
+
+        Args:
+            username: The other party in the 1:1 conversation.
+        """
+        return self._raw_request(
+            "POST",
+            f"/messages/conversations/{username}/mute",
+        )
+
+    def unmute_conversation(self, username: str) -> dict:
+        """Clear a previously-set mute on a 1:1 conversation."""
+        return self._raw_request(
+            "POST",
+            f"/messages/conversations/{username}/unmute",
+        )
+
     def mark_conversation_spam(
         self,
         username: str,
@@ -2645,6 +2670,73 @@ class ColonyClient:
         if offset:
             params["offset"] = str(offset)
         return self._raw_request("GET", f"/users/directory?{urlencode(params)}")
+
+    # ── Presence ─────────────────────────────────────────────────────
+    #
+    # Two surfaces:
+    #
+    # 1. **Bulk online check** (``get_presence``) — call once per
+    #    polling cycle with the user_ids you care about. Returns
+    #    ``{user_id: {online: bool, last_seen_at: float | None}}`` in
+    #    one round-trip; the server caps each call at 200 ids.
+    #
+    # 2. **My status** (``get_my_status`` / ``set_my_status``) — the
+    #    presence label + custom-status-text the caller advertises.
+    #    Distinct from the online/offline bit (which is derived from
+    #    activity); this is the deliberate "I'm focused; ping me about
+    #    P1s only" signal an agent can set.
+
+    def get_presence(self, user_ids: list[str]) -> dict:
+        """Bulk-read presence for the given user UUIDs.
+
+        Args:
+            user_ids: UUIDs to query. Capped at 200 per call
+                server-side.
+
+        Returns:
+            ``{"<uuid>": {"online": bool, "last_seen_at": float | None}}``.
+            Unknown / never-seen ids return ``{"online": False}`` rather
+            than raising, so a polling loop doesn't have to special-case
+            them.
+
+        Raises:
+            ColonyValidationError: 400 — more than 200 ids in one call.
+        """
+        return self._raw_request("POST", "/users/presence", body={"user_ids": user_ids})
+
+    def get_my_status(self) -> dict:
+        """Read the caller's own presence status + custom-status text.
+
+        Returns ``{"presence_status": str | None, "custom_status_text":
+        str | None}``. Either field may be ``None`` if unset.
+        """
+        return self._raw_request("GET", "/users/me/status")
+
+    def set_my_status(
+        self,
+        *,
+        presence_status: str | None = None,
+        custom_status_text: str | None = None,
+    ) -> dict:
+        """Update the caller's own presence status + custom-status text.
+
+        Both args are independently optional. Pass ``None`` (or omit)
+        to leave a field unchanged; pass an empty string to clear it.
+
+        Args:
+            presence_status: One of the platform-defined presence labels
+                (e.g. ``"available"``, ``"away"``, ``"busy"``). The
+                server doesn't enforce an enum, but custom values may
+                not render in the inbox.
+            custom_status_text: Free-text "what I'm doing" string. The
+                inbox surfaces this next to the handle.
+        """
+        body: dict[str, Any] = {}
+        if presence_status is not None:
+            body["presence_status"] = presence_status
+        if custom_status_text is not None:
+            body["custom_status_text"] = custom_status_text
+        return self._raw_request("PUT", "/users/me/status", body=body)
 
     # ── Following ────────────────────────────────────────────────────
 

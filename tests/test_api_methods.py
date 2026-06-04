@@ -3543,3 +3543,112 @@ class TestClaims:
 
         with pytest.raises(ColonyAPIError):
             client.reject_claim("expired")
+
+
+# ---------------------------------------------------------------------------
+# 1:1 mute / unmute. Group mute already covered elsewhere; this closes the
+# parity gap with the JS SDK and AgentChat.
+# ---------------------------------------------------------------------------
+
+
+class TestMuteConversation:
+    @patch("colony_sdk.client.urlopen")
+    def test_mute_posts_to_mute_subpath(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"muted": True})
+        client = _authed_client()
+        client.mute_conversation("alice")
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/conversations/alice/mute"
+        # No body — the action is in the path.
+        assert req.data is None
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unmute_posts_to_unmute_subpath(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"muted": False})
+        client = _authed_client()
+        client.unmute_conversation("alice")
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/conversations/alice/unmute"
+
+
+# ---------------------------------------------------------------------------
+# Presence — bulk online check + my-status read/write.
+# ---------------------------------------------------------------------------
+
+
+class TestPresence:
+    @patch("colony_sdk.client.urlopen")
+    def test_get_presence_posts_user_ids_in_body(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "u1": {"online": True, "last_seen_at": 1735689600.0},
+                "u2": {"online": False, "last_seen_at": None},
+            }
+        )
+        client = _authed_client()
+        client.get_presence(["u1", "u2"])
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/users/presence"
+        assert _last_body(mock_urlopen) == {"user_ids": ["u1", "u2"]}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_presence_400_on_too_many_ids(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = _make_http_error(
+            400,
+            {
+                "detail": {
+                    "message": "Too many ids in one call (max 200)",
+                    "code": "INVALID_INPUT",
+                },
+            },
+        )
+        client = _authed_client()
+        from colony_sdk import ColonyValidationError
+
+        with pytest.raises(ColonyValidationError):
+            client.get_presence([f"u{i}" for i in range(201)])
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_my_status(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"presence_status": "available", "custom_status_text": "head down"})
+        client = _authed_client()
+        result = client.get_my_status()
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/users/me/status"
+        assert result["presence_status"] == "available"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_my_status_threads_both_fields(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"presence_status": "busy", "custom_status_text": "drafting"})
+        client = _authed_client()
+        client.set_my_status(presence_status="busy", custom_status_text="drafting")
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/users/me/status"
+        assert _last_body(mock_urlopen) == {
+            "presence_status": "busy",
+            "custom_status_text": "drafting",
+        }
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_my_status_omits_unset_fields(self, mock_urlopen: MagicMock) -> None:
+        # None means "leave unchanged" — the field should not be in the body.
+        mock_urlopen.return_value = _mock_response({"presence_status": "busy", "custom_status_text": None})
+        client = _authed_client()
+        client.set_my_status(presence_status="busy")
+        assert _last_body(mock_urlopen) == {"presence_status": "busy"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_my_status_with_empty_string_clears_text(self, mock_urlopen: MagicMock) -> None:
+        # Empty string is distinct from None — it explicitly clears the
+        # custom status. Confirms the SDK forwards "" not omits it.
+        mock_urlopen.return_value = _mock_response({"presence_status": None, "custom_status_text": None})
+        client = _authed_client()
+        client.set_my_status(custom_status_text="")
+        body = _last_body(mock_urlopen)
+        assert "custom_status_text" in body
+        assert body["custom_status_text"] == ""
