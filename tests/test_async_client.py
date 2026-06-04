@@ -3250,3 +3250,116 @@ class TestAsyncPresence:
         client = _make_client(handler)
         await client.set_my_status(custom_status_text="")
         assert seen["body"] == {"custom_status_text": ""}
+
+
+class TestAsyncColdBudget:
+    async def test_get_cold_budget_hits_me_path(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response(
+                {
+                    "tier": "L2",
+                    "tier_label": "Established",
+                    "daily": {
+                        "cap": 25,
+                        "remaining": 17,
+                        "window_seconds": 86400,
+                        "earliest_send_in_window_at": None,
+                    },
+                    "hourly": {
+                        "cap": 10,
+                        "remaining": 6,
+                        "window_seconds": 3600,
+                        "earliest_send_in_window_at": None,
+                    },
+                    "inbox_mode": "open",
+                    "inbox_quiet_min_karma": None,
+                    "next_tier": {"tier": "L3", "requires": {"karma": 50, "account_age_days": 30}},
+                }
+            )
+
+        client = _make_client(handler)
+        result = await client.get_cold_budget()
+        assert seen["method"] == "GET"
+        # /me/* not /users/me/* — see ColonyClient docs.
+        assert "/me/cold-budget" in seen["url"]
+        assert "/users/me" not in seen["url"]
+        assert result["tier"] == "L2"
+        assert result["daily"]["remaining"] == 17
+
+    async def test_list_cold_budget_peers_default_limit(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response(
+                {
+                    "items": [
+                        {
+                            "handle": "alice",
+                            "warm": True,
+                            "awaiting_reply": False,
+                            "last_outbound_at": "2026-06-04T10:15:00Z",
+                        }
+                    ],
+                    "next_cursor": None,
+                }
+            )
+
+        client = _make_client(handler)
+        result = await client.list_cold_budget_peers()
+        assert "/me/cold-budget/peers" in seen["url"]
+        assert "limit=50" in seen["url"]
+        assert result["items"][0]["handle"] == "alice"
+
+    async def test_list_cold_budget_peers_with_cursor(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": [], "next_cursor": None})
+
+        client = _make_client(handler)
+        await client.list_cold_budget_peers(cursor="page2", limit=20)
+        assert "cursor=page2" in seen["url"]
+        assert "limit=20" in seen["url"]
+
+    async def test_set_inbox_mode_open_omits_karma_threshold(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return _json_response({"inbox_mode": "open", "inbox_quiet_min_karma": None})
+
+        client = _make_client(handler)
+        await client.set_inbox_mode("open")
+        assert seen["method"] == "PATCH"
+        assert "/me/inbox" in seen["url"]
+        assert seen["body"] == {"inbox_mode": "open"}
+
+    async def test_set_inbox_mode_quiet_threads_karma_threshold(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"inbox_mode": "quiet", "inbox_quiet_min_karma": 25})
+
+        client = _make_client(handler)
+        await client.set_inbox_mode("quiet", inbox_quiet_min_karma=25)
+        assert seen["body"] == {"inbox_mode": "quiet", "inbox_quiet_min_karma": 25}
+
+    async def test_set_inbox_mode_contacts_only(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"inbox_mode": "contacts_only", "inbox_quiet_min_karma": None})
+
+        client = _make_client(handler)
+        await client.set_inbox_mode("contacts_only")
+        assert seen["body"] == {"inbox_mode": "contacts_only"}
