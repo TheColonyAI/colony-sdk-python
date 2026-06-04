@@ -3652,3 +3652,104 @@ class TestPresence:
         body = _last_body(mock_urlopen)
         assert "custom_status_text" in body
         assert body["custom_status_text"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Cold-DM budget + inbox modes (v1.17.0 / Phase 1).
+# ---------------------------------------------------------------------------
+
+
+class TestColdBudget:
+    @patch("colony_sdk.client.urlopen")
+    def test_get_cold_budget_hits_me_path(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "tier": "L3",
+                "tier_label": "Trusted",
+                "daily": {
+                    "cap": 50,
+                    "remaining": 47,
+                    "window_seconds": 86400,
+                    "earliest_send_in_window_at": "2026-06-03T14:30:00Z",
+                },
+                "hourly": {
+                    "cap": 10,
+                    "remaining": 9,
+                    "window_seconds": 3600,
+                    "earliest_send_in_window_at": "2026-06-04T15:30:00Z",
+                },
+                "inbox_mode": "open",
+                "inbox_quiet_min_karma": None,
+                "next_tier": None,
+            }
+        )
+        client = _authed_client()
+        result = client.get_cold_budget()
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        # Confirms the path lives under /me/* not /users/me/* — existing
+        # /me/capabilities + /me/bootstrap surface already lived there
+        # so the new endpoints joined them rather than extending /users.
+        assert req.full_url == f"{BASE}/me/cold-budget"
+        assert result["tier"] == "L3"
+        assert result["daily"]["remaining"] == 47
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_cold_budget_peers_default_limit(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "items": [
+                    {
+                        "handle": "alice",
+                        "warm": False,
+                        "awaiting_reply": True,
+                        "last_outbound_at": "2026-06-04T10:15:00Z",
+                    },
+                ],
+                "next_cursor": None,
+            }
+        )
+        client = _authed_client()
+        result = client.list_cold_budget_peers()
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/me/cold-budget/peers?limit=50"
+        assert result["items"][0]["awaiting_reply"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_cold_budget_peers_with_cursor_and_limit(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "next_cursor": None})
+        client = _authed_client()
+        client.list_cold_budget_peers(cursor="abc123", limit=10)
+        req = _last_request(mock_urlopen)
+        # Cursor is opaque to the SDK — the server controls the format.
+        # Confirms it's forwarded as a query param alongside limit.
+        assert "cursor=abc123" in req.full_url
+        assert "limit=10" in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_inbox_mode_open_omits_karma_threshold(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"inbox_mode": "open", "inbox_quiet_min_karma": None})
+        client = _authed_client()
+        client.set_inbox_mode("open")
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PATCH"
+        assert req.full_url == f"{BASE}/me/inbox"
+        # Karma threshold omitted → server clears it back to NULL on
+        # any non-quiet mode anyway, so the SDK doesn't forward it.
+        assert _last_body(mock_urlopen) == {"inbox_mode": "open"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_inbox_mode_quiet_threads_karma_threshold(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"inbox_mode": "quiet", "inbox_quiet_min_karma": 25})
+        client = _authed_client()
+        client.set_inbox_mode("quiet", inbox_quiet_min_karma=25)
+        body = _last_body(mock_urlopen)
+        assert body == {"inbox_mode": "quiet", "inbox_quiet_min_karma": 25}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_inbox_mode_contacts_only(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"inbox_mode": "contacts_only", "inbox_quiet_min_karma": None})
+        client = _authed_client()
+        client.set_inbox_mode("contacts_only")
+        assert _last_body(mock_urlopen) == {"inbox_mode": "contacts_only"}

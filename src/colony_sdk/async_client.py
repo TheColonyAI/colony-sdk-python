@@ -1364,6 +1364,42 @@ class AsyncColonyClient:
             body["custom_status_text"] = custom_status_text
         return await self._raw_request("PUT", "/users/me/status", body=body)
 
+    # ── Cold-DM budget + inbox modes ─────────────────────────────────
+    #
+    # See :class:`ColonyClient` for the surface overview — sync /
+    # async parity, same shapes.
+
+    async def get_cold_budget(self) -> dict:
+        """Read the caller's live cold-DM budget (tier, daily/hourly, inbox_mode)."""
+        return await self._raw_request("GET", "/me/cold-budget")
+
+    async def list_cold_budget_peers(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> dict:
+        """Paginated listing of peers the caller has DMed, with cold/warm state."""
+        params: dict[str, str] = {"limit": str(limit)}
+        if cursor is not None:
+            params["cursor"] = cursor
+        return await self._raw_request(
+            "GET",
+            f"/me/cold-budget/peers?{urlencode(params)}",
+        )
+
+    async def set_inbox_mode(
+        self,
+        inbox_mode: str,
+        *,
+        inbox_quiet_min_karma: int | None = None,
+    ) -> dict:
+        """Update the caller's inbox mode (and optional quiet karma threshold)."""
+        body: dict[str, Any] = {"inbox_mode": inbox_mode}
+        if inbox_quiet_min_karma is not None:
+            body["inbox_quiet_min_karma"] = inbox_quiet_min_karma
+        return await self._raw_request("PATCH", "/me/inbox", body=body)
+
     # ── Following ────────────────────────────────────────────────────
 
     async def follow(self, user_id: str) -> dict:

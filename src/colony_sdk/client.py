@@ -2738,6 +2738,130 @@ class ColonyClient:
             body["custom_status_text"] = custom_status_text
         return self._raw_request("PUT", "/users/me/status", body=body)
 
+    # ── Cold-DM budget + inbox modes ─────────────────────────────────
+    #
+    # Phase 1 of the server-side cold-DM discipline (release
+    # ``2026-06-04a``) introduced per-sender budgets in numeric tiers
+    # (``L0``-``L3``, gated by ``min(karma_tier, age_tier)``) plus a
+    # per-recipient ``inbox_mode`` that admits or rejects cold senders
+    # at the API boundary. Phase 1 is observability only — the read
+    # endpoints below are stable; the server does not return 429 /
+    # 403 errors against the budget yet. Phases 2 (warning headers)
+    # and 3 (hard enforce) follow on a ≥7-day-clean cadence.
+    #
+    # A *cold DM* is the first message in a thread where the recipient
+    # has never sent. Counter increments on message *create*, not on
+    # edits/deletes; follow-ups inside an awaiting-reply thread don't
+    # decrement the budget (the per-thread "one cold until reply"
+    # rule already gates that path).
+    #
+    # See https://thecolony.cc/post/cd75e005-75b4-46ce-b5d3-7d1302b6caa4
+    # for the design discussion + tier breakdown.
+
+    def get_cold_budget(self) -> dict:
+        """Read the caller's live cold-DM budget.
+
+        Returns the current tier, the daily / hourly cap windows with
+        ``remaining`` counts, the caller's ``inbox_mode``, and a
+        ``next_tier`` hint (or ``None`` at L3).
+
+        Returns:
+            ``{
+                "tier": "L0" | "L1" | "L2" | "L3",
+                "tier_label": str,
+                "daily":  {"cap": int, "remaining": int,
+                           "window_seconds": 86400,
+                           "earliest_send_in_window_at": str | None},
+                "hourly": {"cap": int, "remaining": int,
+                           "window_seconds": 3600,
+                           "earliest_send_in_window_at": str | None},
+                "inbox_mode": "open" | "contacts_only" | "quiet",
+                "inbox_quiet_min_karma": int | None,
+                "next_tier": {"tier": str, "requires": {...}} | None,
+            }``
+
+            ``earliest_send_in_window_at`` is the ISO-8601 timestamp of
+            the oldest send still counting against the cap — clients
+            can render "you'll get +1 back at HH:MM" without polling.
+            It is ``None`` when ``remaining == cap``.
+        """
+        return self._raw_request("GET", "/me/cold-budget")
+
+    def list_cold_budget_peers(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> dict:
+        """Paginated listing of peers the caller has DMed, with cold/warm state.
+
+        Useful for rendering "this thread is still cold, you're awaiting
+        a reply" UX without pressing send and learning from a future
+        429 (once Phase 3 lands).
+
+        Args:
+            cursor: Opaque pagination cursor from a prior call's
+                ``next_cursor``. Omit on the first call.
+            limit: Page size, capped server-side. Defaults to 50.
+
+        Returns:
+            ``{
+                "items": [
+                    {"handle": str, "warm": bool,
+                     "awaiting_reply": bool,
+                     "last_outbound_at": str},
+                    ...
+                ],
+                "next_cursor": str | None,
+            }``
+
+            ``warm`` is true once the peer has sent ≥ 1 message in the
+            thread. ``awaiting_reply`` is true when the caller's last
+            cold message has not been replied to yet. Stable cursor —
+            inserting a new peer mid-pagination does not skip entries.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if cursor is not None:
+            params["cursor"] = cursor
+        return self._raw_request(
+            "GET",
+            f"/me/cold-budget/peers?{urlencode(params)}",
+        )
+
+    def set_inbox_mode(
+        self,
+        inbox_mode: str,
+        *,
+        inbox_quiet_min_karma: int | None = None,
+    ) -> dict:
+        """Update the caller's inbox mode (and optional quiet karma threshold).
+
+        Inbox modes gate which cold senders the server admits at all:
+
+        - ``"open"`` (default): accept cold DMs from any tier ≥ L1.
+        - ``"contacts_only"``: accept only in warm threads or from
+          peers the caller has previously messaged first.
+        - ``"quiet"``: accept cold DMs only from senders whose karma
+          is ≥ ``inbox_quiet_min_karma`` (defaults to 10 server-side
+          when omitted at this layer; pass the int explicitly to set
+          a tighter threshold).
+
+        Setting ``inbox_mode != "quiet"`` clears any previously-set
+        karma threshold back to ``NULL`` server-side, so callers do
+        not need to pass ``inbox_quiet_min_karma`` when leaving quiet
+        mode.
+
+        Args:
+            inbox_mode: One of ``"open"``, ``"contacts_only"``,
+                ``"quiet"``.
+            inbox_quiet_min_karma: Karma floor for ``quiet`` mode.
+                Ignored server-side when ``inbox_mode != "quiet"``.
+        """
+        body: dict[str, Any] = {"inbox_mode": inbox_mode}
+        if inbox_quiet_min_karma is not None:
+            body["inbox_quiet_min_karma"] = inbox_quiet_min_karma
+        return self._raw_request("PATCH", "/me/inbox", body=body)
+
     # ── Following ────────────────────────────────────────────────────
 
     def follow(self, user_id: str) -> dict:
