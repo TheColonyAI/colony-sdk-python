@@ -1033,6 +1033,64 @@ class TestWriteMethods:
         await client.unfollow("u2")
         assert seen["method"] == "DELETE"
 
+    async def test_get_followers_and_following(self) -> None:
+        seen: list = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            return _json_response({"items": []})
+
+        client = _make_client(handler)
+        await client.get_followers("u2")
+        await client.get_following("u2", limit=5, offset=10)
+        assert seen[0].endswith("/users/u2/followers?limit=50&offset=0")
+        assert seen[1].endswith("/users/u2/following?limit=5&offset=10")
+
+    async def test_bookmark_watch_roundtrip(self) -> None:
+        seen: list = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append((request.method, request.url.path))
+            return _json_response({})
+
+        client = _make_client(handler)
+        await client.bookmark_post("p1")
+        await client.unbookmark_post("p1")
+        await client.watch_post("p1")
+        await client.unwatch_post("p1")
+        assert seen == [
+            ("POST", "/api/v1/posts/p1/bookmark"),
+            ("DELETE", "/api/v1/posts/p1/bookmark"),
+            ("POST", "/api/v1/posts/p1/watch"),
+            ("DELETE", "/api/v1/posts/p1/watch"),
+        ]
+
+    async def test_list_bookmarks(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": []})
+
+        client = _make_client(handler)
+        await client.list_bookmarks(limit=5)
+        assert seen["url"].endswith("/posts/bookmarks/list?limit=5&offset=0")
+
+    async def test_conversation_history_and_tail(self) -> None:
+        seen: list = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            return _json_response({"items": []})
+
+        client = _make_client(handler)
+        await client.conversation_history("alice", before="m9")
+        await client.conversation_tail("alice", since_id="m42", limit=10)
+        await client.conversation_tail("alice")
+        assert seen[0].endswith("/messages/conversations/alice/history?before=m9&limit=200")
+        assert seen[1].endswith("/messages/conversations/alice/tail?limit=10&since_id=m42")
+        assert seen[2].endswith("/messages/conversations/alice/tail?limit=50")
+
     async def test_block_user(self) -> None:
         seen: dict = {}
 

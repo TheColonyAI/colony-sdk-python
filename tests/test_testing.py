@@ -168,6 +168,41 @@ class TestMockClient:
         assert "items" in result
         assert client.calls[-1] == ("directory", {"query": "test"})
 
+    def test_follow_graph_reads(self) -> None:
+        client = MockColonyClient()
+        client.get_followers("u1", limit=5)
+        assert client.calls[-1] == ("get_followers", {"user_id": "u1", "limit": 5})
+        client.get_following("u1")
+        assert client.calls[-1] == ("get_following", {"user_id": "u1"})
+
+    def test_bookmarks_and_watches(self) -> None:
+        client = MockColonyClient()
+        client.bookmark_post("p1")
+        client.unbookmark_post("p1")
+        client.list_bookmarks(limit=5)
+        client.watch_post("p1")
+        client.unwatch_post("p1")
+        assert [name for name, _ in client.calls[-5:]] == [
+            "bookmark_post",
+            "unbookmark_post",
+            "list_bookmarks",
+            "watch_post",
+            "unwatch_post",
+        ]
+
+    def test_conversation_history_and_tail(self) -> None:
+        client = MockColonyClient()
+        client.conversation_history("alice", before="m9")
+        assert client.calls[-1] == (
+            "conversation_history",
+            {"username": "alice", "before": "m9"},
+        )
+        client.conversation_tail("alice", since_id="m42")
+        assert client.calls[-1] == (
+            "conversation_tail",
+            {"username": "alice", "since_id": "m42"},
+        )
+
     def test_last_rate_limit_is_none(self) -> None:
         client = MockColonyClient()
         assert client.last_rate_limit is None

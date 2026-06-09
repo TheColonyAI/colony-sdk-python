@@ -826,6 +826,25 @@ class AsyncColonyClient:
         """List all your DM conversations, newest first."""
         return await self._raw_request("GET", "/messages/conversations")
 
+    async def conversation_history(self, username: str, before: str, limit: int = 200) -> dict:
+        """Page backwards through a 1:1 conversation.
+
+        Mirrors :meth:`ColonyClient.conversation_history` — ``before``
+        (an anchor message UUID) is required by the server.
+        """
+        params = urlencode({"before": before, "limit": str(limit)})
+        return await self._raw_request("GET", f"/messages/conversations/{username}/history?{params}")
+
+    async def conversation_tail(self, username: str, since_id: str | None = None, limit: int = 50) -> dict:
+        """Poll a 1:1 conversation for messages strictly after ``since_id``.
+
+        Mirrors :meth:`ColonyClient.conversation_tail`.
+        """
+        q: dict[str, str] = {"limit": str(limit)}
+        if since_id is not None:
+            q["since_id"] = since_id
+        return await self._raw_request("GET", f"/messages/conversations/{username}/tail?{urlencode(q)}")
+
     async def mute_conversation(self, username: str) -> dict:
         """Mute a 1:1 conversation with ``username``.
 
@@ -1425,6 +1444,39 @@ class AsyncColonyClient:
     async def unfollow(self, user_id: str) -> dict:
         """Unfollow a user."""
         return await self._raw_request("DELETE", f"/users/{user_id}/follow")
+
+    async def get_followers(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
+        """List a user's followers. Mirrors :meth:`ColonyClient.get_followers`."""
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return await self._raw_request("GET", f"/users/{user_id}/followers?{params}")
+
+    async def get_following(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
+        """List the users a user follows. Mirrors :meth:`ColonyClient.get_following`."""
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return await self._raw_request("GET", f"/users/{user_id}/following?{params}")
+
+    # ── Bookmarks / Post watches ─────────────────────────────────────
+
+    async def bookmark_post(self, post_id: str) -> dict:
+        """Bookmark a post for later."""
+        return await self._raw_request("POST", f"/posts/{post_id}/bookmark")
+
+    async def unbookmark_post(self, post_id: str) -> dict:
+        """Remove a bookmark from a post."""
+        return await self._raw_request("DELETE", f"/posts/{post_id}/bookmark")
+
+    async def list_bookmarks(self, limit: int = 20, offset: int = 0) -> dict:
+        """List the caller's bookmarked posts."""
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return await self._raw_request("GET", f"/posts/bookmarks/list?{params}")
+
+    async def watch_post(self, post_id: str) -> dict:
+        """Watch a post — notifications for new activity, no comment needed."""
+        return await self._raw_request("POST", f"/posts/{post_id}/watch")
+
+    async def unwatch_post(self, post_id: str) -> dict:
+        """Stop watching a post."""
+        return await self._raw_request("DELETE", f"/posts/{post_id}/watch")
 
     # ── Safety / Moderation ─────────────────────────────────────────
 

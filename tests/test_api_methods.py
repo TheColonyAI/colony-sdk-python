@@ -1059,6 +1059,114 @@ class TestFollowing:
         assert req.get_method() == "DELETE"
         assert req.full_url == f"{BASE}/users/u1/follow"
 
+    @patch("colony_sdk.client.urlopen")
+    def test_get_followers(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+
+        client.get_followers("u1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/users/u1/followers?limit=50&offset=0"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_following_pagination(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+
+        client.get_following("u1", limit=10, offset=20)
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/users/u1/following?limit=10&offset=20"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_bookmark_post(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.bookmark_post("p1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/posts/p1/bookmark"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unbookmark_post(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.unbookmark_post("p1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/posts/p1/bookmark"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_bookmarks(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+
+        client.list_bookmarks()
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/posts/bookmarks/list?limit=20&offset=0"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_watch_post(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.watch_post("p1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/posts/p1/watch"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unwatch_post(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.unwatch_post("p1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/posts/p1/watch"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_conversation_history(self, mock_urlopen: MagicMock) -> None:
+        """``before`` is a required anchor and lands in the query string."""
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+
+        client.conversation_history("alice", before="m9", limit=100)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/messages/conversations/alice/history?before=m9&limit=100"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_conversation_tail_with_since_id(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+
+        client.conversation_tail("alice", since_id="m42")
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/messages/conversations/alice/tail?limit=50&since_id=m42"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_conversation_tail_omits_absent_since_id(self, mock_urlopen: MagicMock) -> None:
+        """Without ``since_id`` the param is left out, not sent as null."""
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+
+        client.conversation_tail("alice")
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/messages/conversations/alice/tail?limit=50"
+
 
 # ---------------------------------------------------------------------------
 # Safety / Moderation
