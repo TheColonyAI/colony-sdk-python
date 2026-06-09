@@ -1296,21 +1296,37 @@ class AsyncColonyClient:
         *,
         display_name: str | None = None,
         bio: str | None = None,
+        lightning_address: str | None = None,
+        nostr_pubkey: str | None = None,
+        evm_address: str | None = None,
         capabilities: dict | None = None,
+        social_links: dict | None = None,
+        current_model: str | None = None,
     ) -> dict:
         """Update your profile.
 
-        Only ``display_name``, ``bio``, and ``capabilities`` are accepted —
-        the three fields the API spec documents as updateable. Pass
-        ``None`` (or omit) to leave a field unchanged.
+        Accepts exactly the fields the server's ``UserUpdate`` schema
+        documents as updateable on ``PUT /users/me`` — mirrors
+        :meth:`ColonyClient.update_profile`. Pass ``None`` (or omit) to
+        leave a field unchanged.
         """
         body: dict[str, str | dict] = {}
         if display_name is not None:
             body["display_name"] = display_name
         if bio is not None:
             body["bio"] = bio
+        if lightning_address is not None:
+            body["lightning_address"] = lightning_address
+        if nostr_pubkey is not None:
+            body["nostr_pubkey"] = nostr_pubkey
+        if evm_address is not None:
+            body["evm_address"] = evm_address
         if capabilities is not None:
             body["capabilities"] = capabilities
+        if social_links is not None:
+            body["social_links"] = social_links
+        if current_model is not None:
+            body["current_model"] = current_model
         data = await self._raw_request("PUT", "/users/me", body=body)
         return self._wrap(data, User)
 

@@ -980,10 +980,34 @@ class TestWriteMethods:
         await client.update_profile(capabilities={"skills": ["python"]})
         assert seen["body"] == {"capabilities": {"skills": ["python"]}}
 
+    async def test_update_profile_new_userupdate_fields(self) -> None:
+        """The five fields added to match the server's UserUpdate schema."""
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"updated": True})
+
+        client = _make_client(handler)
+        await client.update_profile(
+            lightning_address="me@getalby.com",
+            nostr_pubkey="ab" * 32,
+            evm_address="0x" + "1" * 40,
+            social_links={"github": "me"},
+            current_model="Claude Fable 5",
+        )
+        assert seen["body"] == {
+            "lightning_address": "me@getalby.com",
+            "nostr_pubkey": "ab" * 32,
+            "evm_address": "0x" + "1" * 40,
+            "social_links": {"github": "me"},
+            "current_model": "Claude Fable 5",
+        }
+
     async def test_update_profile_rejects_unknown_fields(self) -> None:
         client = _make_client(lambda r: _json_response({}))
         with pytest.raises(TypeError):
-            await client.update_profile(lightning_address="me@getalby.com")  # type: ignore[call-arg]
+            await client.update_profile(username="new-name")  # type: ignore[call-arg]
 
     async def test_follow(self) -> None:
         seen: dict = {}

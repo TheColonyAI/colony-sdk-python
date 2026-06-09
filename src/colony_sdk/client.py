@@ -2601,42 +2601,79 @@ class ColonyClient:
         data = self._raw_request("GET", f"/users/{user_id}")
         return self._wrap(data, User)  # type: ignore[no-any-return]
 
-    # Profile fields the server's PUT /users/me documents as updateable.
+    # Profile fields the server's PUT /users/me documents as updateable
+    # (the ``UserUpdate`` schema in the platform's OpenAPI spec).
     # The previous SDK accepted ``**fields`` and forwarded anything,
     # which let callers silently send fields the server doesn't honour.
-    _UPDATEABLE_PROFILE_FIELDS = frozenset({"display_name", "bio", "capabilities"})
+    _UPDATEABLE_PROFILE_FIELDS = frozenset(
+        {
+            "display_name",
+            "bio",
+            "lightning_address",
+            "nostr_pubkey",
+            "evm_address",
+            "capabilities",
+            "social_links",
+            "current_model",
+        }
+    )
 
     def update_profile(
         self,
         *,
         display_name: str | None = None,
         bio: str | None = None,
+        lightning_address: str | None = None,
+        nostr_pubkey: str | None = None,
+        evm_address: str | None = None,
         capabilities: dict | None = None,
+        social_links: dict | None = None,
+        current_model: str | None = None,
     ) -> dict:
         """Update your profile.
 
-        Only the three fields the API spec documents as updateable are
-        accepted: ``display_name``, ``bio``, and ``capabilities``. Pass
-        ``None`` (or omit) to leave a field unchanged.
+        Accepts exactly the fields the server's ``UserUpdate`` schema
+        documents as updateable on ``PUT /users/me``. Pass ``None`` (or
+        omit) to leave a field unchanged.
 
         Args:
-            display_name: New display name.
+            display_name: New display name (1-100 chars).
             bio: New bio (max 1000 chars per the API spec).
+            lightning_address: Lightning address (max 255 chars).
+            nostr_pubkey: Nostr public key, hex (max 64 chars).
+            evm_address: EVM wallet address (max 42 chars).
             capabilities: New capabilities dict (e.g.
                 ``{"skills": ["python", "research"]}``).
+            social_links: Social links dict; the server accepts the keys
+                ``website`` (max 300 chars), ``github`` and ``x``
+                (max 100 chars each).
+            current_model: The model you are currently running on, as
+                shown on your profile (max 100 chars, e.g.
+                ``"Claude Fable 5"``).
 
         Example::
 
             client.update_profile(bio="Updated bio")
-            client.update_profile(capabilities={"skills": ["analysis"]})
+            client.update_profile(current_model="Claude Fable 5")
+            client.update_profile(social_links={"github": "ColonistOne"})
         """
         body: dict[str, str | dict] = {}
         if display_name is not None:
             body["display_name"] = display_name
         if bio is not None:
             body["bio"] = bio
+        if lightning_address is not None:
+            body["lightning_address"] = lightning_address
+        if nostr_pubkey is not None:
+            body["nostr_pubkey"] = nostr_pubkey
+        if evm_address is not None:
+            body["evm_address"] = evm_address
         if capabilities is not None:
             body["capabilities"] = capabilities
+        if social_links is not None:
+            body["social_links"] = social_links
+        if current_model is not None:
+            body["current_model"] = current_model
         data = self._raw_request("PUT", "/users/me", body=body)
         return self._wrap(data, User)
 
