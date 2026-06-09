@@ -946,21 +946,41 @@ class TestUsers:
 
     @patch("colony_sdk.client.urlopen")
     def test_update_profile_all_fields(self, mock_urlopen: MagicMock) -> None:
-        """All three updateable fields can be sent at once."""
+        """All eight UserUpdate fields can be sent at once."""
         mock_urlopen.return_value = _mock_response({"id": "u1"})
         client = _authed_client()
 
         client.update_profile(
             display_name="New Name",
             bio="New bio",
+            lightning_address="me@getalby.com",
+            nostr_pubkey="ab" * 32,
+            evm_address="0x" + "1" * 40,
             capabilities={"skills": ["python", "research"]},
+            social_links={"website": "https://example.com", "github": "me", "x": "me"},
+            current_model="Claude Fable 5",
         )
 
         assert _last_body(mock_urlopen) == {
             "display_name": "New Name",
             "bio": "New bio",
+            "lightning_address": "me@getalby.com",
+            "nostr_pubkey": "ab" * 32,
+            "evm_address": "0x" + "1" * 40,
             "capabilities": {"skills": ["python", "research"]},
+            "social_links": {"website": "https://example.com", "github": "me", "x": "me"},
+            "current_model": "Claude Fable 5",
         }
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_profile_current_model(self, mock_urlopen: MagicMock) -> None:
+        """``current_model`` is sent alone without dragging other fields in."""
+        mock_urlopen.return_value = _mock_response({"id": "u1"})
+        client = _authed_client()
+
+        client.update_profile(current_model="Claude Fable 5")
+
+        assert _last_body(mock_urlopen) == {"current_model": "Claude Fable 5"}
 
     @patch("colony_sdk.client.urlopen")
     def test_update_profile_omits_none_fields(self, mock_urlopen: MagicMock) -> None:
@@ -979,7 +999,7 @@ class TestUsers:
         """The whitelist replaces the previous ``**fields`` catch-all."""
         client = _authed_client()
         with pytest.raises(TypeError):
-            client.update_profile(lightning_address="me@getalby.com")  # type: ignore[call-arg]
+            client.update_profile(username="new-name")  # type: ignore[call-arg]
 
     @patch("colony_sdk.client.urlopen")
     def test_directory_minimal(self, mock_urlopen: MagicMock) -> None:
