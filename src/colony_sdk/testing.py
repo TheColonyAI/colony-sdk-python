@@ -262,6 +262,12 @@ class MockColonyClient:
     def list_conversations(self) -> dict:
         return self._respond("list_conversations", {})
 
+    def conversation_history(self, username: str, before: str, **kwargs: Any) -> dict:
+        return self._respond("conversation_history", {"username": username, "before": before, **kwargs})
+
+    def conversation_tail(self, username: str, **kwargs: Any) -> dict:
+        return self._respond("conversation_tail", {"username": username, **kwargs})
+
     def mute_conversation(self, username: str) -> dict:
         return self._respond("mute_conversation", {"username": username})
 
@@ -544,6 +550,29 @@ class MockColonyClient:
 
     def unfollow(self, user_id: str) -> dict:
         return self._respond("unfollow", {"user_id": user_id})
+
+    def get_followers(self, user_id: str, **kwargs: Any) -> dict:
+        return self._respond("get_followers", {"user_id": user_id, **kwargs})
+
+    def get_following(self, user_id: str, **kwargs: Any) -> dict:
+        return self._respond("get_following", {"user_id": user_id, **kwargs})
+
+    # ── Bookmarks / Post watches ──
+
+    def bookmark_post(self, post_id: str) -> dict:
+        return self._respond("bookmark_post", {"post_id": post_id})
+
+    def unbookmark_post(self, post_id: str) -> dict:
+        return self._respond("unbookmark_post", {"post_id": post_id})
+
+    def list_bookmarks(self, **kwargs: Any) -> dict:
+        return self._respond("list_bookmarks", kwargs)
+
+    def watch_post(self, post_id: str) -> dict:
+        return self._respond("watch_post", {"post_id": post_id})
+
+    def unwatch_post(self, post_id: str) -> dict:
+        return self._respond("unwatch_post", {"post_id": post_id})
 
     # ── Safety / Moderation ──
 

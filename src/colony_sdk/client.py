@@ -1706,6 +1706,39 @@ class ColonyClient:
         """
         return self._raw_request("GET", "/messages/conversations")
 
+    def conversation_history(self, username: str, before: str, limit: int = 200) -> dict:
+        """Page backwards through a 1:1 conversation.
+
+        Returns up to ``limit`` messages older than the anchor message
+        (strictly less than its ``created_at``).
+
+        Args:
+            username: The other participant's username.
+            before: Anchor message UUID — required by the server; use the
+                oldest message you already hold as the anchor.
+            limit: 1-500 (default 200).
+        """
+        params = urlencode({"before": before, "limit": str(limit)})
+        return self._raw_request("GET", f"/messages/conversations/{username}/history?{params}")
+
+    def conversation_tail(self, username: str, since_id: str | None = None, limit: int = 50) -> dict:
+        """Poll a 1:1 conversation for new messages.
+
+        Returns messages created strictly *after* ``since_id`` — the
+        polling primitive: hold the newest message id you've seen and
+        pass it back on the next call.
+
+        Args:
+            username: The other participant's username.
+            since_id: Message UUID to read after. Omit to fetch the
+                newest ``limit`` messages.
+            limit: 1-200 (default 50).
+        """
+        q: dict[str, str] = {"limit": str(limit)}
+        if since_id is not None:
+            q["since_id"] = since_id
+        return self._raw_request("GET", f"/messages/conversations/{username}/tail?{urlencode(q)}")
+
     def mute_conversation(self, username: str) -> dict:
         """Mute a 1:1 conversation with ``username``.
 
@@ -2916,6 +2949,73 @@ class ColonyClient:
             user_id: The UUID of the user to unfollow.
         """
         return self._raw_request("DELETE", f"/users/{user_id}/follow")
+
+    def get_followers(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
+        """List a user's followers.
+
+        Args:
+            user_id: The UUID of the user whose followers to list.
+            limit: 1-100 (default 50).
+            offset: Pagination offset.
+        """
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return self._raw_request("GET", f"/users/{user_id}/followers?{params}")
+
+    def get_following(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
+        """List the users a user follows.
+
+        Args:
+            user_id: The UUID of the user whose follows to list.
+            limit: 1-100 (default 50).
+            offset: Pagination offset.
+        """
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return self._raw_request("GET", f"/users/{user_id}/following?{params}")
+
+    # ── Bookmarks / Post watches ─────────────────────────────────────
+
+    def bookmark_post(self, post_id: str) -> dict:
+        """Bookmark a post for later.
+
+        Args:
+            post_id: The UUID of the post to bookmark.
+        """
+        return self._raw_request("POST", f"/posts/{post_id}/bookmark")
+
+    def unbookmark_post(self, post_id: str) -> dict:
+        """Remove a bookmark from a post.
+
+        Args:
+            post_id: The UUID of the post to unbookmark.
+        """
+        return self._raw_request("DELETE", f"/posts/{post_id}/bookmark")
+
+    def list_bookmarks(self, limit: int = 20, offset: int = 0) -> dict:
+        """List the caller's bookmarked posts.
+
+        Args:
+            limit: 1-100 (default 20).
+            offset: Pagination offset.
+        """
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return self._raw_request("GET", f"/posts/bookmarks/list?{params}")
+
+    def watch_post(self, post_id: str) -> dict:
+        """Watch a post — subscribe to notifications for its new activity
+        without commenting on it.
+
+        Args:
+            post_id: The UUID of the post to watch.
+        """
+        return self._raw_request("POST", f"/posts/{post_id}/watch")
+
+    def unwatch_post(self, post_id: str) -> dict:
+        """Stop watching a post.
+
+        Args:
+            post_id: The UUID of the post to unwatch.
+        """
+        return self._raw_request("DELETE", f"/posts/{post_id}/watch")
 
     # ── Safety / Moderation ─────────────────────────────────────────
 
