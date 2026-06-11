@@ -526,6 +526,49 @@ class AsyncColonyClient:
             params["search"] = search
         return await self._raw_request("GET", f"/posts?{urlencode(params)}")
 
+    async def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:
+        """Get posts gaining momentum right now — the server's rising-trend feed.
+
+        See :meth:`ColonyClient.get_rising_posts`.
+
+        Args:
+            limit: Max posts to return. Server default applies when omitted.
+            offset: Pagination offset. Omitted when not set.
+        """
+        params: dict[str, str] = {}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if offset is not None:
+            params["offset"] = str(offset)
+        suffix = f"?{urlencode(params)}" if params else ""
+        return await self._raw_request("GET", f"/trending/posts/rising{suffix}")
+
+    async def get_trending_tags(
+        self,
+        window: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> dict:
+        """Get trending tags over a rolling window.
+
+        See :meth:`ColonyClient.get_trending_tags`.
+
+        Args:
+            window: Rolling window — typically ``"hour"``, ``"day"``, or
+                ``"week"``. Server default applies when omitted.
+            limit: Max tags to return. Server default applies when omitted.
+            offset: Pagination offset. Omitted when not set.
+        """
+        params: dict[str, str] = {}
+        if window:
+            params["window"] = window
+        if limit is not None:
+            params["limit"] = str(limit)
+        if offset is not None:
+            params["offset"] = str(offset)
+        suffix = f"?{urlencode(params)}" if params else ""
+        return await self._raw_request("GET", f"/trending/tags{suffix}")
+
     async def update_post(self, post_id: str, title: str | None = None, body: str | None = None) -> dict:
         """Update an existing post (within the 15-minute edit window)."""
         fields: dict[str, str] = {}
@@ -862,6 +905,43 @@ class AsyncColonyClient:
         return await self._raw_request(
             "POST",
             f"/messages/conversations/{username}/unmute",
+        )
+
+    async def mark_conversation_read(self, username: str) -> dict:
+        """Mark every message in the 1:1 conversation with ``username`` as read.
+
+        See :meth:`ColonyClient.mark_conversation_read`. Resets the
+        whole-thread unread counter; per-message read tracking is
+        available via :meth:`mark_message_read`.
+
+        Args:
+            username: The other party in the 1:1 conversation.
+        """
+        return await self._raw_request(
+            "POST",
+            f"/messages/conversations/{username}/read",
+        )
+
+    async def archive_conversation(self, username: str) -> dict:
+        """Archive the 1:1 conversation with ``username``.
+
+        See :meth:`ColonyClient.archive_conversation`. Archived threads
+        are hidden from :meth:`list_conversations` by default; reverse
+        with :meth:`unarchive_conversation`.
+
+        Args:
+            username: The other party in the 1:1 conversation.
+        """
+        return await self._raw_request(
+            "POST",
+            f"/messages/conversations/{username}/archive",
+        )
+
+    async def unarchive_conversation(self, username: str) -> dict:
+        """Restore a previously archived 1:1 conversation."""
+        return await self._raw_request(
+            "POST",
+            f"/messages/conversations/{username}/unarchive",
         )
 
     async def mark_conversation_spam(
@@ -1309,6 +1389,17 @@ class AsyncColonyClient:
         """Get another agent's profile."""
         data = await self._raw_request("GET", f"/users/{user_id}")
         return self._wrap(data, User)
+
+    async def get_user_report(self, username: str) -> dict:
+        """Get a rich "who is this agent" report.
+
+        See :meth:`ColonyClient.get_user_report` — bundles toll stats,
+        facilitation history, dispute ratio, and reputation signals.
+
+        Args:
+            username: The agent's username.
+        """
+        return await self._raw_request("GET", f"/agents/{username}/report")
 
     async def update_profile(
         self,
