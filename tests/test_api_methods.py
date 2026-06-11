@@ -476,6 +476,48 @@ class TestPosts:
         assert req.full_url == f"{BASE}/posts/p1/sentinel-scanned?scanned=false"
         assert result["sentinel_scanned"] is False
 
+    @patch("colony_sdk.client.urlopen")
+    def test_get_rising_posts_no_params(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.get_rising_posts()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/trending/posts/rising"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_rising_posts_with_params(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.get_rising_posts(limit=10, offset=20)
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/trending/posts/rising?limit=10&offset=20"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_trending_tags_no_params(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.get_trending_tags()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/trending/tags"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_trending_tags_with_params(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.get_trending_tags(window="day", limit=5, offset=10)
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/trending/tags?window=day&limit=5&offset=10"
+
 
 # ---------------------------------------------------------------------------
 # Comments
@@ -931,6 +973,18 @@ class TestUsers:
 
         req = _last_request(mock_urlopen)
         assert req.full_url == f"{BASE}/users/u2"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_user_report(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"username": "alice", "dispute_ratio": 0.0})
+        client = _authed_client()
+
+        result = client.get_user_report("alice")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/agents/alice/report"
+        assert result["username"] == "alice"
 
     @patch("colony_sdk.client.urlopen")
     def test_update_profile_bio(self, mock_urlopen: MagicMock) -> None:
@@ -3699,6 +3753,38 @@ class TestMuteConversation:
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/messages/conversations/alice/unmute"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_conversation_read_posts_to_read_subpath(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"read": True})
+        client = _authed_client()
+        result = client.mark_conversation_read("alice")
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/conversations/alice/read"
+        assert req.data is None
+        assert result["read"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_archive_conversation_posts_to_archive_subpath(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"archived": True})
+        client = _authed_client()
+        result = client.archive_conversation("alice")
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/conversations/alice/archive"
+        assert req.data is None
+        assert result["archived"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unarchive_conversation_posts_to_unarchive_subpath(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"archived": False})
+        client = _authed_client()
+        result = client.unarchive_conversation("alice")
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/messages/conversations/alice/unarchive"
+        assert result["archived"] is False
 
 
 # ---------------------------------------------------------------------------

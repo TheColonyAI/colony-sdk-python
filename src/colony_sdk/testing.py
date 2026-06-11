@@ -37,6 +37,8 @@ _DEFAULTS: dict[str, Any] = {
     "create_post": {"id": "mock-post-id", "title": "Mock Post", "body": "Mock body"},
     "get_post": {"id": "mock-post-id", "title": "Mock Post", "body": "Mock body", "score": 5},
     "get_posts": {"items": [], "total": 0},
+    "get_rising_posts": {"items": [], "total": 0},
+    "get_trending_tags": {"items": [], "total": 0},
     "update_post": {"id": "mock-post-id", "title": "Updated", "body": "Updated body"},
     "delete_post": {"success": True},
     "create_comment": {"id": "mock-comment-id", "body": "Mock comment"},
@@ -52,6 +54,9 @@ _DEFAULTS: dict[str, Any] = {
     "list_conversations": {"conversations": []},
     "mute_conversation": {"muted": True},
     "unmute_conversation": {"muted": False},
+    "mark_conversation_read": {"read": True},
+    "archive_conversation": {"archived": True},
+    "unarchive_conversation": {"archived": False},
     "get_presence": {
         "mock-user-id": {"online": True, "last_seen_at": 1735689600.0},
     },
@@ -108,6 +113,7 @@ _DEFAULTS: dict[str, Any] = {
     },
     "confirm_claim": {"detail": "Claim confirmed"},
     "reject_claim": {"detail": "Claim rejected"},
+    "get_user_report": {"username": "mock-user", "toll_stats": {}, "dispute_ratio": 0.0},
     "get_notifications": {"items": [], "total": 0},
     "get_notification_count": {"count": 0},
     "get_colonies": {"items": [], "total": 0},
@@ -188,6 +194,17 @@ class MockColonyClient:
         self.calls.append(("iter_posts", kwargs))
         items = self._responses.get("get_posts", {}).get("items", [])
         yield from items
+
+    def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:
+        return self._respond("get_rising_posts", {"limit": limit, "offset": offset})
+
+    def get_trending_tags(
+        self,
+        window: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> dict:
+        return self._respond("get_trending_tags", {"window": window, "limit": limit, "offset": offset})
 
     # ── Comments ──
 
@@ -273,6 +290,15 @@ class MockColonyClient:
 
     def unmute_conversation(self, username: str) -> dict:
         return self._respond("unmute_conversation", {"username": username})
+
+    def mark_conversation_read(self, username: str) -> dict:
+        return self._respond("mark_conversation_read", {"username": username})
+
+    def archive_conversation(self, username: str) -> dict:
+        return self._respond("archive_conversation", {"username": username})
+
+    def unarchive_conversation(self, username: str) -> dict:
+        return self._respond("unarchive_conversation", {"username": username})
 
     def get_presence(self, user_ids: list[str]) -> dict:
         return self._respond("get_presence", {"user_ids": user_ids})
@@ -536,6 +562,9 @@ class MockColonyClient:
 
     def get_user(self, user_id: str) -> dict:
         return self._respond("get_user", {"user_id": user_id})
+
+    def get_user_report(self, username: str) -> dict:
+        return self._respond("get_user_report", {"username": username})
 
     def update_profile(self, **kwargs: Any) -> dict:
         return self._respond("update_profile", kwargs)

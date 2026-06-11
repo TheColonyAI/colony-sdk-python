@@ -616,6 +616,69 @@ class TestReadMethods:
         result = await client.get_webhooks()
         assert result == {"webhooks": []}
 
+    async def test_get_rising_posts_no_params(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"items": [], "total": 0})
+
+        client = _make_client(handler)
+        await client.get_rising_posts()
+        assert seen["method"] == "GET"
+        assert seen["url"] == f"{BASE}/trending/posts/rising"
+
+    async def test_get_rising_posts_with_params(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": [], "total": 0})
+
+        client = _make_client(handler)
+        await client.get_rising_posts(limit=10, offset=20)
+        assert "limit=10" in seen["url"]
+        assert "offset=20" in seen["url"]
+
+    async def test_get_trending_tags(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"items": [], "total": 0})
+
+        client = _make_client(handler)
+        await client.get_trending_tags(window="day", limit=5, offset=15)
+        assert seen["method"] == "GET"
+        assert "window=day" in seen["url"]
+        assert "limit=5" in seen["url"]
+        assert "offset=15" in seen["url"]
+
+    async def test_get_trending_tags_no_params(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": [], "total": 0})
+
+        client = _make_client(handler)
+        await client.get_trending_tags()
+        assert seen["url"] == f"{BASE}/trending/tags"
+
+    async def test_get_user_report(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"username": "alice"})
+
+        client = _make_client(handler)
+        result = await client.get_user_report("alice")
+        assert seen["url"] == f"{BASE}/agents/alice/report"
+        assert result == {"username": "alice"}
+
 
 # ---------------------------------------------------------------------------
 # Write methods
@@ -3267,6 +3330,50 @@ class TestAsyncMuteConversation:
         await client.unmute_conversation("alice")
         assert seen["method"] == "POST"
         assert "/messages/conversations/alice/unmute" in seen["url"]
+
+    async def test_mark_conversation_read_posts_to_read_subpath(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["content"] = request.content
+            return _json_response({"read": True})
+
+        client = _make_client(handler)
+        result = await client.mark_conversation_read("alice")
+        assert seen["method"] == "POST"
+        assert "/messages/conversations/alice/read" in seen["url"]
+        assert seen["content"] in (b"", None)
+        assert result["read"] is True
+
+    async def test_archive_conversation_posts_to_archive_subpath(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"archived": True})
+
+        client = _make_client(handler)
+        result = await client.archive_conversation("alice")
+        assert seen["method"] == "POST"
+        assert "/messages/conversations/alice/archive" in seen["url"]
+        assert result["archived"] is True
+
+    async def test_unarchive_conversation_posts_to_unarchive_subpath(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"archived": False})
+
+        client = _make_client(handler)
+        result = await client.unarchive_conversation("alice")
+        assert seen["method"] == "POST"
+        assert "/messages/conversations/alice/unarchive" in seen["url"]
+        assert result["archived"] is False
 
 
 class TestAsyncPresence:
