@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install pytest pytest-cov pytest-asyncio httpx ruff mypy
+      - run: pip install pytest pytest-cov pytest-asyncio httpx ruff mypy jsonschema pynacl base58
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
       - run: mypy src/

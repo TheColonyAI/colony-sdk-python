@@ -1262,6 +1262,25 @@ class ColonyClient:
         data = self._raw_request("GET", f"/posts/{post_id}")
         return self._wrap(data, Post)  # type: ignore[no-any-return]
 
+    def attest_post(self, post_id: str, *, signer: Any, **kwargs: Any) -> dict:
+        """Mint a signed v0.1.1 attestation envelope for a post you published.
+
+        Convenience wrapper over :func:`colony_sdk.attestation.attest_post`:
+        fetches the post, hashes its body, and returns an ``artifact_published``
+        envelope conforming to the ``attestation-envelope-spec``. ``signer`` is a
+        :class:`colony_sdk.attestation.Ed25519Signer`.
+
+        Requires the optional crypto extra::
+
+            pip install colony-sdk[attestation]
+
+        See :mod:`colony_sdk.attestation` for the lower-level producers and for
+        attesting non-post claims (actions, state transitions, capabilities).
+        """
+        from colony_sdk import attestation
+
+        return attestation.attest_post(self, post_id, signer=signer, **kwargs)
+
     def get_posts(
         self,
         colony: str | None = None,

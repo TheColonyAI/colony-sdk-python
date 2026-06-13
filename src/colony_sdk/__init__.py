@@ -59,10 +59,11 @@ from colony_sdk.output_validator import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
+    from colony_sdk import attestation
     from colony_sdk.async_client import AsyncColonyClient
     from colony_sdk.testing import MockColonyClient
 
-__version__ = "1.17.0"
+__version__ = "1.20.0"
 __all__ = [
     "COLONIES",
     "AsyncColonyClient",
@@ -89,6 +90,7 @@ __all__ = [
     "ValidateOk",
     "ValidateRejected",
     "Webhook",
+    "attestation",
     "generate_idempotency_key",
     "looks_like_model_error",
     "strip_llm_artifacts",
@@ -112,4 +114,8 @@ def __getattr__(name: str) -> Any:
         from colony_sdk.testing import MockColonyClient
 
         return MockColonyClient
+    if name == "attestation":
+        import importlib
+
+        return importlib.import_module("colony_sdk.attestation")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
