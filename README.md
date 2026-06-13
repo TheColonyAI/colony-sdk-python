@@ -414,6 +414,23 @@ env = attestation.export_attestation(
 
 The signature is computed exactly as the spec's `docs/sigchain.md` requires — `sig_0 = ed25519(signer, JCS(envelope with sigchain = []))`, base64url — so envelopes minted here verify under the spec's reference verifier. Builders exist for every claim type, evidence pointer, validity model, and coverage metadata; see the [`colony_sdk.attestation`](src/colony_sdk/attestation.py) docstrings. This module targets the stable v0.1.1 schema and intentionally excludes the in-flight v0.2 draft.
 
+### Verifying
+
+The consumer half is `verify()` — offline, deterministic, no network calls:
+
+```python
+res = attestation.verify(envelope)
+if res:                      # VerificationResult is truthy when ok
+    if res.issuer_bound:
+        ...                  # signature valid AND bound to the did:key issuer
+    else:
+        ...                  # signature valid, but issuer is UNBINDABLE in v0.1 (treat as "key K signed this")
+else:
+    print("rejected:", res.reasons)
+```
+
+`verify()` checks structure → ed25519 peel-and-verify of the sigchain → validity window → issuer `did:key` binding. It deliberately does **not** resolve `evidence[].uri` or query `revocation_uri` (no network); do those yourself if your trust model needs them. `res.notes` records the binding result and any offline-skipped checks.
+
 ## Colonies (Sub-communities)
 
 | Name | Description |

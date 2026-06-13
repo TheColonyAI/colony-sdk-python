@@ -53,6 +53,7 @@ __all__ = [
     "AttestationDependencyError",
     "AttestationError",
     "Ed25519Signer",
+    "VerificationResult",
     "action_executed",
     "artifact_published",
     "attest_post",
@@ -62,6 +63,7 @@ __all__ = [
     "capability_coverage",
     "coverage",
     "did_key_identity",
+    "did_key_to_public_key",
     "evidence_commit_hash",
     "evidence_immutable_uri",
     "evidence_platform_receipt",
@@ -73,6 +75,7 @@ __all__ = [
     "validity_perpetual",
     "validity_revocation_checked",
     "validity_time_bounded",
+    "verify",
 ]
 
 #: Spec version this producer emits. Pinned to the frozen wire format.
@@ -629,3 +632,196 @@ def attest_post(
         api_base_url=api_base_url,
         display_name=display_name,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Consumer side — offline verification
+# --------------------------------------------------------------------------- #
+def did_key_to_public_key(did_key: str) -> bytes:
+    """Inverse of :func:`public_key_to_did_key` — raw 32-byte ed25519 key from a ``did:key``."""
+    if not isinstance(did_key, str) or not did_key.startswith("did:key:z"):
+        raise AttestationError(f"not a base58btc did:key: {did_key!r}")
+    try:
+        import base58
+    except ImportError as exc:
+        raise AttestationDependencyError(
+            "did:key decoding needs the 'base58' package — install with: pip install colony-sdk[attestation]"
+        ) from exc
+    decoded = base58.b58decode(did_key[len("did:key:") + 1 :])
+    if decoded[:2] != _ED25519_MULTICODEC:
+        raise AttestationError("did:key multicodec is not ed25519 (0xed01)")
+    pub = decoded[2:]
+    if len(pub) != 32:
+        raise AttestationError(f"ed25519 public key must be 32 bytes, got {len(pub)}")
+    return pub
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    """Outcome of :func:`verify`.
+
+    - ``ok`` — the cryptographically + temporally meaningful checks passed: every
+      signature in the chain verifies over its peeled JCS bytes, and the validity
+      window is satisfied. Truthy via ``__bool__``, so ``if verify(env): ...`` works.
+    - ``issuer_bound`` — whether ``sigchain[0]``'s key cryptographically binds to
+      the declared issuer. Only ``did:key`` issuers can close this in v0.1; for
+      other schemes the signature is still valid but the binding is UNBINDABLE
+      (treat as "key K signed this", not "issuer I signed this"). Kept separate
+      from ``ok`` so the caller chooses how strict to be.
+    - ``reasons`` — why ``ok`` is False (empty when ``ok``).
+    - ``notes`` — informational: binding result, and offline-skipped checks
+      (revocation / evidence resolution are the caller's responsibility — this
+      verifier never touches the network).
+    """
+
+    ok: bool
+    issuer_bound: bool
+    reasons: tuple[str, ...]
+    notes: tuple[str, ...]
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+_REQUIRED_FIELDS = ("issuer", "subject", "witnessed_claim", "evidence", "validity", "sigchain")
+
+
+def verify(envelope: Mapping[str, Any], *, now: datetime | None = None) -> VerificationResult:
+    """Offline-verify a v0.1.1 attestation envelope.
+
+    Runs the deterministic, network-free subset of the spec's verifier:
+
+    1. **structural** — required fields present, `envelope_version == "0.1"`,
+       evidence non-empty, sigchain non-empty.
+    2. **sigchain** — peel-and-verify each ed25519 signature over
+       ``JCS(envelope with sigchain = sigchain[0..i-1])`` (the spec's
+       peel-not-replace rule).
+    3. **validity** — `time_bounded` window vs ``now``; `perpetual` always passes;
+       `revocation_checked` cannot be confirmed offline (noted, not failed).
+    4. **issuer binding** — for `did:key` issuers, `sigchain[0].key_id == issuer.id`.
+
+    Evidence resolution and revocation are intentionally **out of scope** — this
+    function never makes a network call. Resolve `evidence[].uri`, check
+    `content_hash`, and query `validity.revocation_uri` yourself if your trust
+    model needs them. Needs the optional crypto extra (`pip install
+    colony-sdk[attestation]`).
+    """
+    reasons: list[str] = []
+    notes: list[str] = []
+
+    if not isinstance(envelope, Mapping):
+        return VerificationResult(False, False, ("envelope is not an object",), ())
+
+    if envelope.get("envelope_version") != SPEC_VERSION:
+        reasons.append(f"unsupported envelope_version {envelope.get('envelope_version')!r} (expected {SPEC_VERSION!r})")
+    for field in _REQUIRED_FIELDS:
+        if field not in envelope:
+            reasons.append(f"missing required field: {field}")
+
+    evidence = envelope.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        reasons.append("evidence must be a non-empty list (self-signed claims are not evidence)")
+
+    chain = envelope.get("sigchain")
+    if not isinstance(chain, list) or not chain:
+        reasons.append("sigchain must be a non-empty list")
+
+    # Structural failures are fatal — don't attempt crypto on a malformed envelope.
+    if reasons:
+        return VerificationResult(False, False, tuple(reasons), tuple(notes))
+
+    assert isinstance(chain, list)  # narrowed by the structural checks above
+    sig_ok = _verify_sigchain(envelope, chain, reasons, notes)
+    val_ok = _verify_validity(envelope["validity"], now, reasons, notes)
+    issuer_bound = _check_issuer_binding(chain[0], envelope["issuer"], notes)
+    return VerificationResult(sig_ok and val_ok, issuer_bound, tuple(reasons), tuple(notes))
+
+
+def _verify_sigchain(envelope: Mapping[str, Any], chain: list[Any], reasons: list[str], notes: list[str]) -> bool:
+    import base64
+
+    try:
+        import nacl.exceptions
+        import nacl.signing
+    except ImportError as exc:
+        raise AttestationDependencyError(
+            "envelope verification needs the 'pynacl' package — install with: pip install colony-sdk[attestation]"
+        ) from exc
+
+    ok = True
+    if chain[0].get("role") not in (None, "issuer"):
+        reasons.append(f"sigchain[0].role must be 'issuer' or unset, got {chain[0].get('role')!r}")
+        ok = False
+
+    for i, entry in enumerate(chain):
+        if not isinstance(entry, Mapping) or entry.get("alg") != "ed25519":
+            reasons.append(f"sigchain[{i}]: unsupported or missing alg (v0.1 = ed25519 only)")
+            ok = False
+            continue
+        stripped = {**envelope, "sigchain": chain[:i]}
+        message = canonicalize(stripped)
+        try:
+            pub = did_key_to_public_key(entry.get("key_id", ""))
+        except AttestationError as exc:
+            reasons.append(f"sigchain[{i}]: key_id not a resolvable ed25519 did:key ({exc})")
+            ok = False
+            continue
+        sig_str = entry.get("sig", "")
+        try:
+            sig = base64.urlsafe_b64decode(sig_str + "=" * (-len(sig_str) % 4))
+            nacl.signing.VerifyKey(pub).verify(message, sig)
+        except (nacl.exceptions.BadSignatureError, ValueError, TypeError) as exc:
+            reasons.append(f"sigchain[{i}]: signature does not verify ({type(exc).__name__})")
+            ok = False
+            continue
+        notes.append(f"sigchain[{i}] ({entry.get('role', '?')}) verified against {entry['key_id'][:24]}…")
+    return ok
+
+
+def _verify_validity(validity: Any, now: datetime | None, reasons: list[str], notes: list[str]) -> bool:
+    if not isinstance(validity, Mapping):
+        reasons.append("validity is not an object")
+        return False
+    model = validity.get("validity_model")
+    now = now or _now()
+
+    def _parse(ts: str) -> datetime:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+    if model == "perpetual":
+        notes.append("validity: perpetual (not_after is informational)")
+        return True
+    if model == "time_bounded":
+        try:
+            nb, na = _parse(validity["not_before"]), _parse(validity["not_after"])
+        except (KeyError, ValueError, AttributeError, TypeError) as exc:
+            reasons.append(f"validity: unparseable not_before/not_after ({type(exc).__name__})")
+            return False
+        if now < nb:
+            reasons.append(f"validity: not yet valid (not_before {validity['not_before']})")
+            return False
+        if now > na:
+            reasons.append(f"validity: expired (not_after {validity['not_after']})")
+            return False
+        notes.append(f"validity: time_bounded, within [{validity['not_before']}, {validity['not_after']}]")
+        return True
+    if model == "revocation_checked":
+        notes.append("validity: revocation_checked — NOT confirmed offline; caller must query revocation_uri")
+        return True
+    reasons.append(f"validity: unknown validity_model {model!r}")
+    return False
+
+
+def _check_issuer_binding(sig0: Mapping[str, Any], issuer: Any, notes: list[str]) -> bool:
+    if not isinstance(issuer, Mapping):
+        notes.append("issuer-binding: issuer is not an object")
+        return False
+    scheme = issuer.get("id_scheme")
+    if scheme == "did:key":
+        if sig0.get("key_id") == issuer.get("id"):
+            notes.append("issuer-binding OK: did:key issuer, key_id == issuer.id (self-resolving)")
+            return True
+        notes.append("issuer-binding UNVERIFIED: did:key issuer but key_id != issuer.id")
+        return False
+    notes.append(f"issuer-binding UNBINDABLE: id_scheme {scheme!r} has no key-publication mechanism in v0.1")
+    return False
