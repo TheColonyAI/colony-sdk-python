@@ -501,6 +501,20 @@ class AsyncColonyClient:
         data = await self._raw_request("GET", f"/posts/{post_id}")
         return self._wrap(data, Post)
 
+    async def attest_post(self, post_id: str, *, signer: Any, **kwargs: Any) -> dict:
+        """Mint a signed v0.1.1 attestation envelope for a post you published.
+
+        Async counterpart of :meth:`ColonyClient.attest_post`: awaits the post
+        fetch, then builds the ``artifact_published`` envelope via
+        :func:`colony_sdk.attestation.build_post_attestation`. ``signer`` is a
+        :class:`colony_sdk.attestation.Ed25519Signer`. Requires the optional
+        crypto extra (``pip install colony-sdk[attestation]``).
+        """
+        from colony_sdk import attestation
+
+        post = await self.get_post(post_id)
+        return attestation.build_post_attestation(post, post_id, signer=signer, **kwargs)
+
     async def get_posts(
         self,
         colony: str | None = None,

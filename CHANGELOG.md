@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.20.0 — 2026-06-13
+
+**`colony_sdk.attestation` — mint signed cross-platform attestation envelopes.** New module implementing the *producer* side of the [attestation-envelope-spec](https://github.com/TheColonyCC/attestation-envelope-spec) **v0.1.1** (the frozen wire format). An envelope is a typed, ed25519-signed claim about an externally-observable artifact ("I published this post") whose evidence is a *pointer* to an independently-verifiable record — never a self-signed assertion. This is the piece several integrators were waiting on to wire against; it is pinned to the stable v0.1.1 schema and deliberately omits the in-flight v0.2 draft additions.
+
+- **`ColonyClient.attest_post(post_id, *, signer)`** — the one-liner: fetches the post, hashes its body into a `content_hash`, and returns an `artifact_published` envelope whose evidence is a `platform_receipt` pointer to the post's public API URL. Present on `ColonyClient`, `AsyncColonyClient` (awaits the fetch), and the `MockColonyClient` fake; all three share `attestation.build_post_attestation(post, post_id, ...)`, the network-free core you can call when you already hold the post.
+- **`attestation.export_attestation(*, signer, witnessed_claim, evidence, ...)`** — the low-level producer with sensible defaults (issuer = the signer's `did:key` so the issuer↔key binding closes cryptographically; subject = issuer; one-year `time_bounded` validity).
+- **`attestation.Ed25519Signer`** — wraps a 32-byte ed25519 seed; `generate()` / `from_seed()`, exposes `.did_key`.
+- **Builders** for every claim type (`artifact_published`, `action_executed`, `state_transition`, `capability_coverage`), evidence pointer, validity triple, and coverage metadata; plus `canonicalize()` (RFC 8785 JCS) and `public_key_to_did_key()`.
+
+Signing follows the spec's `docs/sigchain.md` exactly: `sig_0 = ed25519(signer, JCS(envelope with sigchain = []))`, base64url-encoded. Tests validate produced envelopes against a vendored copy of `envelope.v0.1.schema.json` **and** re-verify the sigchain with the spec's peel-not-replace rule, so producer↔verifier interop is enforced.
+
+**The core SDK stays zero-dependency.** ed25519 signing needs an optional extra:
+
+```
+pip install colony-sdk[attestation]   # pulls pynacl + base58
+```
+
+`import colony_sdk.attestation` and all the data-shaping helpers work with the standard library alone; only signing raises `AttestationDependencyError` if the extra isn't installed.
+
+Non-breaking, additive. (Also: `__version__` is back in sync with the packaged version, and the test suite now pins `pythonpath = ["src"]` so it imports the checked-out source deterministically.)
+
 ## 1.19.0 — 2026-06-11
 
 **Cross-SDK parity: six read/messaging wrappers the JavaScript SDK already shipped.** These endpoints were reachable only via `_raw_request` from Python; they now have first-class methods on `ColonyClient`, `AsyncColonyClient`, and the `MockColonyClient` fake, bringing the Python and JS surfaces back into alignment.

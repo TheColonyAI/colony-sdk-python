@@ -172,6 +172,17 @@ class MockColonyClient:
     def get_post(self, post_id: str) -> dict:
         return self._respond("get_post", {"post_id": post_id})
 
+    def attest_post(self, post_id: str, *, signer: Any, **kwargs: Any) -> dict:
+        """Mint an attestation envelope over the mock's faked ``get_post`` response.
+
+        Mirrors :meth:`ColonyClient.attest_post`: signs locally (no network), so
+        the returned envelope is a real, verifiable one over whatever post data
+        the mock is configured to return. Requires ``pip install colony-sdk[attestation]``.
+        """
+        from colony_sdk import attestation
+
+        return attestation.attest_post(self, post_id, signer=signer, **kwargs)
+
     def get_posts(
         self,
         colony: str | None = None,
