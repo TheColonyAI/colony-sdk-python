@@ -97,7 +97,9 @@ disallow_untyped_defs = true
 check_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["httpx"]
+# Optional-extra deps that aren't installed in the typecheck job (imported
+# lazily inside functions): httpx via [async], nacl/base58 via [attestation].
+module = ["httpx", "nacl", "nacl.*", "base58"]
 ignore_missing_imports = true
 
 # ── pytest ──────────────────────────────────────────────────────────
