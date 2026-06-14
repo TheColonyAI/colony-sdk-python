@@ -411,3 +411,226 @@ async def test_async_client_attest_post():
 
     assert env["witnessed_claim"]["content_hash"] == "sha256:" + hashlib.sha256(b"async body").hexdigest()
     assert env["witnessed_claim"]["artifact_uri"] == "https://thecolony.cc/post/abc"
+
+
+# --------------------------------------------------------------------------- #
+# verify() — the offline consumer
+# --------------------------------------------------------------------------- #
+def _valid_env(**kw):
+    signer = Ed25519Signer.from_seed(FIXED_SEED)
+    return attestation.export_attestation(
+        signer=signer,
+        witnessed_claim=attestation.artifact_published("https://x/y", "sha256:" + "0" * 64),
+        evidence=[attestation.evidence_immutable_uri("https://x/y")],
+        **kw,
+    )
+
+
+def test_verify_accepts_valid_self_attestation():
+    res = attestation.verify(_valid_env())
+    assert res.ok and bool(res) is True
+    assert res.issuer_bound is True
+    assert res.reasons == ()
+    assert any("verified against" in n for n in res.notes)
+
+
+def test_verify_rejects_non_object():
+    res = attestation.verify(["not", "an", "envelope"])  # type: ignore[arg-type]
+    assert not res.ok and res.reasons == ("envelope is not an object",)
+
+
+def test_verify_rejects_wrong_version():
+    env = _valid_env()
+    env["envelope_version"] = "9.9"
+    res = attestation.verify(env)
+    assert not res.ok and any("envelope_version" in r for r in res.reasons)
+
+
+def test_verify_rejects_missing_field():
+    env = _valid_env()
+    del env["validity"]
+    res = attestation.verify(env)
+    assert not res.ok and any("missing required field: validity" in r for r in res.reasons)
+
+
+def test_verify_rejects_empty_evidence():
+    env = _valid_env()
+    env["evidence"] = []
+    res = attestation.verify(env)
+    assert not res.ok and any("evidence must be a non-empty list" in r for r in res.reasons)
+
+
+def test_verify_rejects_empty_sigchain():
+    env = _valid_env()
+    env["sigchain"] = []
+    res = attestation.verify(env)
+    assert not res.ok and any("sigchain must be a non-empty list" in r for r in res.reasons)
+
+
+def test_verify_rejects_tampered_payload():
+    env = _valid_env()
+    import base64
+
+    env["sigchain"][0]["sig"] = base64.urlsafe_b64encode(b"\x00" * 64).rstrip(b"=").decode()
+    res = attestation.verify(env)
+    assert not res.ok and any("does not verify" in r for r in res.reasons)
+
+
+def test_verify_rejects_bad_sig_encoding():
+    env = _valid_env()
+    env["sigchain"][0]["sig"] = "@@@@not-base64@@@@"
+    res = attestation.verify(env)
+    assert not res.ok and any("does not verify" in r for r in res.reasons)
+
+
+def test_verify_rejects_bad_alg():
+    env = _valid_env()
+    env["sigchain"][0]["alg"] = "rsa"
+    res = attestation.verify(env)
+    assert not res.ok and any("unsupported or missing alg" in r for r in res.reasons)
+
+
+def test_verify_rejects_bad_role_on_issuer_sig():
+    env = _valid_env()
+    env["sigchain"][0]["role"] = "custodian"
+    res = attestation.verify(env)
+    assert not res.ok and any("role must be 'issuer'" in r for r in res.reasons)
+
+
+def test_verify_rejects_non_did_key_key_id():
+    env = _valid_env()
+    env["sigchain"][0]["key_id"] = "not-a-did-key"
+    res = attestation.verify(env)
+    assert not res.ok and any("not a resolvable ed25519 did:key" in r for r in res.reasons)
+
+
+def test_verify_perpetual_ok():
+    env = _valid_env(validity=attestation.validity_perpetual(datetime(2026, 1, 1), datetime(2030, 1, 1)))
+    res = attestation.verify(env)
+    assert res.ok and any("perpetual" in n for n in res.notes)
+
+
+def test_verify_expired():
+    env = _valid_env(validity=attestation.validity_time_bounded(datetime(2020, 1, 1), datetime(2021, 1, 1)))
+    res = attestation.verify(env)
+    assert not res.ok and any("expired" in r for r in res.reasons)
+
+
+def test_verify_not_yet_valid():
+    env = _valid_env(validity=attestation.validity_time_bounded(datetime(2090, 1, 1), datetime(2091, 1, 1)))
+    res = attestation.verify(env)
+    assert not res.ok and any("not yet valid" in r for r in res.reasons)
+
+
+def test_verify_time_bounded_within_with_explicit_now():
+    env = _valid_env(validity=attestation.validity_time_bounded(datetime(2026, 1, 1), datetime(2027, 1, 1)))
+    res = attestation.verify(env, now=datetime(2026, 6, 13, tzinfo=timezone.utc))
+    assert res.ok and any("time_bounded" in n for n in res.notes)
+
+
+def test_verify_unparseable_validity():
+    env = _valid_env()
+    env["validity"]["not_after"] = "garbage"
+    res = attestation.verify(env)
+    assert not res.ok and any("unparseable" in r for r in res.reasons)
+
+
+def test_verify_revocation_checked_noted_not_failed():
+    env = _valid_env(
+        validity=attestation.validity_revocation_checked(datetime(2026, 1, 1), datetime(2030, 1, 1), "https://x/revoke")
+    )
+    res = attestation.verify(env)
+    assert res.ok and any("revocation_checked" in n and "NOT confirmed offline" in n for n in res.notes)
+
+
+def test_verify_unknown_validity_model():
+    env = _valid_env()
+    env["validity"]["validity_model"] = "vibes"
+    res = attestation.verify(env)
+    assert not res.ok and any("unknown validity_model" in r for r in res.reasons)
+
+
+def test_verify_validity_not_object():
+    env = _valid_env()
+    env["validity"] = "nope"
+    res = attestation.verify(env)
+    assert not res.ok and any("validity is not an object" in r for r in res.reasons)
+
+
+def test_verify_signature_valid_but_issuer_unbindable():
+    signer = Ed25519Signer.from_seed(FIXED_SEED)
+    env = attestation.export_attestation(
+        signer=signer,
+        witnessed_claim=attestation.artifact_published("https://x/y", "sha256:" + "0" * 64),
+        evidence=[attestation.evidence_immutable_uri("https://x/y")],
+        issuer=attestation.platform_handle_identity("thecolony.cc:colonist-one"),
+    )
+    res = attestation.verify(env)
+    assert res.ok is True  # signature math is valid
+    assert res.issuer_bound is False
+    assert any("UNBINDABLE" in n for n in res.notes)
+
+
+def test_verify_did_key_issuer_mismatch_is_unverified():
+    signer = Ed25519Signer.from_seed(FIXED_SEED)
+    other = Ed25519Signer.from_seed(bytes(range(1, 33)))
+    env = attestation.export_attestation(
+        signer=signer,
+        witnessed_claim=attestation.artifact_published("https://x/y", "sha256:" + "0" * 64),
+        evidence=[attestation.evidence_immutable_uri("https://x/y")],
+        issuer=attestation.did_key_identity(other.did_key),  # issuer.id != signer.did_key
+    )
+    res = attestation.verify(env)
+    assert res.ok is True  # sig still verifies (signed by signer)
+    assert res.issuer_bound is False
+    assert any("key_id != issuer.id" in n for n in res.notes)
+
+
+def test_verify_issuer_not_object():
+    env = _valid_env()
+    env["issuer"] = "thecolony.cc:colonist-one"
+    res = attestation.verify(env)
+    assert res.issuer_bound is False
+    assert any("issuer is not an object" in n for n in res.notes)
+
+
+def test_verify_dep_missing_pynacl(monkeypatch):
+    env = _valid_env()
+    monkeypatch.setitem(sys.modules, "nacl", None)
+    monkeypatch.setitem(sys.modules, "nacl.signing", None)
+    monkeypatch.setitem(sys.modules, "nacl.exceptions", None)
+    with pytest.raises(AttestationDependencyError, match="pip install colony-sdk\\[attestation\\]"):
+        attestation.verify(env)
+
+
+# ---- did_key_to_public_key ---------------------------------------------------
+def test_did_key_to_public_key_roundtrip():
+    signer = Ed25519Signer.from_seed(FIXED_SEED)
+    assert attestation.did_key_to_public_key(signer.did_key) == signer.public_key
+
+
+def test_did_key_to_public_key_rejects_non_did_key():
+    with pytest.raises(AttestationError):
+        attestation.did_key_to_public_key("did:web:example.com")
+
+
+def test_did_key_to_public_key_rejects_wrong_multicodec():
+    import base58
+
+    bad = "did:key:z" + base58.b58encode(b"\x00\x01" + b"\x00" * 32).decode()
+    with pytest.raises(AttestationError, match="multicodec"):
+        attestation.did_key_to_public_key(bad)
+
+
+def test_did_key_to_public_key_rejects_wrong_length():
+    import base58
+
+    short = "did:key:z" + base58.b58encode(b"\xed\x01" + b"\x00" * 31).decode()
+    with pytest.raises(AttestationError, match="32 bytes"):
+        attestation.did_key_to_public_key(short)
+
+
+def test_did_key_to_public_key_dep_missing(monkeypatch):
+    monkeypatch.setitem(sys.modules, "base58", None)
+    with pytest.raises(AttestationDependencyError):
+        attestation.did_key_to_public_key("did:key:zABC")

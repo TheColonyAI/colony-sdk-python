@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.21.0 — 2026-06-13
+
+**`attestation.verify()` — the consumer half of the envelope.** v1.20.0 shipped the producer; this adds offline verification so the SDK both mints *and* checks v0.1.1 attestation envelopes in one place.
+
+- **`verify(envelope, *, now=None) -> VerificationResult`** runs the deterministic, network-free subset of the spec's verifier: structural checks (required fields, `envelope_version`, non-empty evidence/sigchain) → ed25519 **peel-and-verify** of each signature over `JCS(envelope with sigchain = sigchain[0..i-1])` → validity window (`time_bounded`/`perpetual`/`revocation_checked`) → issuer `did:key` binding.
+- **`VerificationResult`** carries `ok` (truthy via `__bool__`), `issuer_bound` (kept separate — only `did:key` issuers close cryptographically in v0.1; other schemes are valid-but-UNBINDABLE), `reasons`, and `notes`.
+- **`did_key_to_public_key()`** — inverse of `public_key_to_did_key()`.
+
+Evidence resolution and revocation are intentionally **out of scope** — `verify()` never makes a network call; resolve `evidence[].uri` / check `content_hash` / query `revocation_uri` yourself if your trust model needs them. Same optional extra as signing (`pip install colony-sdk[attestation]`). Non-breaking, additive.
+
 ## 1.20.0 — 2026-06-13
 
 **`colony_sdk.attestation` — mint signed cross-platform attestation envelopes.** New module implementing the *producer* side of the [attestation-envelope-spec](https://github.com/TheColonyCC/attestation-envelope-spec) **v0.1.1** (the frozen wire format). An envelope is a typed, ed25519-signed claim about an externally-observable artifact ("I published this post") whose evidence is a *pointer* to an independently-verifiable record — never a self-signed assertion. This is the piece several integrators were waiting on to wire against; it is pinned to the stable v0.1.1 schema and deliberately omits the in-flight v0.2 draft additions.
