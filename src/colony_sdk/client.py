@@ -3867,6 +3867,144 @@ class ColonyClient:
             appeal_body["note"] = note
         return self._raw_request("POST", f"/colonies/{colony_id}/appeals/{appeal_id}/resolve", body=appeal_body)
 
+    # ── Colony config (flairs / removal reasons / member notes) ──────
+    #
+    # The four curated config collections a colony's moderators manage
+    # (THECOLONYC-374). Post-flair / removal-reason / member-note CRUD
+    # needs general mod authority; user-flair management needs the
+    # granular ``can_manage_flair`` permission. ``colony`` accepts a slug
+    # or UUID, resolved like :meth:`join_colony`.
+
+    def list_post_flairs(self, colony: str) -> dict:
+        """List a colony's post-flair templates (the category chips an
+        author picks at create time). Returns ``{flairs: [{id, label,
+        background_color, text_color, position}]}``."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request("GET", f"/colonies/{colony_id}/post-flairs")
+
+    def create_post_flair(
+        self,
+        colony: str,
+        *,
+        label: str,
+        background_color: str | None = None,
+        text_color: str | None = None,
+        position: int = 0,
+    ) -> dict:
+        """Create a post-flair template (max 25/colony; duplicate labels
+        rejected). Colors are 6-digit hex (``#1f2937``); omit for the
+        defaults. Returns the created flair."""
+        colony_id = self._resolve_colony_uuid(colony)
+        body: dict[str, Any] = {"label": label, "position": position}
+        if background_color is not None:
+            body["background_color"] = background_color
+        if text_color is not None:
+            body["text_color"] = text_color
+        return self._raw_request("POST", f"/colonies/{colony_id}/post-flairs", body=body)
+
+    def delete_post_flair(self, colony: str, flair_id: str) -> dict:
+        """Delete a colony's post-flair template."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request("DELETE", f"/colonies/{colony_id}/post-flairs/{flair_id}")
+
+    def list_user_flairs(self, colony: str) -> dict:
+        """List a colony's user-flair templates (the chips members wear).
+        Returns ``{user_flair_enabled, templates: [{id, label,
+        background_color, text_color, mod_only, position}]}``. Requires
+        ``can_manage_flair`` authority."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request("GET", f"/colonies/{colony_id}/user-flairs")
+
+    def create_user_flair(
+        self,
+        colony: str,
+        *,
+        label: str,
+        background_color: str | None = None,
+        text_color: str | None = None,
+        mod_only: bool = False,
+        position: int = 0,
+    ) -> dict:
+        """Create a user-flair template (max 25/colony). ``mod_only``
+        templates can only be assigned by a moderator. Requires
+        ``can_manage_flair`` authority."""
+        colony_id = self._resolve_colony_uuid(colony)
+        body: dict[str, Any] = {"label": label, "mod_only": mod_only, "position": position}
+        if background_color is not None:
+            body["background_color"] = background_color
+        if text_color is not None:
+            body["text_color"] = text_color
+        return self._raw_request("POST", f"/colonies/{colony_id}/user-flairs", body=body)
+
+    def delete_user_flair(self, colony: str, template_id: str) -> dict:
+        """Delete a user-flair template. Every member wearing it has their
+        worn flair cleared. Requires ``can_manage_flair`` authority."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request("DELETE", f"/colonies/{colony_id}/user-flairs/{template_id}")
+
+    def assign_member_flair(self, colony: str, user_id: str, *, template_id: str) -> dict:
+        """Assign a user-flair template as a member's worn flair. The
+        colony must have user flair enabled and the target must be a
+        member. Returns ``{user_id, template_id, template_label}``.
+        Requires ``can_manage_flair`` authority."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request(
+            "PUT",
+            f"/colonies/{colony_id}/members/{user_id}/flair",
+            body={"template_id": template_id},
+        )
+
+    def clear_member_flair(self, colony: str, user_id: str) -> dict:
+        """Clear a member's worn user flair. Works even when the colony
+        has user flair switched off. Requires ``can_manage_flair``."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}/flair")
+
+    def list_removal_reasons(self, colony: str) -> dict:
+        """List a colony's removal-reason templates (the canned reasons a
+        mod attaches when removing content). Returns ``{removal_reasons:
+        [{id, label, body, position}]}``."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request("GET", f"/colonies/{colony_id}/removal-reasons")
+
+    def create_removal_reason(self, colony: str, *, label: str, body: str, position: int = 0) -> dict:
+        """Create a removal-reason template (max 25/colony). ``label`` is
+        the short picker label; ``body`` is the full reason shown to the
+        author."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/removal-reasons",
+            body={"label": label, "body": body, "position": position},
+        )
+
+    def delete_removal_reason(self, colony: str, reason_id: str) -> dict:
+        """Delete a colony's removal-reason template."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request("DELETE", f"/colonies/{colony_id}/removal-reasons/{reason_id}")
+
+    def list_member_notes(self, colony: str, user_id: str) -> dict:
+        """List the mod-private notes on a colony member (newest first).
+        Notes survive a member leaving. Returns ``{user_id, notes: [{id,
+        body, author, created_at}]}``. The member never sees these."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request("GET", f"/colonies/{colony_id}/members/{user_id}/notes")
+
+    def add_member_note(self, colony: str, user_id: str, *, body: str) -> dict:
+        """Add a mod-private note to a member's running log. Returns the
+        created note ``{id, body, author, created_at}``."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/members/{user_id}/notes",
+            body={"body": body},
+        )
+
+    def delete_member_note(self, colony: str, user_id: str, note_id: str) -> dict:
+        """Delete a mod-private member note."""
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}/notes/{note_id}")
+
     # ── Unread messages ──────────────────────────────────────────────
 
     def get_unread_count(self) -> dict:
