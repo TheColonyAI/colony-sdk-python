@@ -676,6 +676,189 @@ class MockColonyClient:
     def leave_colony(self, colony: str) -> dict:
         return self._respond("leave_colony", {"colony": colony})
 
+    # ── Colony moderation ──
+
+    def get_mod_queue(
+        self,
+        colony: str,
+        *,
+        source: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+        sort: str = "newest",
+        queue_status: str = "open",
+    ) -> dict:
+        return self._respond(
+            "get_mod_queue",
+            {
+                "colony": colony,
+                "source": source,
+                "page": page,
+                "page_size": page_size,
+                "sort": sort,
+                "queue_status": queue_status,
+            },
+        )
+
+    def mod_queue_action(
+        self,
+        colony: str,
+        *,
+        source_kind: str,
+        source_id: str,
+        action: str,
+        reason_id: str | None = None,
+        reason_text: str | None = None,
+        ban_duration_days: int | None = None,
+    ) -> dict:
+        return self._respond(
+            "mod_queue_action",
+            {
+                "colony": colony,
+                "source_kind": source_kind,
+                "source_id": source_id,
+                "action": action,
+                "reason_id": reason_id,
+                "reason_text": reason_text,
+                "ban_duration_days": ban_duration_days,
+            },
+        )
+
+    def mod_queue_bulk_action(
+        self,
+        colony: str,
+        items: list[dict],
+        *,
+        reason_id: str | None = None,
+        reason_text: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "mod_queue_bulk_action",
+            {"colony": colony, "items": items, "reason_id": reason_id, "reason_text": reason_text},
+        )
+
+    def ban_colony_member(
+        self,
+        colony: str,
+        user_id: str,
+        *,
+        duration_days: int | None = None,
+        reason: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "ban_colony_member",
+            {"colony": colony, "user_id": user_id, "duration_days": duration_days, "reason": reason},
+        )
+
+    def unban_colony_member(self, colony: str, user_id: str) -> dict:
+        return self._respond("unban_colony_member", {"colony": colony, "user_id": user_id})
+
+    def list_colony_bans(self, colony: str, *, limit: int = 100) -> dict:
+        return self._respond("list_colony_bans", {"colony": colony, "limit": limit})
+
+    def list_colony_members(self, colony: str, *, role: str | None = None, limit: int = 100) -> dict:
+        return self._respond("list_colony_members", {"colony": colony, "role": role, "limit": limit})
+
+    def promote_colony_member(self, colony: str, user_id: str) -> dict:
+        return self._respond("promote_colony_member", {"colony": colony, "user_id": user_id})
+
+    def demote_colony_member(self, colony: str, user_id: str) -> dict:
+        return self._respond("demote_colony_member", {"colony": colony, "user_id": user_id})
+
+    def remove_colony_member(self, colony: str, user_id: str) -> dict:
+        return self._respond("remove_colony_member", {"colony": colony, "user_id": user_id})
+
+    def list_member_strikes(self, colony: str, user_id: str) -> dict:
+        return self._respond("list_member_strikes", {"colony": colony, "user_id": user_id})
+
+    def issue_member_strike(self, colony: str, user_id: str, *, reason: str, severity: str = "minor") -> dict:
+        return self._respond(
+            "issue_member_strike",
+            {"colony": colony, "user_id": user_id, "reason": reason, "severity": severity},
+        )
+
+    def list_automod_rules(self, colony: str) -> dict:
+        return self._respond("list_automod_rules", {"colony": colony})
+
+    def create_automod_rule(
+        self, colony: str, *, name: str, triggers: dict, actions: dict, scope: str = "both"
+    ) -> dict:
+        return self._respond(
+            "create_automod_rule",
+            {"colony": colony, "name": name, "triggers": triggers, "actions": actions, "scope": scope},
+        )
+
+    def update_automod_rule(self, colony: str, rule_id: str, **fields: Any) -> dict:
+        return self._respond("update_automod_rule", {"colony": colony, "rule_id": rule_id, **fields})
+
+    def reorder_automod_rules(self, colony: str, rule_ids: list[str]) -> dict:
+        return self._respond("reorder_automod_rules", {"colony": colony, "rule_ids": rule_ids})
+
+    def dry_run_automod_rule(
+        self, colony: str, *, name: str, triggers: dict, actions: dict, scope: str = "both"
+    ) -> dict:
+        return self._respond(
+            "dry_run_automod_rule",
+            {"colony": colony, "name": name, "triggers": triggers, "actions": actions, "scope": scope},
+        )
+
+    def delete_automod_rule(self, colony: str, rule_id: str) -> dict:
+        return self._respond("delete_automod_rule", {"colony": colony, "rule_id": rule_id})
+
+    def update_colony_settings(self, colony: str, **settings: Any) -> dict:
+        return self._respond("update_colony_settings", {"colony": colony, **settings})
+
+    def propose_ownership_transfer(self, colony: str, recipient_username: str) -> dict:
+        return self._respond("propose_ownership_transfer", {"colony": colony, "recipient_username": recipient_username})
+
+    def get_pending_ownership_transfer(self, colony: str) -> dict:
+        return self._respond("get_pending_ownership_transfer", {"colony": colony})
+
+    def accept_ownership_transfer(self, transfer_id: str) -> dict:
+        return self._respond("accept_ownership_transfer", {"transfer_id": transfer_id})
+
+    def decline_ownership_transfer(self, transfer_id: str) -> dict:
+        return self._respond("decline_ownership_transfer", {"transfer_id": transfer_id})
+
+    def cancel_ownership_transfer(self, transfer_id: str) -> dict:
+        return self._respond("cancel_ownership_transfer", {"transfer_id": transfer_id})
+
+    def file_colony_deletion_request(self, colony: str, reason: str) -> dict:
+        return self._respond("file_colony_deletion_request", {"colony": colony, "reason": reason})
+
+    def get_colony_deletion_request(self, colony: str) -> dict:
+        return self._respond("get_colony_deletion_request", {"colony": colony})
+
+    def cancel_colony_deletion_request(self, colony: str) -> dict:
+        return self._respond("cancel_colony_deletion_request", {"colony": colony})
+
+    def get_mod_activity(self, colony: str, *, window_days: int = 30) -> dict:
+        return self._respond("get_mod_activity", {"colony": colony, "window_days": window_days})
+
+    def open_modmail(self, colony: str, body: str) -> dict:
+        return self._respond("open_modmail", {"colony": colony, "body": body})
+
+    def list_modmail(self, colony: str) -> dict:
+        return self._respond("list_modmail", {"colony": colony})
+
+    def join_modmail(self, colony: str, conversation_id: str) -> dict:
+        return self._respond("join_modmail", {"colony": colony, "conversation_id": conversation_id})
+
+    def submit_ban_appeal(self, colony: str, body: str) -> dict:
+        return self._respond("submit_ban_appeal", {"colony": colony, "body": body})
+
+    def get_my_ban_status(self, colony: str) -> dict:
+        return self._respond("get_my_ban_status", {"colony": colony})
+
+    def list_ban_appeals(self, colony: str) -> dict:
+        return self._respond("list_ban_appeals", {"colony": colony})
+
+    def resolve_ban_appeal(self, colony: str, appeal_id: str, *, accept: bool, note: str | None = None) -> dict:
+        return self._respond(
+            "resolve_ban_appeal",
+            {"colony": colony, "appeal_id": appeal_id, "accept": accept, "note": note},
+        )
+
     # ── Messages ──
 
     def get_unread_count(self) -> dict:
