@@ -1704,6 +1704,350 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("POST", f"/colonies/{colony_id}/leave")
 
+    # ── Colony moderation ────────────────────────────────────────────
+    #
+    # Async mirror of the moderator-facing colony surface. See the sync
+    # :class:`ColonyClient` methods of the same names for full argument
+    # and response docs.
+
+    async def get_mod_queue(
+        self,
+        colony: str,
+        *,
+        source: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+        sort: str = "newest",
+        queue_status: str = "open",
+    ) -> dict:
+        """List a colony's unified moderation queue. See
+        :meth:`ColonyClient.get_mod_queue`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        params = {
+            "page": str(page),
+            "page_size": str(page_size),
+            "sort": sort,
+            "queue_status": queue_status,
+        }
+        if source is not None:
+            params["source"] = source
+        return await self._raw_request("GET", f"/colonies/{colony_id}/queue?{urlencode(params)}")
+
+    async def mod_queue_action(
+        self,
+        colony: str,
+        *,
+        source_kind: str,
+        source_id: str,
+        action: str,
+        reason_id: str | None = None,
+        reason_text: str | None = None,
+        ban_duration_days: int | None = None,
+    ) -> dict:
+        """Apply one moderation action to one queue row. See
+        :meth:`ColonyClient.mod_queue_action`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        body: dict[str, Any] = {
+            "source_kind": source_kind,
+            "source_id": source_id,
+            "action": action,
+        }
+        if reason_id is not None:
+            body["reason_id"] = reason_id
+        if reason_text is not None:
+            body["reason_text"] = reason_text
+        if ban_duration_days is not None:
+            body["ban_duration_days"] = ban_duration_days
+        return await self._raw_request("POST", f"/colonies/{colony_id}/queue/action", body=body)
+
+    async def mod_queue_bulk_action(
+        self,
+        colony: str,
+        items: list[dict],
+        *,
+        reason_id: str | None = None,
+        reason_text: str | None = None,
+    ) -> dict:
+        """Apply up to 100 queue actions in one transaction. See
+        :meth:`ColonyClient.mod_queue_bulk_action`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        body: dict[str, Any] = {"items": items}
+        if reason_id is not None:
+            body["reason_id"] = reason_id
+        if reason_text is not None:
+            body["reason_text"] = reason_text
+        return await self._raw_request("POST", f"/colonies/{colony_id}/queue/bulk-action", body=body)
+
+    # ── Bans ──
+
+    async def ban_colony_member(
+        self,
+        colony: str,
+        user_id: str,
+        *,
+        duration_days: int | None = None,
+        reason: str | None = None,
+    ) -> dict:
+        """Ban a user from a colony. See
+        :meth:`ColonyClient.ban_colony_member`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        body: dict[str, Any] = {}
+        if duration_days is not None:
+            body["duration_days"] = duration_days
+        if reason is not None:
+            body["reason"] = reason
+        return await self._raw_request("POST", f"/colonies/{colony_id}/bans/{user_id}", body=body or None)
+
+    async def unban_colony_member(self, colony: str, user_id: str) -> dict:
+        """Lift a colony ban. See
+        :meth:`ColonyClient.unban_colony_member`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("DELETE", f"/colonies/{colony_id}/bans/{user_id}")
+
+    async def list_colony_bans(self, colony: str, *, limit: int = 100) -> dict:
+        """List a colony's banned users. See
+        :meth:`ColonyClient.list_colony_bans`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/bans?{urlencode({'limit': str(limit)})}")
+
+    # ── Member roles ──
+
+    async def list_colony_members(self, colony: str, *, role: str | None = None, limit: int = 100) -> dict:
+        """List a colony's members. See
+        :meth:`ColonyClient.list_colony_members`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        params = {"limit": str(limit)}
+        if role is not None:
+            params["role"] = role
+        return await self._raw_request("GET", f"/colonies/{colony_id}/members?{urlencode(params)}")
+
+    async def promote_colony_member(self, colony: str, user_id: str) -> dict:
+        """Promote a member to moderator. See
+        :meth:`ColonyClient.promote_colony_member`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/promote")
+
+    async def demote_colony_member(self, colony: str, user_id: str) -> dict:
+        """Demote a moderator back to member. See
+        :meth:`ColonyClient.demote_colony_member`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/demote")
+
+    async def remove_colony_member(self, colony: str, user_id: str) -> dict:
+        """Remove a member. See
+        :meth:`ColonyClient.remove_colony_member`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}")
+
+    # ── Strikes ──
+
+    async def list_member_strikes(self, colony: str, user_id: str) -> dict:
+        """List a member's strike history. See
+        :meth:`ColonyClient.list_member_strikes`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/members/{user_id}/strikes")
+
+    async def issue_member_strike(self, colony: str, user_id: str, *, reason: str, severity: str = "minor") -> dict:
+        """Issue a strike to a member. See
+        :meth:`ColonyClient.issue_member_strike`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/members/{user_id}/strikes",
+            body={"reason": reason, "severity": severity},
+        )
+
+    # ── AutoMod rules ──
+
+    async def list_automod_rules(self, colony: str) -> dict:
+        """List a colony's AutoMod rules. See
+        :meth:`ColonyClient.list_automod_rules`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/automod-rules")
+
+    async def create_automod_rule(
+        self,
+        colony: str,
+        *,
+        name: str,
+        triggers: dict,
+        actions: dict,
+        scope: str = "both",
+    ) -> dict:
+        """Create an AutoMod rule. See
+        :meth:`ColonyClient.create_automod_rule`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/automod-rules",
+            body={"name": name, "scope": scope, "triggers": triggers, "actions": actions},
+        )
+
+    async def update_automod_rule(self, colony: str, rule_id: str, **fields: Any) -> dict:
+        """Partially update an AutoMod rule. See
+        :meth:`ColonyClient.update_automod_rule`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("PATCH", f"/colonies/{colony_id}/automod-rules/{rule_id}", body=fields)
+
+    async def reorder_automod_rules(self, colony: str, rule_ids: list[str]) -> dict:
+        """Atomically reorder ALL AutoMod rules. See
+        :meth:`ColonyClient.reorder_automod_rules`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request(
+            "PUT",
+            f"/colonies/{colony_id}/automod-rules/order",
+            body={"rule_ids": rule_ids},
+        )
+
+    async def dry_run_automod_rule(
+        self,
+        colony: str,
+        *,
+        name: str,
+        triggers: dict,
+        actions: dict,
+        scope: str = "both",
+    ) -> dict:
+        """Preview an AutoMod rule against recent content. See
+        :meth:`ColonyClient.dry_run_automod_rule`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/automod-rules/dry-run",
+            body={"name": name, "scope": scope, "triggers": triggers, "actions": actions},
+        )
+
+    async def delete_automod_rule(self, colony: str, rule_id: str) -> dict:
+        """Delete an AutoMod rule. See
+        :meth:`ColonyClient.delete_automod_rule`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("DELETE", f"/colonies/{colony_id}/automod-rules/{rule_id}")
+
+    # ── Colony settings ──
+
+    async def update_colony_settings(self, colony: str, **settings: Any) -> dict:
+        """Update a colony's safe settings. See
+        :meth:`ColonyClient.update_colony_settings`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("PATCH", f"/colonies/{colony_id}", body=settings)
+
+    # ── Ownership transfers (founder-only) ──
+
+    async def propose_ownership_transfer(self, colony: str, recipient_username: str) -> dict:
+        """Propose transferring colony ownership. See
+        :meth:`ColonyClient.propose_ownership_transfer`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/ownership-transfers",
+            body={"recipient_username": recipient_username},
+        )
+
+    async def get_pending_ownership_transfer(self, colony: str) -> dict:
+        """Fetch the colony's pending ownership transfer. See
+        :meth:`ColonyClient.get_pending_ownership_transfer`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/ownership-transfers")
+
+    async def accept_ownership_transfer(self, transfer_id: str) -> dict:
+        """Accept an ownership transfer. See
+        :meth:`ColonyClient.accept_ownership_transfer`."""
+        return await self._raw_request("POST", f"/colonies/ownership-transfers/{transfer_id}/accept")
+
+    async def decline_ownership_transfer(self, transfer_id: str) -> dict:
+        """Decline an ownership transfer. See
+        :meth:`ColonyClient.decline_ownership_transfer`."""
+        return await self._raw_request("POST", f"/colonies/ownership-transfers/{transfer_id}/decline")
+
+    async def cancel_ownership_transfer(self, transfer_id: str) -> dict:
+        """Cancel an ownership transfer you proposed. See
+        :meth:`ColonyClient.cancel_ownership_transfer`."""
+        return await self._raw_request("POST", f"/colonies/ownership-transfers/{transfer_id}/cancel")
+
+    # ── Deletion requests (founder-only) ──
+
+    async def file_colony_deletion_request(self, colony: str, reason: str) -> dict:
+        """File a colony-deletion request. See
+        :meth:`ColonyClient.file_colony_deletion_request`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("POST", f"/colonies/{colony_id}/deletion-request", body={"reason": reason})
+
+    async def get_colony_deletion_request(self, colony: str) -> dict:
+        """Fetch the colony's open deletion request. See
+        :meth:`ColonyClient.get_colony_deletion_request`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/deletion-request")
+
+    async def cancel_colony_deletion_request(self, colony: str) -> dict:
+        """Cancel the colony's open deletion request. See
+        :meth:`ColonyClient.cancel_colony_deletion_request`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("DELETE", f"/colonies/{colony_id}/deletion-request")
+
+    # ── Mod-activity dashboard ──
+
+    async def get_mod_activity(self, colony: str, *, window_days: int = 30) -> dict:
+        """Fetch the colony's mod-activity dashboard. See
+        :meth:`ColonyClient.get_mod_activity`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request(
+            "GET",
+            f"/colonies/{colony_id}/mod-activity?{urlencode({'window_days': str(window_days)})}",
+        )
+
+    # ── Modmail ──
+
+    async def open_modmail(self, colony: str, body: str) -> dict:
+        """Open (or reuse) a modmail thread. See
+        :meth:`ColonyClient.open_modmail`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("POST", f"/colonies/{colony_id}/modmail", body={"body": body})
+
+    async def list_modmail(self, colony: str) -> dict:
+        """List a colony's modmail threads. See
+        :meth:`ColonyClient.list_modmail`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/modmail")
+
+    async def join_modmail(self, colony: str, conversation_id: str) -> dict:
+        """Join a modmail thread. See
+        :meth:`ColonyClient.join_modmail`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("POST", f"/colonies/{colony_id}/modmail/{conversation_id}/join")
+
+    # ── Ban appeals ──
+
+    async def submit_ban_appeal(self, colony: str, body: str) -> dict:
+        """Appeal your active ban in a colony. See
+        :meth:`ColonyClient.submit_ban_appeal`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("POST", f"/colonies/{colony_id}/appeal", body={"body": body})
+
+    async def get_my_ban_status(self, colony: str) -> dict:
+        """Fetch your own ban + appeal state. See
+        :meth:`ColonyClient.get_my_ban_status`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/appeal")
+
+    async def list_ban_appeals(self, colony: str) -> dict:
+        """List a colony's pending ban appeals. See
+        :meth:`ColonyClient.list_ban_appeals`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/appeals")
+
+    async def resolve_ban_appeal(self, colony: str, appeal_id: str, *, accept: bool, note: str | None = None) -> dict:
+        """Accept or reject a ban appeal. See
+        :meth:`ColonyClient.resolve_ban_appeal`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        appeal_body: dict[str, Any] = {"accept": accept}
+        if note is not None:
+            appeal_body["note"] = note
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/appeals/{appeal_id}/resolve",
+            body=appeal_body,
+        )
+
     # ── Unread messages ──────────────────────────────────────────────
 
     async def get_unread_count(self) -> dict:
