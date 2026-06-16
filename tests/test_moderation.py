@@ -117,19 +117,21 @@ class TestModQueue:
             source_id="src-2",
             action="ban_author",
             ban_duration_days=7,
+            reason_id="rr-1",
             reason_text="spam",
         )
         body = _body(mock)
         assert body["ban_duration_days"] == 7
+        assert body["reason_id"] == "rr-1"
         assert body["reason_text"] == "spam"
 
     @patch("colony_sdk.client.urlopen")
     def test_mod_queue_bulk_action(self, mock: MagicMock) -> None:
         mock.return_value = _mock_response({"succeeded": [], "failed": []})
         items = [{"source_kind": "open_report", "source_id": "s1", "action": "dismiss"}]
-        _authed_client().mod_queue_bulk_action("general", items, reason_text="batch")
+        _authed_client().mod_queue_bulk_action("general", items, reason_id="rr-2", reason_text="batch")
         assert _path(mock) == f"/api/v1/colonies/{GENERAL}/queue/bulk-action"
-        assert _body(mock) == {"items": items, "reason_text": "batch"}
+        assert _body(mock) == {"items": items, "reason_id": "rr-2", "reason_text": "batch"}
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +432,139 @@ class TestAsyncParity:
         await c.resolve_ban_appeal("general", "a1", accept=True)
         assert captured[-1].url.path == f"/api/v1/colonies/{GENERAL}/appeals/a1/resolve"
         assert json.loads(captured[-1].content) == {"accept": True}
+
+    async def test_every_async_method_hits_expected_endpoint(self) -> None:
+        """Drive every async moderation method once so the async wrappers
+        are fully exercised (and patch-coverage stays honest)."""
+        captured: list[httpx.Request] = []
+        c = _async_client(captured)
+        g = f"/api/v1/colonies/{GENERAL}"
+        # (coroutine factory, expected method, expected path)
+        cases = [
+            (lambda: c.get_mod_queue("general", source="open_report"), "GET", f"{g}/queue"),
+            (
+                lambda: c.mod_queue_action(
+                    "general",
+                    source_kind="pending_post",
+                    source_id="s",
+                    action="approve",
+                    reason_id="r",
+                    reason_text="t",
+                    ban_duration_days=1,
+                ),
+                "POST",
+                f"{g}/queue/action",
+            ),
+            (
+                lambda: c.mod_queue_bulk_action(
+                    "general",
+                    [{"source_kind": "open_report", "source_id": "s", "action": "dismiss"}],
+                    reason_id="r",
+                    reason_text="t",
+                ),
+                "POST",
+                f"{g}/queue/bulk-action",
+            ),
+            (lambda: c.ban_colony_member("general", "u", duration_days=7, reason="x"), "POST", f"{g}/bans/u"),
+            (lambda: c.unban_colony_member("general", "u"), "DELETE", f"{g}/bans/u"),
+            (lambda: c.list_colony_bans("general"), "GET", f"{g}/bans"),
+            (lambda: c.list_colony_members("general", role="moderator"), "GET", f"{g}/members"),
+            (lambda: c.promote_colony_member("general", "u"), "POST", f"{g}/members/u/promote"),
+            (lambda: c.demote_colony_member("general", "u"), "POST", f"{g}/members/u/demote"),
+            (lambda: c.remove_colony_member("general", "u"), "DELETE", f"{g}/members/u"),
+            (lambda: c.list_member_strikes("general", "u"), "GET", f"{g}/members/u/strikes"),
+            (lambda: c.issue_member_strike("general", "u", reason="r"), "POST", f"{g}/members/u/strikes"),
+            (lambda: c.list_automod_rules("general"), "GET", f"{g}/automod-rules"),
+            (
+                lambda: c.create_automod_rule("general", name="n", triggers={"k": 1}, actions={"a": 1}),
+                "POST",
+                f"{g}/automod-rules",
+            ),
+            (lambda: c.update_automod_rule("general", "r", enabled=False), "PATCH", f"{g}/automod-rules/r"),
+            (lambda: c.reorder_automod_rules("general", ["r"]), "PUT", f"{g}/automod-rules/order"),
+            (
+                lambda: c.dry_run_automod_rule("general", name="n", triggers={"k": 1}, actions={"a": 1}),
+                "POST",
+                f"{g}/automod-rules/dry-run",
+            ),
+            (lambda: c.delete_automod_rule("general", "r"), "DELETE", f"{g}/automod-rules/r"),
+            (lambda: c.update_colony_settings("general", description="d"), "PATCH", g),
+            (lambda: c.propose_ownership_transfer("general", "alice"), "POST", f"{g}/ownership-transfers"),
+            (lambda: c.get_pending_ownership_transfer("general"), "GET", f"{g}/ownership-transfers"),
+            (lambda: c.accept_ownership_transfer("t"), "POST", "/api/v1/colonies/ownership-transfers/t/accept"),
+            (lambda: c.decline_ownership_transfer("t"), "POST", "/api/v1/colonies/ownership-transfers/t/decline"),
+            (lambda: c.cancel_ownership_transfer("t"), "POST", "/api/v1/colonies/ownership-transfers/t/cancel"),
+            (lambda: c.file_colony_deletion_request("general", "x"), "POST", f"{g}/deletion-request"),
+            (lambda: c.get_colony_deletion_request("general"), "GET", f"{g}/deletion-request"),
+            (lambda: c.cancel_colony_deletion_request("general"), "DELETE", f"{g}/deletion-request"),
+            (lambda: c.get_mod_activity("general", window_days=7), "GET", f"{g}/mod-activity"),
+            (lambda: c.open_modmail("general", "hi"), "POST", f"{g}/modmail"),
+            (lambda: c.list_modmail("general"), "GET", f"{g}/modmail"),
+            (lambda: c.join_modmail("general", "conv"), "POST", f"{g}/modmail/conv/join"),
+            (lambda: c.submit_ban_appeal("general", "b"), "POST", f"{g}/appeal"),
+            (lambda: c.get_my_ban_status("general"), "GET", f"{g}/appeal"),
+            (lambda: c.list_ban_appeals("general"), "GET", f"{g}/appeals"),
+            (lambda: c.resolve_ban_appeal("general", "a", accept=False, note="n"), "POST", f"{g}/appeals/a/resolve"),
+        ]
+        for factory, method, path in cases:
+            await factory()
+            assert captured[-1].method == method, path
+            assert captured[-1].url.path == path
+
+
+class TestMockClientModeration:
+    """Every moderation method on the MockColonyClient records a call and
+    returns without network. Exercises the mock wrappers end-to-end."""
+
+    def test_every_mock_method_records_a_call(self) -> None:
+        from colony_sdk.testing import MockColonyClient
+
+        m = MockColonyClient()
+        calls = [
+            ("get_mod_queue", lambda: m.get_mod_queue("general")),
+            (
+                "mod_queue_action",
+                lambda: m.mod_queue_action("general", source_kind="pending_post", source_id="s", action="approve"),
+            ),
+            ("mod_queue_bulk_action", lambda: m.mod_queue_bulk_action("general", [], reason_id="r", reason_text="t")),
+            ("ban_colony_member", lambda: m.ban_colony_member("general", "u", duration_days=7, reason="x")),
+            ("unban_colony_member", lambda: m.unban_colony_member("general", "u")),
+            ("list_colony_bans", lambda: m.list_colony_bans("general")),
+            ("list_colony_members", lambda: m.list_colony_members("general", role="moderator")),
+            ("promote_colony_member", lambda: m.promote_colony_member("general", "u")),
+            ("demote_colony_member", lambda: m.demote_colony_member("general", "u")),
+            ("remove_colony_member", lambda: m.remove_colony_member("general", "u")),
+            ("list_member_strikes", lambda: m.list_member_strikes("general", "u")),
+            ("issue_member_strike", lambda: m.issue_member_strike("general", "u", reason="r", severity="major")),
+            ("list_automod_rules", lambda: m.list_automod_rules("general")),
+            ("create_automod_rule", lambda: m.create_automod_rule("general", name="n", triggers={}, actions={})),
+            ("update_automod_rule", lambda: m.update_automod_rule("general", "r", enabled=False)),
+            ("reorder_automod_rules", lambda: m.reorder_automod_rules("general", ["r"])),
+            ("dry_run_automod_rule", lambda: m.dry_run_automod_rule("general", name="n", triggers={}, actions={})),
+            ("delete_automod_rule", lambda: m.delete_automod_rule("general", "r")),
+            ("update_colony_settings", lambda: m.update_colony_settings("general", description="d")),
+            ("propose_ownership_transfer", lambda: m.propose_ownership_transfer("general", "alice")),
+            ("get_pending_ownership_transfer", lambda: m.get_pending_ownership_transfer("general")),
+            ("accept_ownership_transfer", lambda: m.accept_ownership_transfer("t")),
+            ("decline_ownership_transfer", lambda: m.decline_ownership_transfer("t")),
+            ("cancel_ownership_transfer", lambda: m.cancel_ownership_transfer("t")),
+            ("file_colony_deletion_request", lambda: m.file_colony_deletion_request("general", "x")),
+            ("get_colony_deletion_request", lambda: m.get_colony_deletion_request("general")),
+            ("cancel_colony_deletion_request", lambda: m.cancel_colony_deletion_request("general")),
+            ("get_mod_activity", lambda: m.get_mod_activity("general", window_days=7)),
+            ("open_modmail", lambda: m.open_modmail("general", "hi")),
+            ("list_modmail", lambda: m.list_modmail("general")),
+            ("join_modmail", lambda: m.join_modmail("general", "conv")),
+            ("submit_ban_appeal", lambda: m.submit_ban_appeal("general", "b")),
+            ("get_my_ban_status", lambda: m.get_my_ban_status("general")),
+            ("list_ban_appeals", lambda: m.list_ban_appeals("general")),
+            ("resolve_ban_appeal", lambda: m.resolve_ban_appeal("general", "a", accept=True, note="n")),
+        ]
+        for name, fn in calls:
+            result = fn()
+            assert result == {}  # no canned default → empty dict
+            assert m.calls[-1][0] == name
+        assert len(calls) == 35
 
     async def test_accept_ownership_transfer_no_colony_resolve(self) -> None:
         captured: list[httpx.Request] = []
