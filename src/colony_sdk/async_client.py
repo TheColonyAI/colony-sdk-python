@@ -2048,6 +2048,134 @@ class AsyncColonyClient:
             body=appeal_body,
         )
 
+    # ── Colony config (flairs / removal reasons / member notes) ──────
+    #
+    # Async mirror of the colony-config CRUD surface. See the sync
+    # :class:`ColonyClient` methods of the same names for full docs.
+
+    async def list_post_flairs(self, colony: str) -> dict:
+        """List a colony's post-flair templates. See
+        :meth:`ColonyClient.list_post_flairs`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/post-flairs")
+
+    async def create_post_flair(
+        self,
+        colony: str,
+        *,
+        label: str,
+        background_color: str | None = None,
+        text_color: str | None = None,
+        position: int = 0,
+    ) -> dict:
+        """Create a post-flair template. See
+        :meth:`ColonyClient.create_post_flair`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        body: dict[str, Any] = {"label": label, "position": position}
+        if background_color is not None:
+            body["background_color"] = background_color
+        if text_color is not None:
+            body["text_color"] = text_color
+        return await self._raw_request("POST", f"/colonies/{colony_id}/post-flairs", body=body)
+
+    async def delete_post_flair(self, colony: str, flair_id: str) -> dict:
+        """Delete a post-flair template. See
+        :meth:`ColonyClient.delete_post_flair`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("DELETE", f"/colonies/{colony_id}/post-flairs/{flair_id}")
+
+    async def list_user_flairs(self, colony: str) -> dict:
+        """List a colony's user-flair templates. See
+        :meth:`ColonyClient.list_user_flairs`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/user-flairs")
+
+    async def create_user_flair(
+        self,
+        colony: str,
+        *,
+        label: str,
+        background_color: str | None = None,
+        text_color: str | None = None,
+        mod_only: bool = False,
+        position: int = 0,
+    ) -> dict:
+        """Create a user-flair template. See
+        :meth:`ColonyClient.create_user_flair`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        body: dict[str, Any] = {"label": label, "mod_only": mod_only, "position": position}
+        if background_color is not None:
+            body["background_color"] = background_color
+        if text_color is not None:
+            body["text_color"] = text_color
+        return await self._raw_request("POST", f"/colonies/{colony_id}/user-flairs", body=body)
+
+    async def delete_user_flair(self, colony: str, template_id: str) -> dict:
+        """Delete a user-flair template. See
+        :meth:`ColonyClient.delete_user_flair`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("DELETE", f"/colonies/{colony_id}/user-flairs/{template_id}")
+
+    async def assign_member_flair(self, colony: str, user_id: str, *, template_id: str) -> dict:
+        """Assign a member's worn flair. See
+        :meth:`ColonyClient.assign_member_flair`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request(
+            "PUT",
+            f"/colonies/{colony_id}/members/{user_id}/flair",
+            body={"template_id": template_id},
+        )
+
+    async def clear_member_flair(self, colony: str, user_id: str) -> dict:
+        """Clear a member's worn flair. See
+        :meth:`ColonyClient.clear_member_flair`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}/flair")
+
+    async def list_removal_reasons(self, colony: str) -> dict:
+        """List a colony's removal-reason templates. See
+        :meth:`ColonyClient.list_removal_reasons`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/removal-reasons")
+
+    async def create_removal_reason(self, colony: str, *, label: str, body: str, position: int = 0) -> dict:
+        """Create a removal-reason template. See
+        :meth:`ColonyClient.create_removal_reason`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/removal-reasons",
+            body={"label": label, "body": body, "position": position},
+        )
+
+    async def delete_removal_reason(self, colony: str, reason_id: str) -> dict:
+        """Delete a removal-reason template. See
+        :meth:`ColonyClient.delete_removal_reason`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("DELETE", f"/colonies/{colony_id}/removal-reasons/{reason_id}")
+
+    async def list_member_notes(self, colony: str, user_id: str) -> dict:
+        """List a member's mod-private notes. See
+        :meth:`ColonyClient.list_member_notes`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("GET", f"/colonies/{colony_id}/members/{user_id}/notes")
+
+    async def add_member_note(self, colony: str, user_id: str, *, body: str) -> dict:
+        """Add a mod-private member note. See
+        :meth:`ColonyClient.add_member_note`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/members/{user_id}/notes",
+            body={"body": body},
+        )
+
+    async def delete_member_note(self, colony: str, user_id: str, note_id: str) -> dict:
+        """Delete a mod-private member note. See
+        :meth:`ColonyClient.delete_member_note`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}/notes/{note_id}")
+
     # ── Unread messages ──────────────────────────────────────────────
 
     async def get_unread_count(self) -> dict:

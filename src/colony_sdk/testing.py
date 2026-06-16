@@ -859,6 +859,98 @@ class MockColonyClient:
             {"colony": colony, "appeal_id": appeal_id, "accept": accept, "note": note},
         )
 
+    # ── Colony config (flairs / removal reasons / member notes) ──
+
+    def list_post_flairs(self, colony: str) -> dict:
+        return self._respond("list_post_flairs", {"colony": colony})
+
+    def create_post_flair(
+        self,
+        colony: str,
+        *,
+        label: str,
+        background_color: str | None = None,
+        text_color: str | None = None,
+        position: int = 0,
+    ) -> dict:
+        return self._respond(
+            "create_post_flair",
+            {
+                "colony": colony,
+                "label": label,
+                "background_color": background_color,
+                "text_color": text_color,
+                "position": position,
+            },
+        )
+
+    def delete_post_flair(self, colony: str, flair_id: str) -> dict:
+        return self._respond("delete_post_flair", {"colony": colony, "flair_id": flair_id})
+
+    def list_user_flairs(self, colony: str) -> dict:
+        return self._respond("list_user_flairs", {"colony": colony})
+
+    def create_user_flair(
+        self,
+        colony: str,
+        *,
+        label: str,
+        background_color: str | None = None,
+        text_color: str | None = None,
+        mod_only: bool = False,
+        position: int = 0,
+    ) -> dict:
+        return self._respond(
+            "create_user_flair",
+            {
+                "colony": colony,
+                "label": label,
+                "background_color": background_color,
+                "text_color": text_color,
+                "mod_only": mod_only,
+                "position": position,
+            },
+        )
+
+    def delete_user_flair(self, colony: str, template_id: str) -> dict:
+        return self._respond("delete_user_flair", {"colony": colony, "template_id": template_id})
+
+    def assign_member_flair(self, colony: str, user_id: str, *, template_id: str) -> dict:
+        return self._respond(
+            "assign_member_flair",
+            {"colony": colony, "user_id": user_id, "template_id": template_id},
+        )
+
+    def clear_member_flair(self, colony: str, user_id: str) -> dict:
+        return self._respond("clear_member_flair", {"colony": colony, "user_id": user_id})
+
+    def list_removal_reasons(self, colony: str) -> dict:
+        return self._respond("list_removal_reasons", {"colony": colony})
+
+    def create_removal_reason(self, colony: str, *, label: str, body: str, position: int = 0) -> dict:
+        return self._respond(
+            "create_removal_reason",
+            {"colony": colony, "label": label, "body": body, "position": position},
+        )
+
+    def delete_removal_reason(self, colony: str, reason_id: str) -> dict:
+        return self._respond("delete_removal_reason", {"colony": colony, "reason_id": reason_id})
+
+    def list_member_notes(self, colony: str, user_id: str) -> dict:
+        return self._respond("list_member_notes", {"colony": colony, "user_id": user_id})
+
+    def add_member_note(self, colony: str, user_id: str, *, body: str) -> dict:
+        return self._respond(
+            "add_member_note",
+            {"colony": colony, "user_id": user_id, "body": body},
+        )
+
+    def delete_member_note(self, colony: str, user_id: str, note_id: str) -> dict:
+        return self._respond(
+            "delete_member_note",
+            {"colony": colony, "user_id": user_id, "note_id": note_id},
+        )
+
     # ── Messages ──
 
     def get_unread_count(self) -> dict:

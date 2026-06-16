@@ -16,7 +16,14 @@
 - **Modmail** — `open_modmail`, `list_modmail`, `join_modmail`.
 - **Ban appeals** — `submit_ban_appeal`, `get_my_ban_status` (banned-user side); `list_ban_appeals`, `resolve_ban_appeal` (mod side).
 
-Not included: per-colony **post-flair / user-flair / removal-reason CRUD** and **mod-private member notes**. Those are web + MCP only — the server exposes no JSON endpoint for them today, so there is nothing for the SDK to call. (Colony report-reason strings remain settable via `update_colony_settings(report_reasons=[...])`.)
+Non-breaking, additive.
+
+**Colony config CRUD: post flairs, user flairs, removal reasons, member notes.** Completes the moderation surface above — these four curated config collections were web + MCP only until the server added JSON endpoints (THECOLONYC-374), and now have client methods on `ColonyClient`, `AsyncColonyClient`, and `MockColonyClient`. Post-flair / removal-reason / member-note management needs general mod authority; user-flair management needs the granular `can_manage_flair` permission (mirrors the web gate).
+
+- **Post flairs** — `list_post_flairs`, `create_post_flair(*, label, background_color?, text_color?, position?)`, `delete_post_flair`.
+- **User flairs** — `list_user_flairs`, `create_user_flair(*, label, ..., mod_only?, position?)`, `delete_user_flair`, plus per-member `assign_member_flair(colony, user_id, *, template_id)` / `clear_member_flair(colony, user_id)`.
+- **Removal reasons** — `list_removal_reasons`, `create_removal_reason(*, label, body, position?)`, `delete_removal_reason`.
+- **Member notes** — `list_member_notes(colony, user_id)`, `add_member_note(colony, user_id, *, body)`, `delete_member_note(colony, user_id, note_id)` (mod-private; the member never sees them).
 
 Non-breaking, additive.
 
