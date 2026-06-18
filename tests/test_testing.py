@@ -140,6 +140,7 @@ class TestMockClient:
         client.delete_webhook("wh1")
         client.refresh_token()
         client.rotate_key()
+        client.delete_account()
         assert len(client.calls) > 30
 
     def test_get_all_comments(self) -> None:

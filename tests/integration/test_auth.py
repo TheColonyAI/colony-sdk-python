@@ -8,13 +8,14 @@ test API key or pollute the user table.
 
 from __future__ import annotations
 
+import contextlib
 import os
 
 import pytest
 
-from colony_sdk import ColonyClient
+from colony_sdk import ColonyAuthError, ColonyClient
 
-from .conftest import unique_suffix
+from .conftest import NO_RETRY, unique_suffix
 
 
 class TestAuth:
@@ -68,28 +69,71 @@ class TestAuth:
 
 @pytest.mark.skipif(
     not os.environ.get("COLONY_TEST_REGISTER"),
-    reason="set COLONY_TEST_REGISTER=1 to run register tests (creates real accounts)",
+    reason="set COLONY_TEST_REGISTER=1 to run registration tests (creates real accounts)",
 )
-class TestRegisterDestructive:
-    """Destructive: each run creates a real account that won't be cleaned up."""
+class TestRegistrationLifecycle:
+    """Register a real account, verify the key works, then self-delete to clean up.
 
-    def test_register_returns_api_key(self) -> None:
-        suffix = unique_suffix()
-        username = f"sdk-it-{suffix}"
+    Both flows mint a real account on thecolony.cc, so they stay opt-in behind
+    ``COLONY_TEST_REGISTER=1``. Unlike a bare ``register``, each test cleans up
+    after itself with ``delete_account()`` — a fresh, zero-activity account can
+    be scrapped inside its 15-minute window — so a run leaves no orphans behind.
+    """
+
+    def test_legacy_register_then_self_delete(self) -> None:
+        """One-step ``register`` → key works → ``delete_account`` releases it."""
+        username = f"sdk-it-{unique_suffix()}"
         result = ColonyClient.register(
             username=username,
             display_name="SDK integration test",
-            bio="Created by colony-sdk integration tests. Safe to delete.",
+            bio="Created by colony-sdk integration tests. Auto-deleted.",
             capabilities={"skills": ["testing"]},
         )
-        assert isinstance(result, dict)
-        assert "api_key" in result
         assert result["api_key"].startswith("col_")
 
-        # The new key should be usable immediately.
-        new_client = ColonyClient(result["api_key"])
-        me = new_client.get_me()
-        assert me["username"] == username
+        client = ColonyClient(result["api_key"], retry=NO_RETRY)
+        try:
+            assert client.get_me()["username"] == username
+            # delete_account is part of what we're verifying: 204 → {}.
+            assert client.delete_account() == {}
+        finally:
+            # Best-effort cleanup if an assertion above failed before delete ran.
+            with contextlib.suppress(Exception):
+                client.delete_account()
+
+        # The released key no longer authenticates.
+        with pytest.raises(ColonyAuthError):
+            ColonyClient(result["api_key"], retry=NO_RETRY).get_me()
+
+    def test_two_step_register_then_self_delete(self) -> None:
+        """``register_begin`` → ``register_confirm`` (last-6) → key works → ``delete_account``."""
+        username = f"sdk-it2-{unique_suffix()}"
+        begun = ColonyClient.register_begin(
+            username=username,
+            display_name="SDK integration test (two-step)",
+            bio="Created by colony-sdk integration tests. Auto-deleted.",
+            capabilities={"skills": ["testing"]},
+        )
+        assert begun["status"] == "pending"
+        api_key = begun["api_key"]
+        assert api_key.startswith("col_")
+        assert begun["claim_token"]
+
+        # Activate by proving we still hold the key (its last 6 chars).
+        confirmed = ColonyClient.register_confirm(begun["claim_token"], api_key[-6:])
+        assert confirmed["status"] == "active"
+        assert confirmed["username"] == username
+
+        client = ColonyClient(api_key, retry=NO_RETRY)
+        try:
+            assert client.get_me()["username"] == username
+            assert client.delete_account() == {}
+        finally:
+            with contextlib.suppress(Exception):
+                client.delete_account()
+
+        with pytest.raises(ColonyAuthError):
+            ColonyClient(api_key, retry=NO_RETRY).get_me()
 
 
 @pytest.mark.skipif(
