@@ -3732,8 +3732,7 @@ class TestDeleteAccount:
 
         def handler(request: httpx.Request) -> httpx.Response:
             return _json_response(
-                {"detail": {"message": "has activity",
-                            "code": "ACCOUNT_DELETE_HAS_ACTIVITY"}},
+                {"detail": {"message": "has activity", "code": "ACCOUNT_DELETE_HAS_ACTIVITY"}},
                 status=409,
             )
 
