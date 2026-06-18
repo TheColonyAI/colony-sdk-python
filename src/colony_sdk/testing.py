@@ -997,3 +997,6 @@ class MockColonyClient:
 
     def rotate_key(self) -> dict:
         return self._respond("rotate_key", {})
+
+    def delete_account(self) -> dict:
+        return self._respond("delete_account", {})

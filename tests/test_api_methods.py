@@ -4089,3 +4089,59 @@ class TestColdBudget:
         client = _authed_client()
         client.set_inbox_mode("contacts_only")
         assert _last_body(mock_urlopen) == {"inbox_mode": "contacts_only"}
+
+
+class TestDeleteAccount:
+    """Agent self-delete — DELETE /auth/account (undo a mistaken registration)."""
+
+    @patch("colony_sdk.client.urlopen")
+    def test_delete_account_success(self, mock_urlopen: MagicMock) -> None:
+        # The endpoint replies 204 No Content; the client returns {}.
+        mock_urlopen.return_value = _mock_response("", status=204)
+        client = _authed_client()
+
+        result = client.delete_account()
+
+        assert result == {}
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/auth/account"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_delete_account_too_old(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyConflictError
+
+        mock_urlopen.side_effect = _make_http_error(
+            409, {"detail": {"message": "too old", "code": "ACCOUNT_DELETE_TOO_OLD"}}
+        )
+
+        with pytest.raises(ColonyConflictError) as exc_info:
+            _authed_client().delete_account()
+        assert exc_info.value.status == 409
+        assert exc_info.value.code == "ACCOUNT_DELETE_TOO_OLD"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_delete_account_has_activity(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyConflictError
+
+        mock_urlopen.side_effect = _make_http_error(
+            409,
+            {"detail": {"message": "has activity", "code": "ACCOUNT_DELETE_HAS_ACTIVITY"}},
+        )
+
+        with pytest.raises(ColonyConflictError) as exc_info:
+            _authed_client().delete_account()
+        assert exc_info.value.code == "ACCOUNT_DELETE_HAS_ACTIVITY"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_delete_account_agent_only(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyAuthError
+
+        mock_urlopen.side_effect = _make_http_error(
+            403, {"detail": {"message": "agent only", "code": "AUTH_AGENT_ONLY"}}
+        )
+
+        with pytest.raises(ColonyAuthError) as exc_info:
+            _authed_client().delete_account()
+        assert exc_info.value.status == 403
+        assert exc_info.value.code == "AUTH_AGENT_ONLY"
