@@ -1819,6 +1819,168 @@ class TestRegister:
         assert exc_info.value.status == 409
         assert "Username taken" in str(exc_info.value)
 
+    # ── Two-step registration (begin / confirm) ──────────────────────
+
+    async def test_register_begin_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return _json_response(
+                {"status": "pending", "api_key": "col_xVfm4S4", "claim_token": "rct_tok"}
+            )
+
+        import colony_sdk.async_client as ac
+
+        real_async_client = ac.httpx.AsyncClient
+
+        def patched_async_client(*args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
+
+        result = await AsyncColonyClient.register_begin("alice", "Alice", "AI for science")
+        assert result["status"] == "pending"
+        assert seen["url"].endswith("/auth/register/begin")
+        assert seen["body"] == {
+            "username": "alice",
+            "display_name": "Alice",
+            "bio": "AI for science",
+            "capabilities": {},
+        }
+
+    async def test_register_begin_network_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from colony_sdk import ColonyNetworkError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("DNS failed")
+
+        import colony_sdk.async_client as ac
+
+        real_async_client = ac.httpx.AsyncClient
+
+        def patched_async_client(*args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
+
+        with pytest.raises(ColonyNetworkError) as exc_info:
+            await AsyncColonyClient.register_begin("alice", "Alice", "bio")
+        assert exc_info.value.status == 0
+
+    async def test_register_confirm_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return _json_response({"status": "active", "id": "u1", "username": "alice"})
+
+        import colony_sdk.async_client as ac
+
+        real_async_client = ac.httpx.AsyncClient
+
+        def patched_async_client(*args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
+
+        result = await AsyncColonyClient.register_confirm("rct_tok", "Vfm4S4")
+        assert result["status"] == "active"
+        assert seen["url"].endswith("/auth/register/confirm")
+        assert seen["body"] == {"claim_token": "rct_tok", "key_fingerprint": "Vfm4S4"}
+
+    async def test_register_confirm_fingerprint_mismatch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from colony_sdk import ColonyValidationError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {"detail": {"message": "mismatch", "code": "REGISTER_FINGERPRINT_MISMATCH"}},
+                status=400,
+            )
+
+        import colony_sdk.async_client as ac
+
+        real_async_client = ac.httpx.AsyncClient
+
+        def patched_async_client(*args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
+
+        with pytest.raises(ColonyValidationError) as exc_info:
+            await AsyncColonyClient.register_confirm("rct_tok", "XXXXXX")
+        assert exc_info.value.code == "REGISTER_FINGERPRINT_MISMATCH"
+
+    async def test_register_confirm_claim_expired(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {"detail": {"message": "expired", "code": "REGISTER_CLAIM_EXPIRED"}},
+                status=410,
+            )
+
+        import colony_sdk.async_client as ac
+
+        real_async_client = ac.httpx.AsyncClient
+
+        def patched_async_client(*args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
+
+        with pytest.raises(ColonyAPIError) as exc_info:
+            await AsyncColonyClient.register_confirm("rct_old", "Vfm4S4")
+        assert exc_info.value.status == 410
+        assert exc_info.value.code == "REGISTER_CLAIM_EXPIRED"
+
+    async def test_register_begin_username_taken(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from colony_sdk import ColonyConflictError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {"detail": {"message": "taken", "code": "REGISTER_USERNAME_TAKEN"}}, status=409
+            )
+
+        import colony_sdk.async_client as ac
+
+        real_async_client = ac.httpx.AsyncClient
+
+        def patched_async_client(*args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
+
+        with pytest.raises(ColonyConflictError) as exc_info:
+            await AsyncColonyClient.register_begin("taken", "Name", "bio")
+        assert exc_info.value.code == "REGISTER_USERNAME_TAKEN"
+
+    async def test_register_confirm_network_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from colony_sdk import ColonyNetworkError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("DNS failed")
+
+        import colony_sdk.async_client as ac
+
+        real_async_client = ac.httpx.AsyncClient
+
+        def patched_async_client(*args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
+
+        with pytest.raises(ColonyNetworkError) as exc_info:
+            await AsyncColonyClient.register_confirm("rct_tok", "Vfm4S4")
+        assert exc_info.value.status == 0
+
 
 # ---------------------------------------------------------------------------
 # Pagination iterators

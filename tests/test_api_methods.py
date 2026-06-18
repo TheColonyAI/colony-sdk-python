@@ -1631,6 +1631,130 @@ class TestRegister:
         assert exc_info.value.status == 0
         assert "connection refused" in str(exc_info.value)
 
+    # ── Two-step registration (begin / confirm) ──────────────────────
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_begin_success(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "status": "pending",
+                "api_key": "col_abcdefVfm4S4",
+                "claim_token": "rct_tok",
+                "id": "uuid-1",
+                "username": "my-agent",
+                "expires_at": "2026-06-18T02:21:21Z",
+                "key_persistence_required": True,
+                "important": "SAVE api_key NOW",
+            }
+        )
+
+        result = ColonyClient.register_begin("my-agent", "My Agent", "I do things")
+
+        assert result["status"] == "pending"
+        assert result["claim_token"] == "rct_tok"
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/auth/register/begin"
+        body = json.loads(req.data.decode())
+        assert body == {
+            "username": "my-agent",
+            "display_name": "My Agent",
+            "bio": "I do things",
+            "capabilities": {},
+        }
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_begin_username_taken(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyConflictError
+
+        mock_urlopen.side_effect = _make_http_error(
+            409, {"detail": {"message": "Username taken", "code": "REGISTER_USERNAME_TAKEN"}}
+        )
+
+        with pytest.raises(ColonyConflictError) as exc_info:
+            ColonyClient.register_begin("taken", "Name", "bio")
+        assert exc_info.value.status == 409
+        assert exc_info.value.code == "REGISTER_USERNAME_TAKEN"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_begin_network_error(self, mock_urlopen: MagicMock) -> None:
+        from urllib.error import URLError
+
+        from colony_sdk import ColonyNetworkError
+
+        mock_urlopen.side_effect = URLError("connection refused")
+
+        with pytest.raises(ColonyNetworkError) as exc_info:
+            ColonyClient.register_begin("bot", "Bot", "bio")
+        assert exc_info.value.status == 0
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_confirm_success(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"status": "active", "id": "uuid-1", "username": "my-agent"}
+        )
+
+        result = ColonyClient.register_confirm("rct_tok", "Vfm4S4")
+
+        assert result == {"status": "active", "id": "uuid-1", "username": "my-agent"}
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/auth/register/confirm"
+        body = json.loads(req.data.decode())
+        assert body == {"claim_token": "rct_tok", "key_fingerprint": "Vfm4S4"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_confirm_fingerprint_mismatch(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyValidationError
+
+        mock_urlopen.side_effect = _make_http_error(
+            400,
+            {"detail": {"message": "Key fingerprint does not match", "code": "REGISTER_FINGERPRINT_MISMATCH"}},
+        )
+
+        with pytest.raises(ColonyValidationError) as exc_info:
+            ColonyClient.register_confirm("rct_tok", "XXXXXX")
+        assert exc_info.value.status == 400
+        assert exc_info.value.code == "REGISTER_FINGERPRINT_MISMATCH"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_confirm_claim_expired(self, mock_urlopen: MagicMock) -> None:
+        # 410 isn't mapped to a status-specific subclass — it surfaces as the base
+        # ColonyAPIError, with the machine code on .code. This is also what a
+        # second confirm after a successful one returns (single-use claim_token).
+        mock_urlopen.side_effect = _make_http_error(
+            410, {"detail": {"message": "claim expired", "code": "REGISTER_CLAIM_EXPIRED"}}
+        )
+
+        with pytest.raises(ColonyAPIError) as exc_info:
+            ColonyClient.register_confirm("rct_old", "Vfm4S4")
+        assert exc_info.value.status == 410
+        assert exc_info.value.code == "REGISTER_CLAIM_EXPIRED"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_confirm_already_active(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyConflictError
+
+        mock_urlopen.side_effect = _make_http_error(
+            409, {"detail": {"message": "already active", "code": "REGISTER_ALREADY_ACTIVE"}}
+        )
+
+        with pytest.raises(ColonyConflictError) as exc_info:
+            ColonyClient.register_confirm("rct_tok", "Vfm4S4")
+        assert exc_info.value.code == "REGISTER_ALREADY_ACTIVE"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_register_confirm_network_error(self, mock_urlopen: MagicMock) -> None:
+        from urllib.error import URLError
+
+        from colony_sdk import ColonyNetworkError
+
+        mock_urlopen.side_effect = URLError("connection refused")
+
+        with pytest.raises(ColonyNetworkError) as exc_info:
+            ColonyClient.register_confirm("rct_tok", "Vfm4S4")
+        assert exc_info.value.status == 0
+
 
 # ---------------------------------------------------------------------------
 # Typed errors
