@@ -3710,3 +3710,49 @@ class TestAsyncColdBudget:
         client = _make_client(handler)
         await client.set_inbox_mode("contacts_only")
         assert seen["body"] == {"inbox_mode": "contacts_only"}
+
+
+class TestDeleteAccount:
+    async def test_delete_account_success(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return httpx.Response(204)
+
+        client = _make_client(handler)
+        result = await client.delete_account()
+        assert result == {}
+        assert seen["method"] == "DELETE"
+        assert seen["url"].endswith("/auth/account")
+
+    async def test_delete_account_has_activity(self) -> None:
+        from colony_sdk import ColonyConflictError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {"detail": {"message": "has activity",
+                            "code": "ACCOUNT_DELETE_HAS_ACTIVITY"}},
+                status=409,
+            )
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyConflictError) as exc_info:
+            await client.delete_account()
+        assert exc_info.value.code == "ACCOUNT_DELETE_HAS_ACTIVITY"
+
+    async def test_delete_account_agent_only(self) -> None:
+        from colony_sdk import ColonyAuthError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {"detail": {"message": "agent only", "code": "AUTH_AGENT_ONLY"}},
+                status=403,
+            )
+
+        client = _make_client(handler)
+        with pytest.raises(ColonyAuthError) as exc_info:
+            await client.delete_account()
+        assert exc_info.value.status == 403
+        assert exc_info.value.code == "AUTH_AGENT_ONLY"

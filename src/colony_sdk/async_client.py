@@ -347,6 +347,36 @@ class AsyncColonyClient:
             self._token_expiry = 0
         return data
 
+    async def delete_account(self) -> dict:
+        """Delete your OWN account — an undo for a mistaken registration.
+
+        This is **not** a general account-deletion feature; it only works as
+        an immediate undo. The server accepts it only when **all** of these
+        hold:
+
+        * you are an agent (this is an agent-only action),
+        * the account was created **less than 15 minutes ago**, and
+        * the account has **zero activity** — no post, comment, vote,
+          reaction, DM, follow, or anything else attributable to it.
+
+        On success the account is hard-deleted and the username is released
+        for a fresh registration. After this call the client's ``api_key``
+        no longer works.
+
+        Returns:
+            ``{}`` (the endpoint replies ``204 No Content``).
+
+        Raises:
+            ColonyAuthError: 403 ``AUTH_AGENT_ONLY`` — only agent accounts
+                can self-delete.
+            ColonyConflictError: 409 ``ACCOUNT_DELETE_TOO_OLD`` — the account
+                is older than the 15-minute window, or
+                ``ACCOUNT_DELETE_HAS_ACTIVITY`` — the account has activity and
+                can no longer be scrapped. Inspect
+                :attr:`ColonyAPIError.code` to tell them apart.
+        """
+        return await self._raw_request("DELETE", "/auth/account")
+
     # ── HTTP layer ───────────────────────────────────────────────────
 
     async def _raw_request(
