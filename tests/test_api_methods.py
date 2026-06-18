@@ -4145,3 +4145,109 @@ class TestDeleteAccount:
             _authed_client().delete_account()
         assert exc_info.value.status == 403
         assert exc_info.value.code == "AUTH_AGENT_ONLY"
+
+
+class TestRecoveryEmail:
+    """Recovery email + lost-key recovery (THECOLONYC-262).
+
+    GET/POST /auth/email, POST /auth/recover-key, and
+    POST /auth/recover-key/confirm.
+    """
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_recovery_email(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"email": "agent@example.com", "email_verified": True})
+        client = _authed_client()
+
+        result = client.get_recovery_email()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/auth/email"
+        assert result == {"email": "agent@example.com", "email_verified": True}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_recovery_email(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"email": "agent@example.com", "verification_sent": True})
+        client = _authed_client()
+
+        result = client.set_recovery_email("agent@example.com")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/auth/email"
+        assert _last_body(mock_urlopen) == {"email": "agent@example.com"}
+        assert result["verification_sent"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_recovery_email_karma_too_low(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyAuthError
+
+        mock_urlopen.side_effect = _make_http_error(
+            403, {"detail": {"message": "need 10 karma", "code": "KARMA_TOO_LOW"}}
+        )
+
+        with pytest.raises(ColonyAuthError) as exc_info:
+            _authed_client().set_recovery_email("agent@example.com")
+        assert exc_info.value.status == 403
+        assert exc_info.value.code == "KARMA_TOO_LOW"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_recovery_email_conflict(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyConflictError
+
+        mock_urlopen.side_effect = _make_http_error(409, {"detail": {"message": "already in use", "code": "CONFLICT"}})
+
+        with pytest.raises(ColonyConflictError) as exc_info:
+            _authed_client().set_recovery_email("taken@example.com")
+        assert exc_info.value.code == "CONFLICT"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_recover_key_is_unauthenticated(self, mock_urlopen: MagicMock) -> None:
+        # The caller has lost its key; the request must not carry a bearer
+        # token. A generic body comes back regardless of account existence.
+        mock_urlopen.return_value = _mock_response({"message": "If that account..."})
+        client = _authed_client()
+
+        result = client.recover_key("lost-agent")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/auth/recover-key"
+        assert _last_body(mock_urlopen) == {"username": "lost-agent"}
+        # auth=False — no Authorization header on the wire.
+        assert "Authorization" not in {k.title(): v for k, v in req.headers.items()}
+        assert "message" in result
+
+    @patch("colony_sdk.client.urlopen")
+    def test_confirm_key_recovery_updates_api_key(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"api_key": "col_recovered_key"})
+        client = _authed_client()
+        client._token = "stale-token"
+        client._token_expiry = time.time() + 9999
+
+        result = client.confirm_key_recovery("recovery-token-123")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/auth/recover-key/confirm"
+        assert _last_body(mock_urlopen) == {"token": "recovery-token-123"}
+        assert result == {"api_key": "col_recovered_key"}
+        # The client adopts the new key and clears the cached token.
+        assert client.api_key == "col_recovered_key"
+        assert client._token is None
+        assert client._token_expiry == 0
+
+    @patch("colony_sdk.client.urlopen")
+    def test_confirm_key_recovery_invalid_token(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyValidationError
+
+        mock_urlopen.side_effect = _make_http_error(400, {"detail": {"message": "invalid", "code": "INVALID_INPUT"}})
+        client = _authed_client()
+
+        with pytest.raises(ColonyValidationError) as exc_info:
+            client.confirm_key_recovery("bad-token")
+        assert exc_info.value.status == 400
+        assert exc_info.value.code == "INVALID_INPUT"
+        # A failed confirm must NOT touch the existing key.
+        assert client.api_key == "col_test"

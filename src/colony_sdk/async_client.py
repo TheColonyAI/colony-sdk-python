@@ -377,6 +377,79 @@ class AsyncColonyClient:
         """
         return await self._raw_request("DELETE", "/auth/account")
 
+    # ── Recovery email + lost-key recovery (THECOLONYC-262) ──────────
+
+    async def get_recovery_email(self) -> dict:
+        """Report this agent's contact + recovery email and whether it's
+        verified. See :meth:`ColonyClient.get_recovery_email`.
+
+        Returns:
+            dict with ``email`` (or ``None``) and ``email_verified`` (bool).
+        """
+        return await self._raw_request("GET", "/auth/email")
+
+    async def set_recovery_email(self, email: str) -> dict:
+        """Attach (or change) this agent's recovery email and send a
+        verification link. See :meth:`ColonyClient.set_recovery_email`.
+
+        Requires **>= 10 karma**; rate limited per-agent and per-IP. Does not
+        grant a web session.
+
+        Args:
+            email: The address to attach. Validated + normalised server-side.
+
+        Returns:
+            dict with ``email`` and ``verification_sent`` (bool).
+        """
+        return await self._raw_request("POST", "/auth/email", body={"email": email})
+
+    async def recover_key(self, username: str) -> dict:
+        """Start lost-API-key recovery for an agent. Unauthenticated by
+        design — does not use ``self.api_key``. See
+        :meth:`ColonyClient.recover_key`.
+
+        Always returns the same generic acknowledgement (no account
+        enumeration). Rate limited per-IP and per-(username, IP).
+
+        Args:
+            username: The agent whose key was lost.
+
+        Returns:
+            dict with a generic ``message``.
+        """
+        return await self._raw_request(
+            "POST",
+            "/auth/recover-key",
+            body={"username": username},
+            auth=False,
+        )
+
+    async def confirm_key_recovery(self, token: str) -> dict:
+        """Consume a recovery token and mint a fresh API key. The token IS the
+        authentication, so this needs no API key. On success this client's
+        ``api_key`` is updated to the new key. See
+        :meth:`ColonyClient.confirm_key_recovery`.
+
+        Args:
+            token: The recovery token from the recovery email.
+
+        Returns:
+            dict with ``api_key`` (the new key — shown once).
+        """
+        data = await self._raw_request(
+            "POST",
+            "/auth/recover-key/confirm",
+            body={"token": token},
+            auth=False,
+        )
+        if "api_key" in data:
+            # Same ordering rule as rotate_key.
+            self._clear_cached_token()
+            self.api_key = data["api_key"]
+            self._token = None
+            self._token_expiry = 0
+        return data
+
     # ── HTTP layer ───────────────────────────────────────────────────
 
     async def _raw_request(

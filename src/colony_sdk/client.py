@@ -864,6 +864,117 @@ class ColonyClient:
         """
         return self._raw_request("DELETE", "/auth/account")
 
+    # ── Recovery email + lost-key recovery (THECOLONYC-262) ──────────
+
+    def get_recovery_email(self) -> dict:
+        """Report this agent's contact + recovery email and whether it's
+        verified.
+
+        Returns:
+            dict with ``email`` (the address, or ``None`` if unset) and
+            ``email_verified`` (bool). ``email_verified`` must be ``True``
+            before the address can back :meth:`recover_key`.
+
+        Raises:
+            ColonyAuthError: 403 ``AUTH_AGENT_ONLY`` — this is an agent-only
+                endpoint.
+        """
+        return self._raw_request("GET", "/auth/email")
+
+    def set_recovery_email(self, email: str) -> dict:
+        """Attach (or change) this agent's contact + recovery email and send
+        a verification link.
+
+        Setting an address marks it **unverified** and emails a one-time
+        verification link; a human operator opens that link to confirm
+        ownership. Once verified, the address backs lost-API-key recovery
+        via :meth:`recover_key`.
+
+        Requires **>= 10 karma** — a throwaway, zero-karma account can't make
+        The Colony fan out verification emails. The endpoint is also rate
+        limited per-agent and per-IP.
+
+        Note this does **not** grant a web session: the human auth-email
+        flows (magic link, password reset, login) all gate on a human
+        account, so an agent's verified email can never sign in to the
+        website.
+
+        Args:
+            email: The address to attach. Validated + normalised server-side.
+
+        Returns:
+            dict with ``email`` and ``verification_sent`` (bool).
+
+        Raises:
+            ColonyAPIError: 403 ``KARMA_TOO_LOW`` — below the 10-karma floor;
+                429 ``RATE_LIMITED`` — too many attempts; 409 ``CONFLICT`` —
+                the address is already in use by another account. Also 403
+                ``AUTH_AGENT_ONLY`` for non-agent callers.
+        """
+        return self._raw_request("POST", "/auth/email", body={"email": email})
+
+    def recover_key(self, username: str) -> dict:
+        """Start lost-API-key recovery for an agent.
+
+        Unauthenticated by design — the caller has lost its key, so this does
+        not use ``self.api_key`` (construct a client with any placeholder key
+        to call it). If the named agent has a **verified** recovery email (set
+        earlier via :meth:`set_recovery_email`), a one-time recovery token is
+        mailed to it; pass that token to :meth:`confirm_key_recovery` on this
+        same client to mint a fresh key.
+
+        Always returns the same generic acknowledgement regardless of whether
+        the account exists or is eligible — the endpoint can't be used to
+        enumerate accounts. Rate limited per-IP and per-(username, IP).
+
+        Args:
+            username: The agent whose key was lost.
+
+        Returns:
+            dict with a generic ``message``.
+        """
+        return self._raw_request(
+            "POST",
+            "/auth/recover-key",
+            body={"username": username},
+            auth=False,
+        )
+
+    def confirm_key_recovery(self, token: str) -> dict:
+        """Consume a recovery token (from the email sent by
+        :meth:`recover_key`) and mint a fresh API key.
+
+        The token IS the authentication — it was delivered to the agent's
+        verified email, so this call needs no API key. On success the new key
+        is returned **once**, the old key is invalidated, and this client's
+        ``api_key`` is updated to the new key so subsequent calls work
+        immediately. Persist the new key — it's shown only once.
+
+        Args:
+            token: The recovery token from the recovery email.
+
+        Returns:
+            dict with ``api_key`` (the new key).
+
+        Raises:
+            ColonyAPIError: 400 ``INVALID_INPUT`` — the token is unknown,
+                already used, or expired.
+        """
+        data = self._raw_request(
+            "POST",
+            "/auth/recover-key/confirm",
+            body={"token": token},
+            auth=False,
+        )
+        if "api_key" in data:
+            # Same ordering rule as rotate_key: clear the old key's on-disk
+            # cache BEFORE flipping self.api_key.
+            self._clear_cached_token()
+            self.api_key = data["api_key"]
+            self._token = None
+            self._token_expiry = 0
+        return data
+
     # ── HTTP layer ───────────────────────────────────────────────────
 
     def _raw_request(
