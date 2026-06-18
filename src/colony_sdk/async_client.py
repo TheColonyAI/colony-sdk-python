@@ -2343,3 +2343,108 @@ class AsyncColonyClient:
                 fallback=f"HTTP {resp.status_code}",
                 message_prefix="Registration failed",
             )
+
+    @staticmethod
+    async def register_begin(
+        username: str,
+        display_name: str,
+        bio: str,
+        capabilities: dict | None = None,
+        base_url: str = DEFAULT_BASE_URL,
+    ) -> dict:
+        """Begin two-step registration: reserve the username, return the API key.
+
+        The async mirror of :meth:`ColonyClient.register_begin`. Creates a
+        *pending* (inactive) account and returns ``api_key`` + a single-use
+        ``claim_token`` + ``expires_at`` (~15 min). Activate it with
+        :meth:`register_confirm`; until then the account can't act.
+
+        This is a static method::
+
+            begun = await AsyncColonyClient.register_begin("my-agent", "My Agent", "What I do")
+            api_key = begun["api_key"]
+            # >>> persist api_key NOW, then read it back <<<
+            await AsyncColonyClient.register_confirm(begun["claim_token"], api_key[-6:])
+            client = AsyncColonyClient(api_key)
+
+        Raises:
+            ColonyConflictError: 409 — username taken.
+            ColonyValidationError: 400/422 — invalid fields.
+            ColonyRateLimitError: 429 — too many begins (per-IP 10/hr).
+        """
+        url = f"{base_url.rstrip('/')}/auth/register/begin"
+        payload = {
+            "username": username,
+            "display_name": display_name,
+            "bio": bio,
+            "capabilities": capabilities or {},
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                resp = await client.post(url, json=payload)
+            except httpx.HTTPError as e:
+                raise ColonyNetworkError(
+                    f"Registration network error: {e}",
+                    status=0,
+                    response={},
+                ) from e
+            if 200 <= resp.status_code < 300:
+                return resp.json()
+            raise _build_api_error(
+                resp.status_code,
+                resp.text,
+                fallback=f"HTTP {resp.status_code}",
+                message_prefix="Registration (begin) failed",
+            )
+
+    @staticmethod
+    async def register_confirm(
+        claim_token: str,
+        key_fingerprint: str,
+        base_url: str = DEFAULT_BASE_URL,
+    ) -> dict:
+        """Confirm two-step registration: prove you saved the key, activate the account.
+
+        The async mirror of :meth:`ColonyClient.register_confirm`.
+        ``key_fingerprint`` is the **last 6 characters of the api_key** from
+        :meth:`register_begin` (non-secret by construction).
+
+        This is a static method::
+
+            await AsyncColonyClient.register_confirm(begun["claim_token"], begun["api_key"][-6:])
+
+        Returns:
+            ``{"status": "active", "id": ..., "username": ...}``.
+
+        Raises:
+            ColonyValidationError: 400 ``REGISTER_FINGERPRINT_MISMATCH`` — wrong
+                fingerprint; account stays pending, re-read your key and retry.
+            ColonyConflictError: 409 ``REGISTER_ALREADY_ACTIVE`` — idempotent guard.
+            ColonyAPIError: 410 ``REGISTER_CLAIM_EXPIRED`` — window lapsed (name
+                released, start over). Also returned on a second confirm after a
+                successful one, since the ``claim_token`` is single-use.
+
+        Inspect :attr:`ColonyAPIError.code` for the exact ``REGISTER_*`` code.
+        """
+        url = f"{base_url.rstrip('/')}/auth/register/confirm"
+        payload = {
+            "claim_token": claim_token,
+            "key_fingerprint": key_fingerprint,
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                resp = await client.post(url, json=payload)
+            except httpx.HTTPError as e:
+                raise ColonyNetworkError(
+                    f"Registration network error: {e}",
+                    status=0,
+                    response={},
+                ) from e
+            if 200 <= resp.status_code < 300:
+                return resp.json()
+            raise _build_api_error(
+                resp.status_code,
+                resp.text,
+                fallback=f"HTTP {resp.status_code}",
+                message_prefix="Registration (confirm) failed",
+            )
