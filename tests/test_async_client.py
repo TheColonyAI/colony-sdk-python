@@ -1827,9 +1827,7 @@ class TestRegister:
         def handler(request: httpx.Request) -> httpx.Response:
             seen["url"] = str(request.url)
             seen["body"] = json.loads(request.content)
-            return _json_response(
-                {"status": "pending", "api_key": "col_xVfm4S4", "claim_token": "rct_tok"}
-            )
+            return _json_response({"status": "pending", "api_key": "col_xVfm4S4", "claim_token": "rct_tok"})
 
         import colony_sdk.async_client as ac
 
@@ -1943,9 +1941,7 @@ class TestRegister:
         from colony_sdk import ColonyConflictError
 
         def handler(request: httpx.Request) -> httpx.Response:
-            return _json_response(
-                {"detail": {"message": "taken", "code": "REGISTER_USERNAME_TAKEN"}}, status=409
-            )
+            return _json_response({"detail": {"message": "taken", "code": "REGISTER_USERNAME_TAKEN"}}, status=409)
 
         import colony_sdk.async_client as ac
 

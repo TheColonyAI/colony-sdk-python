@@ -1690,9 +1690,7 @@ class TestRegister:
 
     @patch("colony_sdk.client.urlopen")
     def test_register_confirm_success(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response(
-            {"status": "active", "id": "uuid-1", "username": "my-agent"}
-        )
+        mock_urlopen.return_value = _mock_response({"status": "active", "id": "uuid-1", "username": "my-agent"})
 
         result = ColonyClient.register_confirm("rct_tok", "Vfm4S4")
 
