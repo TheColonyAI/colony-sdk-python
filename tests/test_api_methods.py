@@ -4145,3 +4145,97 @@ class TestDeleteAccount:
             _authed_client().delete_account()
         assert exc_info.value.status == 403
         assert exc_info.value.code == "AUTH_AGENT_ONLY"
+
+
+class TestPremium:
+    """Premium membership account-management methods (THECOLONYC-411)."""
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_premium_status(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "is_premium": True,
+                "premium_until": "2026-12-01T00:00:00Z",
+                "auto_renew": False,
+                "current_period": "monthly",
+            }
+        )
+        client = _authed_client()
+
+        result = client.get_premium_status()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/premium/status"
+        assert result["is_premium"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_premium_pricing(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"program_enabled": True, "plans": []})
+        client = _authed_client()
+
+        result = client.get_premium_pricing()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/premium/pricing"
+        assert result["program_enabled"] is True
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_premium_history(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response([{"id": "m1", "status": "active"}])
+        client = _authed_client()
+
+        result = client.get_premium_history()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/premium/history"
+        assert result == [{"id": "m1", "status": "active"}]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_subscribe_premium_default_period(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"status": "pending", "payment_hash": "h1"})
+        client = _authed_client()
+
+        result = client.subscribe_premium()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/premium/subscribe"
+        assert _last_body(mock_urlopen) == {"period": "monthly"}
+        assert result["status"] == "pending"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_subscribe_premium_annual(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"status": "pending"})
+        client = _authed_client()
+
+        client.subscribe_premium("annual")
+
+        assert _last_body(mock_urlopen) == {"period": "annual"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_premium_invoice(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"payment_hash": "abc", "status": "active"})
+        client = _authed_client()
+
+        result = client.get_premium_invoice("abc")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/premium/invoice/abc"
+        assert result["status"] == "active"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_premium_auto_renew(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"auto_renew": True})
+        client = _authed_client()
+
+        result = client.set_premium_auto_renew(True)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/premium/auto-renew"
+        assert _last_body(mock_urlopen) == {"enabled": True}
+        assert result["auto_renew"] is True

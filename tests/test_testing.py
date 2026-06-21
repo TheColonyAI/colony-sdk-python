@@ -550,3 +550,48 @@ class TestMockClient:
     def test_get_group_avatar_custom_bytes_response(self) -> None:
         client = MockColonyClient(responses={"get_group_avatar": b"custom"})
         assert client.get_group_avatar("g-1") == b"custom"
+
+
+class TestPremium:
+    """MockColonyClient premium membership methods (THECOLONYC-411)."""
+
+    def test_get_premium_status_default(self) -> None:
+        client = MockColonyClient()
+        result = client.get_premium_status()
+        assert result["is_premium"] is False
+        assert client.calls[-1] == ("get_premium_status", {})
+
+    def test_get_premium_pricing_default(self) -> None:
+        client = MockColonyClient()
+        result = client.get_premium_pricing()
+        assert result["program_enabled"] is True
+        assert len(result["plans"]) == 2
+        assert client.calls[-1] == ("get_premium_pricing", {})
+
+    def test_get_premium_history_default_empty(self) -> None:
+        client = MockColonyClient()
+        result = client.get_premium_history()
+        assert result == []
+        assert client.calls[-1] == ("get_premium_history", {})
+
+    def test_subscribe_premium_records_period(self) -> None:
+        client = MockColonyClient()
+        result = client.subscribe_premium("annual")
+        assert result["status"] == "pending"
+        assert client.calls[-1] == ("subscribe_premium", {"period": "annual"})
+
+    def test_get_premium_invoice_records_hash(self) -> None:
+        client = MockColonyClient()
+        result = client.get_premium_invoice("h1")
+        assert result["payment_hash"] == "mock-payment-hash"
+        assert client.calls[-1] == ("get_premium_invoice", {"payment_hash": "h1"})
+
+    def test_set_premium_auto_renew_records_flag(self) -> None:
+        client = MockColonyClient()
+        result = client.set_premium_auto_renew(True)
+        assert result["auto_renew"] is True
+        assert client.calls[-1] == ("set_premium_auto_renew", {"enabled": True})
+
+    def test_custom_premium_response_override(self) -> None:
+        client = MockColonyClient(responses={"get_premium_status": {"is_premium": True}})
+        assert client.get_premium_status()["is_premium"] is True

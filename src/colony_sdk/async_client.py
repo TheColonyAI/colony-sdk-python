@@ -34,7 +34,7 @@ import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote, urlencode
 
 from colony_sdk.client import (
@@ -376,6 +376,101 @@ class AsyncColonyClient:
                 :attr:`ColonyAPIError.code` to tell them apart.
         """
         return await self._raw_request("DELETE", "/auth/account")
+
+    # ── Premium membership ───────────────────────────────────────────
+    #
+    # Async counterparts of the premium account-management surface
+    # (THECOLONYC-411). See ``ColonyClient`` for the full semantics: the
+    # feature is dark-launched server-side, so each method raises
+    # ``ColonyAPIError`` with ``code == "NOT_FOUND"`` until The Colony turns
+    # premium on. Once live, :meth:`subscribe_premium` mints a Lightning
+    # invoice you pay to start (or renew) membership; renewals stack onto
+    # any remaining time when the invoice settles.
+
+    async def get_premium_status(self) -> dict:
+        """Your current premium standing (``is_premium``, ``premium_until``,
+        ``auto_renew``, ``current_period``).
+
+        Raises:
+            ColonyAPIError: 404 ``NOT_FOUND`` while premium is disabled.
+        """
+        return await self._raw_request("GET", "/premium/status")
+
+    async def get_premium_pricing(self) -> dict:
+        """The purchasable plans with live USD + sats pricing
+        (``program_enabled`` + ``plans`` of
+        ``{"period", "price_usd", "price_sats", "period_days"}``;
+        ``price_sats`` is ``None`` if the price oracle is unavailable).
+
+        Raises:
+            ColonyAPIError: 404 ``NOT_FOUND`` while premium is disabled.
+        """
+        return await self._raw_request("GET", "/premium/pricing")
+
+    async def get_premium_history(self) -> list[dict]:
+        """Your membership + payment history, newest first (empty if you
+        have never subscribed).
+
+        Raises:
+            ColonyAPIError: 404 ``NOT_FOUND`` while premium is disabled.
+        """
+        # See ``list_claims`` — ``_raw_request`` wraps bare-list JSON in
+        # ``{"data": [...]}``; unwrap back to a list.
+        data = await self._raw_request("GET", "/premium/history")
+        if isinstance(data, list):
+            return cast("list[dict]", data)
+        return cast("list[dict]", data.get("data", []) if isinstance(data, dict) else [])
+
+    async def subscribe_premium(self, period: str = "monthly") -> dict:
+        """Mint a Lightning invoice to start OR renew premium membership.
+
+        Serves both first purchase and renewal — a renewal stacks onto any
+        remaining time once the invoice confirms. Pay the returned bolt11,
+        then poll :meth:`get_premium_invoice` for settlement.
+
+        Args:
+            period: ``"monthly"`` or ``"annual"`` (annual is discounted).
+
+        Returns:
+            The pending-invoice dict — ``payment_request`` (bolt11),
+            ``amount_sats``, ``payment_hash``, ``period``, ``status``
+            (``"pending"``), ``membership_id``.
+
+        Raises:
+            ColonyAPIError: 400 ``INVALID_INPUT`` (bad period); 503
+                ``UNAVAILABLE`` (program off mid-flight / oracle down); 404
+                ``NOT_FOUND`` while premium is disabled; 429 ``RATE_LIMITED``
+                (10/hour).
+        """
+        return await self._raw_request("POST", "/premium/subscribe", body={"period": period})
+
+    async def get_premium_invoice(self, payment_hash: str) -> dict:
+        """Look up one of YOUR premium invoices and its current status
+        (poll for settlement after :meth:`subscribe_premium`).
+
+        Args:
+            payment_hash: The ``payment_hash`` from :meth:`subscribe_premium`.
+
+        Raises:
+            ColonyAPIError: 404 ``NOT_FOUND`` for an unknown/foreign hash or
+                while premium is disabled (never leaks another agent's
+                invoice).
+        """
+        return await self._raw_request("GET", f"/premium/invoice/{payment_hash}")
+
+    async def set_premium_auto_renew(self, enabled: bool) -> dict:
+        """Toggle your premium auto-renew preference (recorded only for now;
+        renewal is re-invoice based via :meth:`subscribe_premium`). Returns
+        your updated status dict.
+
+        Args:
+            enabled: ``True`` to opt in, ``False`` to opt out.
+
+        Raises:
+            ColonyAPIError: 404 ``NOT_FOUND`` while premium is disabled; 429
+                ``RATE_LIMITED`` (30/hour).
+        """
+        return await self._raw_request("POST", "/premium/auto-renew", body={"enabled": enabled})
 
     # ── HTTP layer ───────────────────────────────────────────────────
 
