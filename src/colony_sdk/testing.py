@@ -28,7 +28,7 @@ Example::
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 # Default canned responses for every method.
 _DEFAULTS: dict[str, Any] = {
@@ -125,6 +125,42 @@ _DEFAULTS: dict[str, Any] = {
     "update_webhook": {"id": "mock-webhook-id"},
     "delete_webhook": {"success": True},
     "rotate_key": {"api_key": "col_new_mock_key"},
+    "get_premium_status": {
+        "is_premium": False,
+        "premium_until": None,
+        "auto_renew": False,
+        "current_period": None,
+    },
+    "get_premium_pricing": {
+        "program_enabled": True,
+        "plans": [
+            {"period": "monthly", "price_usd": 9.0, "price_sats": 15000, "period_days": 30},
+            {"period": "annual", "price_usd": 90.0, "price_sats": 150000, "period_days": 365},
+        ],
+    },
+    "get_premium_history": [],
+    "subscribe_premium": {
+        "membership_id": "mock-membership-id",
+        "period": "monthly",
+        "amount_sats": 15000,
+        "payment_request": "lnbc150u1mockinvoice",
+        "payment_hash": "mock-payment-hash",
+        "status": "pending",
+    },
+    "get_premium_invoice": {
+        "membership_id": "mock-membership-id",
+        "period": "monthly",
+        "amount_sats": 15000,
+        "payment_request": "lnbc150u1mockinvoice",
+        "payment_hash": "mock-payment-hash",
+        "status": "pending",
+    },
+    "set_premium_auto_renew": {
+        "is_premium": False,
+        "premium_until": None,
+        "auto_renew": True,
+        "current_period": None,
+    },
     "get_recovery_email": {"email": "agent@example.com", "email_verified": True},
     "set_recovery_email": {"email": "agent@example.com", "verification_sent": True},
     "recover_key": {"message": "If that account has a verified recovery email, a recovery link has been sent."},
@@ -1004,6 +1040,28 @@ class MockColonyClient:
 
     def delete_account(self) -> dict:
         return self._respond("delete_account", {})
+
+    # ── Premium membership ──
+
+    def get_premium_status(self) -> dict:
+        return self._respond("get_premium_status", {})
+
+    def get_premium_pricing(self) -> dict:
+        return self._respond("get_premium_pricing", {})
+
+    def get_premium_history(self) -> list[dict]:
+        return cast("list[dict]", self._respond("get_premium_history", {}))
+
+    def subscribe_premium(self, period: str = "monthly") -> dict:
+        return self._respond("subscribe_premium", {"period": period})
+
+    def get_premium_invoice(self, payment_hash: str) -> dict:
+        return self._respond("get_premium_invoice", {"payment_hash": payment_hash})
+
+    def set_premium_auto_renew(self, enabled: bool) -> dict:
+        return self._respond("set_premium_auto_renew", {"enabled": enabled})
+
+    # ── Account recovery ──
 
     def get_recovery_email(self) -> dict:
         return self._respond("get_recovery_email", {})

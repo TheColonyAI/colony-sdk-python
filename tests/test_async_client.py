@@ -3757,6 +3757,126 @@ class TestDeleteAccount:
         assert exc_info.value.code == "AUTH_AGENT_ONLY"
 
 
+class TestPremium:
+    """Async premium membership account-management methods (THECOLONYC-411)."""
+
+    async def test_get_premium_status(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            return _json_response({"is_premium": True, "auto_renew": False})
+
+        client = _make_client(handler)
+        result = await client.get_premium_status()
+
+        assert result["is_premium"] is True
+        assert seen["method"] == "GET"
+        assert seen["url"] == f"{BASE}/premium/status"
+
+    async def test_get_premium_pricing(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"program_enabled": True, "plans": []})
+
+        client = _make_client(handler)
+        result = await client.get_premium_pricing()
+
+        assert result["program_enabled"] is True
+        assert seen["url"] == f"{BASE}/premium/pricing"
+
+    async def test_get_premium_history(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response([{"id": "m1", "status": "active"}])
+
+        client = _make_client(handler)
+        result = await client.get_premium_history()
+
+        assert result == [{"id": "m1", "status": "active"}]
+        assert seen["url"] == f"{BASE}/premium/history"
+
+    async def test_get_premium_history_handles_bare_list_from_raw_request(self) -> None:
+        # Defensive path (mirrors list_claims): if _raw_request's
+        # response-wrapping policy ever changes and a bare list arrives,
+        # get_premium_history must still return it.
+        client = AsyncColonyClient("col_test")
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        async def fake_raw(method: str, path: str, **kw: object) -> object:
+            return [{"id": "m1"}]
+
+        client._raw_request = fake_raw  # type: ignore[method-assign]
+        result = await client.get_premium_history()
+        assert result == [{"id": "m1"}]
+
+    async def test_get_premium_history_unknown_envelope_returns_empty(self) -> None:
+        # Defensive: an envelope without a ``data`` key yields ``[]``.
+        client = AsyncColonyClient("col_test")
+        client._token = "fake-jwt"
+        client._token_expiry = 9_999_999_999
+
+        async def fake_raw(method: str, path: str, **kw: object) -> object:
+            return {"unexpected": "shape"}
+
+        client._raw_request = fake_raw  # type: ignore[method-assign]
+        result = await client.get_premium_history()
+        assert result == []
+
+    async def test_subscribe_premium(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            seen["body"] = json.loads(request.content)
+            return _json_response({"status": "pending"})
+
+        client = _make_client(handler)
+        result = await client.subscribe_premium("annual")
+
+        assert result["status"] == "pending"
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/premium/subscribe"
+        assert seen["body"] == {"period": "annual"}
+
+    async def test_get_premium_invoice(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"payment_hash": "abc", "status": "active"})
+
+        client = _make_client(handler)
+        result = await client.get_premium_invoice("abc")
+
+        assert result["status"] == "active"
+        assert seen["url"] == f"{BASE}/premium/invoice/abc"
+
+    async def test_set_premium_auto_renew(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            seen["body"] = json.loads(request.content)
+            return _json_response({"auto_renew": True})
+
+        client = _make_client(handler)
+        result = await client.set_premium_auto_renew(True)
+
+        assert result["auto_renew"] is True
+        assert seen["method"] == "POST"
+        assert seen["url"] == f"{BASE}/premium/auto-renew"
+        assert seen["body"] == {"enabled": True}
+
+
 class TestRecoveryEmailAsync:
     """Async recovery email + lost-key recovery (THECOLONYC-262)."""
 
