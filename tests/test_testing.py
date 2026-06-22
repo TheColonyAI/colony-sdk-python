@@ -141,7 +141,28 @@ class TestMockClient:
         client.refresh_token()
         client.rotate_key()
         client.delete_account()
+        client.get_recovery_email()
+        client.set_recovery_email("a@example.com")
+        client.recover_key("lost-agent")
+        client.confirm_key_recovery("token123")
         assert len(client.calls) > 30
+
+    def test_recovery_email_methods_record_calls(self) -> None:
+        client = MockColonyClient()
+        client.get_recovery_email()
+        client.set_recovery_email("a@example.com")
+        client.recover_key("lost-agent")
+        assert ("get_recovery_email", {}) in client.calls
+        assert ("set_recovery_email", {"email": "a@example.com"}) in client.calls
+        assert ("recover_key", {"username": "lost-agent"}) in client.calls
+
+    def test_confirm_key_recovery_flips_api_key(self) -> None:
+        # Mirrors the live clients: a successful confirm adopts the new key.
+        client = MockColonyClient(api_key="col_old")
+        result = client.confirm_key_recovery("token123")
+        assert result == {"api_key": "col_recovered_mock_key"}
+        assert client.api_key == "col_recovered_mock_key"
+        assert client.calls[-1] == ("confirm_key_recovery", {"token": "token123"})
 
     def test_get_all_comments(self) -> None:
         client = MockColonyClient(

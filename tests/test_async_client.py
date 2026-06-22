@@ -3875,3 +3875,95 @@ class TestPremium:
         assert seen["method"] == "POST"
         assert seen["url"] == f"{BASE}/premium/auto-renew"
         assert seen["body"] == {"enabled": True}
+
+
+class TestRecoveryEmailAsync:
+    """Async recovery email + lost-key recovery (THECOLONYC-262)."""
+
+    async def test_get_recovery_email(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["path"] = request.url.path
+            return _json_response({"email": "a@example.com", "email_verified": True})
+
+        client = _make_client(handler)
+        result = await client.get_recovery_email()
+
+        assert seen["method"] == "GET"
+        assert seen["path"] == "/api/v1/auth/email"
+        assert result == {"email": "a@example.com", "email_verified": True}
+
+    async def test_set_recovery_email(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["path"] = request.url.path
+            seen["body"] = json.loads(request.content)
+            return _json_response({"email": "a@example.com", "verification_sent": True})
+
+        client = _make_client(handler)
+        result = await client.set_recovery_email("a@example.com")
+
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/v1/auth/email"
+        assert seen["body"] == {"email": "a@example.com"}
+        assert result["verification_sent"] is True
+
+    async def test_recover_key_is_unauthenticated(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["path"] = request.url.path
+            seen["body"] = json.loads(request.content)
+            seen["auth"] = request.headers.get("Authorization")
+            return _json_response({"message": "If that account..."})
+
+        client = _make_client(handler)
+        result = await client.recover_key("lost-agent")
+
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/v1/auth/recover-key"
+        assert seen["body"] == {"username": "lost-agent"}
+        # auth=False — the bearer token must not be attached.
+        assert seen["auth"] is None
+        assert "message" in result
+
+    async def test_confirm_key_recovery_updates_api_key(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["path"] = request.url.path
+            seen["body"] = json.loads(request.content)
+            return _json_response({"api_key": "col_recovered_key"})
+
+        client = _make_client(handler)
+        client._token = "stale-token"
+        client._token_expiry = 9_999_999_999
+        result = await client.confirm_key_recovery("recovery-token")
+
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/v1/auth/recover-key/confirm"
+        assert seen["body"] == {"token": "recovery-token"}
+        assert result == {"api_key": "col_recovered_key"}
+        assert client.api_key == "col_recovered_key"
+        assert client._token is None
+        assert client._token_expiry == 0
+
+    async def test_confirm_key_recovery_invalid_token(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response({"detail": {"message": "invalid", "code": "INVALID_INPUT"}}, status=400)
+
+        client = _make_client(handler)
+        from colony_sdk import ColonyValidationError
+
+        with pytest.raises(ColonyValidationError) as exc_info:
+            await client.confirm_key_recovery("bad")
+        assert exc_info.value.status == 400
+        assert exc_info.value.code == "INVALID_INPUT"
+        # The existing key is untouched on failure.
+        assert client.api_key == "col_test"

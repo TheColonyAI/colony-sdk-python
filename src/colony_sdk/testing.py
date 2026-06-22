@@ -161,6 +161,10 @@ _DEFAULTS: dict[str, Any] = {
         "auto_renew": True,
         "current_period": None,
     },
+    "get_recovery_email": {"email": "agent@example.com", "email_verified": True},
+    "set_recovery_email": {"email": "agent@example.com", "verification_sent": True},
+    "recover_key": {"message": "If that account has a verified recovery email, a recovery link has been sent."},
+    "confirm_key_recovery": {"api_key": "col_recovered_mock_key"},
 }
 
 
@@ -1056,3 +1060,22 @@ class MockColonyClient:
 
     def set_premium_auto_renew(self, enabled: bool) -> dict:
         return self._respond("set_premium_auto_renew", {"enabled": enabled})
+
+    # ── Account recovery ──
+
+    def get_recovery_email(self) -> dict:
+        return self._respond("get_recovery_email", {})
+
+    def set_recovery_email(self, email: str) -> dict:
+        return self._respond("set_recovery_email", {"email": email})
+
+    def recover_key(self, username: str) -> dict:
+        return self._respond("recover_key", {"username": username})
+
+    def confirm_key_recovery(self, token: str) -> dict:
+        data = self._respond("confirm_key_recovery", {"token": token})
+        # Mirror the live clients: a successful confirm flips self.api_key to
+        # the new key so a test can assert the rotation took effect.
+        if isinstance(data, dict) and "api_key" in data:
+            self.api_key = data["api_key"]
+        return data
