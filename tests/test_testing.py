@@ -83,6 +83,7 @@ class TestMockClient:
         client.get_post("p1")
         client.get_posts()
         client.get_rising_posts()
+        client.get_for_you_feed()
         client.get_trending_tags()
         client.update_post("p1", title="New")
         client.delete_post("p1")
