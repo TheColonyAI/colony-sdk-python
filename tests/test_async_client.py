@@ -668,6 +668,18 @@ class TestReadMethods:
         assert "limit=10" in seen["url"]
         assert "offset=20" in seen["url"]
 
+    async def test_get_for_you_feed_with_kinds_and_post_type(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": [], "personalised": True, "count": 0})
+
+        client = _make_client(handler)
+        await client.get_for_you_feed(kinds="comments", post_type="question")
+        assert "kinds=comments" in seen["url"]
+        assert "post_type=question" in seen["url"]
+
     async def test_get_trending_tags(self) -> None:
         seen: dict = {}
 

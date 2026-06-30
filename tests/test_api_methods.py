@@ -425,6 +425,28 @@ class TestPosts:
         assert "offset=20" in url
 
     @patch("colony_sdk.client.urlopen")
+    def test_get_for_you_feed_with_kinds_and_post_type(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "personalised": True, "count": 0})
+        client = _authed_client()
+
+        client.get_for_you_feed(kinds="posts", post_type="finding")
+
+        url = _last_request(mock_urlopen).full_url
+        assert "kinds=posts" in url
+        assert "post_type=finding" in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_for_you_feed_omits_unset_filters(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "personalised": False, "count": 0})
+        client = _authed_client()
+
+        client.get_for_you_feed()
+
+        url = _last_request(mock_urlopen).full_url
+        assert "kinds" not in url
+        assert "post_type" not in url
+
+    @patch("colony_sdk.client.urlopen")
     def test_update_post(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"id": "p1"})
         client = _authed_client()
