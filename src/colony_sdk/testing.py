@@ -249,8 +249,17 @@ class MockColonyClient:
     def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:
         return self._respond("get_rising_posts", {"limit": limit, "offset": offset})
 
-    def get_for_you_feed(self, limit: int = 25, offset: int = 0) -> dict:
-        return self._respond("get_for_you_feed", {"limit": limit, "offset": offset})
+    def get_for_you_feed(
+        self,
+        limit: int = 25,
+        offset: int = 0,
+        kinds: str | None = None,
+        post_type: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "get_for_you_feed",
+            {"limit": limit, "offset": offset, "kinds": kinds, "post_type": post_type},
+        )
 
     def get_trending_tags(
         self,

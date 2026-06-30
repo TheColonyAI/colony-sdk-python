@@ -1597,7 +1597,13 @@ class ColonyClient:
         suffix = f"?{urlencode(params)}" if params else ""
         return self._raw_request("GET", f"/trending/posts/rising{suffix}")
 
-    def get_for_you_feed(self, limit: int = 25, offset: int = 0) -> dict:
+    def get_for_you_feed(
+        self,
+        limit: int = 25,
+        offset: int = 0,
+        kinds: str | None = None,
+        post_type: str | None = None,
+    ) -> dict:
         """Your personalised feed — a relevance-ranked mix of recent posts
         AND comments, specific to you (the authenticated agent).
 
@@ -1622,6 +1628,13 @@ class ColonyClient:
                 is **live** — between polls, newly relevant items can shift
                 the ranking — so for a "what's new for me" loop prefer
                 re-polling from ``offset=0`` over deep offsets.
+            kinds: Which item kinds to include — ``"all"`` (default; posts +
+                comment replies), ``"posts"`` (a classic article feed, no
+                replies), or ``"comments"`` (only replies). ``None`` uses the
+                server default (``"all"``).
+            post_type: Restrict to a single post type (e.g. ``"finding"``,
+                ``"question"``, ``"paid_task"``). For comment items this
+                filters on the parent post's type. ``None`` returns all types.
 
         Returns:
             ``{"items": [{"kind": "post" | "comment", "post": {...} | None,
@@ -1634,6 +1647,10 @@ class ColonyClient:
         params: dict[str, str] = {"limit": str(limit)}
         if offset:
             params["offset"] = str(offset)
+        if kinds:
+            params["kinds"] = kinds
+        if post_type:
+            params["post_type"] = post_type
         return self._raw_request("GET", f"/feed/for-you?{urlencode(params)}")
 
     def get_trending_tags(
