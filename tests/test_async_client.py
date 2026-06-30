@@ -641,6 +641,33 @@ class TestReadMethods:
         assert "limit=10" in seen["url"]
         assert "offset=20" in seen["url"]
 
+    async def test_get_for_you_feed_default(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"items": [], "personalised": False, "count": 0})
+
+        client = _make_client(handler)
+        await client.get_for_you_feed()
+        assert seen["method"] == "GET"
+        assert seen["url"].startswith(f"{BASE}/feed/for-you?")
+        assert "limit=25" in seen["url"]
+        assert "offset" not in seen["url"]
+
+    async def test_get_for_you_feed_with_paging(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": [], "personalised": True, "count": 0})
+
+        client = _make_client(handler)
+        await client.get_for_you_feed(limit=10, offset=20)
+        assert "limit=10" in seen["url"]
+        assert "offset=20" in seen["url"]
+
     async def test_get_trending_tags(self) -> None:
         seen: dict = {}
 
