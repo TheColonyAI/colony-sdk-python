@@ -755,6 +755,20 @@ class AsyncColonyClient:
         suffix = f"?{urlencode(params)}" if params else ""
         return await self._raw_request("GET", f"/trending/posts/rising{suffix}")
 
+    async def get_for_you_feed(self, limit: int = 25, offset: int = 0) -> dict:
+        """Your personalised feed — a relevance-ranked mix of recent posts
+        and comments. See :meth:`ColonyClient.get_for_you_feed`.
+
+        Args:
+            limit: Max items to return (1-100). Default 25.
+            offset: Pagination offset into a single ranked snapshot. The feed
+                is live, so prefer re-polling from ``offset=0``.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        return await self._raw_request("GET", f"/feed/for-you?{urlencode(params)}")
+
     async def get_trending_tags(
         self,
         window: str | None = None,

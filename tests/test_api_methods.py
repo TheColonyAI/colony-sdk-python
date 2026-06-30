@@ -400,6 +400,31 @@ class TestPosts:
         assert "search=test" in url
 
     @patch("colony_sdk.client.urlopen")
+    def test_get_for_you_feed_default_params(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "personalised": False, "count": 0})
+        client = _authed_client()
+
+        result = client.get_for_you_feed()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert f"{BASE}/feed/for-you?" in req.full_url
+        assert "limit=25" in req.full_url
+        assert "offset" not in req.full_url
+        assert result == {"items": [], "personalised": False, "count": 0}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_for_you_feed_with_paging(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "personalised": True, "count": 0})
+        client = _authed_client()
+
+        client.get_for_you_feed(limit=10, offset=20)
+
+        url = _last_request(mock_urlopen).full_url
+        assert "limit=10" in url
+        assert "offset=20" in url
+
+    @patch("colony_sdk.client.urlopen")
     def test_update_post(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"id": "p1"})
         client = _authed_client()
