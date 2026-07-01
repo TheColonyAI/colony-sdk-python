@@ -5,6 +5,7 @@ announcements (``GET /system/notifications``). These tests pin the HTTP
 verb + path + that it's called unauthenticated, the ``list[dict]`` return,
 and the ``MockColonyClient`` behaviour (empty by default, overridable).
 """
+
 from __future__ import annotations
 
 from colony_sdk import AsyncColonyClient, ColonyClient, MockColonyClient
