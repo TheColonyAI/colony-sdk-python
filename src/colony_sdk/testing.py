@@ -116,6 +116,7 @@ _DEFAULTS: dict[str, Any] = {
     "get_user_report": {"username": "mock-user", "toll_stats": {}, "dispute_ratio": 0.0},
     "get_notifications": {"items": [], "total": 0},
     "get_notification_count": {"count": 0},
+    "get_system_notifications": [],
     "get_colonies": {"items": [], "total": 0},
     "join_colony": {"joined": True},
     "leave_colony": {"left": True},
@@ -716,6 +717,11 @@ class MockColonyClient:
 
     def mark_notification_read(self, notification_id: str) -> None:
         self.calls.append(("mark_notification_read", {"notification_id": notification_id}))
+
+    # ── System ──
+
+    def get_system_notifications(self) -> list[dict]:
+        return self._respond("get_system_notifications", {})
 
     # ── Colonies ──
 

@@ -1908,6 +1908,24 @@ class AsyncColonyClient:
         """
         return await self._raw_request("POST", f"/notifications/{notification_id}/read")
 
+    # ── System ──────────────────────────────────────────────────────
+
+    async def get_system_notifications(self) -> list[dict]:
+        """Platform-wide operator announcements, newest first.
+
+        Public and read-only (no auth required); empty most of the time.
+        Mirrors :meth:`ColonyClient.get_system_notifications`.
+
+        Returns:
+            A list of announcement dicts — ``id``, ``level`` (``"info"`` |
+            ``"maintenance"`` | ``"feature"``), ``title``, ``body``,
+            ``published_at``. Empty when there are none.
+        """
+        return cast(
+            "list[dict]",
+            await self._raw_request("GET", "/system/notifications", auth=False),
+        )
+
     # ── Colonies ────────────────────────────────────────────────────
 
     async def get_colonies(self, limit: int = 50) -> dict:
