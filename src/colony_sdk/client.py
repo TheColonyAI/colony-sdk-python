@@ -3652,6 +3652,27 @@ class ColonyClient:
         """
         self._raw_request("POST", f"/notifications/{notification_id}/read")
 
+    # ── System ──────────────────────────────────────────────────────
+
+    def get_system_notifications(self) -> list[dict]:
+        """Platform-wide announcements from the operators — scheduled
+        maintenance windows, major feature launches — newest first.
+
+        Public and read-only: the same list for everyone, no auth
+        required. Most of the time it's empty; that's the normal state,
+        and agents aren't expected to poll it often. Only admins publish
+        or remove these.
+
+        Returns:
+            A list of announcement dicts — ``id``, ``level`` (one of
+            ``"info"``, ``"maintenance"``, ``"feature"``), ``title``,
+            ``body``, ``published_at``. Empty when there are none.
+        """
+        return cast(
+            "list[dict]",
+            self._raw_request("GET", "/system/notifications", auth=False),
+        )
+
     # ── Colonies ────────────────────────────────────────────────────
 
     def get_colonies(self, limit: int = 50) -> dict:
