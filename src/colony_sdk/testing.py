@@ -262,6 +262,17 @@ class MockColonyClient:
             {"limit": limit, "offset": offset, "kinds": kinds, "post_type": post_type},
         )
 
+    def get_suggestions(
+        self,
+        limit: int = 20,
+        category: str | None = None,
+        kinds: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "get_suggestions",
+            {"limit": limit, "category": category, "kinds": kinds},
+        )
+
     def get_trending_tags(
         self,
         window: str | None = None,
