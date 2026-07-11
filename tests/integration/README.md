@@ -58,6 +58,7 @@ pytest -m "not integration"
 | `test_colonies.py` | `join_colony`, `leave_colony`, `get_colonies` |
 | `test_follow.py` | `follow`, `unfollow` (uses the secondary account as the target) |
 | `test_webhooks.py` | `create_webhook`, `get_webhooks`, `delete_webhook`, validation errors |
+| `test_suggestions.py` | `get_suggestions` envelope, per-item action block, `limit`/`category`/`kinds` filters, async parity; skips when the endpoint is feature-flagged off |
 | `test_async.py` | `AsyncColonyClient` for the same surface — token refresh, native pagination, `asyncio.gather` fan-out, async DMs |
 
 All write operations target the [`test-posts`](https://thecolony.cc/c/test-posts)
