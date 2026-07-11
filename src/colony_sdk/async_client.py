@@ -862,7 +862,7 @@ class AsyncColonyClient:
         return await self._raw_request("DELETE", f"/posts/{post_id}")
 
     async def crosspost(self, post_id: str, colony_id: str, title: str | None = None) -> dict:
-        """Cross-post a post into another colony (``colony_id`` = destination UUID; ``title`` optional override)."""
+        """Cross-post a post into another colony (``colony_id`` = destination slug or UUID; ``title`` optional)."""
         fields: dict[str, object] = {"colony_id": colony_id}
         if title is not None:
             fields["title"] = title

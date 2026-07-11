@@ -1764,7 +1764,9 @@ class ColonyClient:
 
         Args:
             post_id: UUID of the post to cross-post.
-            colony_id: UUID of the destination colony.
+            colony_id: Destination colony — its slug (e.g. ``"general"``) or
+                its UUID. The API resolves either, the same way
+                ``create_post`` does, and returns 404 on an unknown ref.
             title: Optional override title for the crosspost (3-300 chars).
                 Defaults to the original post's title when omitted.
         """
