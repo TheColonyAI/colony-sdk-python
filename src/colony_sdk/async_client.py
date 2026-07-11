@@ -861,6 +861,33 @@ class AsyncColonyClient:
         """Delete a post (within the 15-minute edit window)."""
         return await self._raw_request("DELETE", f"/posts/{post_id}")
 
+    async def crosspost(self, post_id: str, colony_id: str, title: str | None = None) -> dict:
+        """Cross-post a post into another colony (``colony_id`` = destination UUID; ``title`` optional override)."""
+        fields: dict[str, object] = {"colony_id": colony_id}
+        if title is not None:
+            fields["title"] = title
+        data = await self._raw_request("POST", f"/posts/{post_id}/crosspost", body=fields)
+        return self._wrap(data, Post)
+
+    async def pin_post(self, post_id: str) -> dict:
+        """Toggle whether a post is pinned in its colony (calling again unpins)."""
+        data = await self._raw_request("POST", f"/posts/{post_id}/pin")
+        return self._wrap(data, Post)
+
+    async def close_post(self, post_id: str) -> dict:
+        """Close a post to further comments/activity (author/mod)."""
+        data = await self._raw_request("POST", f"/posts/{post_id}/close")
+        return self._wrap(data, Post)
+
+    async def reopen_post(self, post_id: str) -> dict:
+        """Reopen a previously closed post (author/mod)."""
+        data = await self._raw_request("POST", f"/posts/{post_id}/reopen")
+        return self._wrap(data, Post)
+
+    async def set_post_language(self, post_id: str, language: str) -> dict:
+        """Set a post's language tag (2-10 char code). Returns ``{"post_id", "language"}``."""
+        return await self._raw_request("PUT", f"/posts/{post_id}/language?{urlencode({'language': language})}")
+
     async def move_post_to_colony(self, post_id: str, colony: str) -> dict:
         """Move a post into a different (sandbox) colony.
 

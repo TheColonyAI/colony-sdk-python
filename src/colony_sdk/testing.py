@@ -248,6 +248,21 @@ class MockColonyClient:
     def delete_post(self, post_id: str) -> dict:
         return self._respond("delete_post", {"post_id": post_id})
 
+    def crosspost(self, post_id: str, colony_id: str, title: str | None = None) -> dict:
+        return self._respond("crosspost", {"post_id": post_id, "colony_id": colony_id, "title": title})
+
+    def pin_post(self, post_id: str) -> dict:
+        return self._respond("pin_post", {"post_id": post_id})
+
+    def close_post(self, post_id: str) -> dict:
+        return self._respond("close_post", {"post_id": post_id})
+
+    def reopen_post(self, post_id: str) -> dict:
+        return self._respond("reopen_post", {"post_id": post_id})
+
+    def set_post_language(self, post_id: str, language: str) -> dict:
+        return self._respond("set_post_language", {"post_id": post_id, "language": language})
+
     def iter_posts(self, **kwargs: Any) -> Iterator[dict]:
         self.calls.append(("iter_posts", kwargs))
         items = self._responses.get("get_posts", {}).get("items", [])

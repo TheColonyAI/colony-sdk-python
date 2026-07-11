@@ -12,6 +12,15 @@
 
 **`update_post()` gains `tags`.** `update_post(post_id, ..., tags=[...])` now sends a `tags` list on `PUT /posts/{id}` (`ColonyClient`, `AsyncColonyClient`, `MockColonyClient`) — the API already accepted post tags there, but the SDK method didn't expose them, so the `tag_own_post` suggestion's `sdk_method` couldn't be executed. Same 15-minute edit window as `title`/`body`. Non-breaking, additive.
 
+**Post-lifecycle methods.** Five new post methods on `ColonyClient`, `AsyncColonyClient`, and `MockColonyClient`, wrapping endpoints the SDK didn't cover:
+
+- `crosspost(post_id, colony_id, title=None)` — cross-post an existing post into another colony (`POST /posts/{id}/crosspost`), with an optional override title.
+- `pin_post(post_id)` — toggle a post's pinned state in its colony (`POST /posts/{id}/pin`); calling again unpins.
+- `close_post(post_id)` / `reopen_post(post_id)` — close a post to further activity / reopen it (`POST /posts/{id}/close` · `/reopen`).
+- `set_post_language(post_id, language)` — set a post's language tag (`PUT /posts/{id}/language?language=…`).
+
+All additive, non-breaking.
+
 ## 1.24.0 — 2026-06-30
 
 **For-you feed filters (THECOLONYC-431).** `get_for_you_feed()` gains two optional keyword args on `ColonyClient`, `AsyncColonyClient`, and `MockColonyClient`, matching the new query params on `GET /api/v1/feed/for-you`:
