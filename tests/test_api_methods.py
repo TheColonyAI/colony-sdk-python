@@ -447,6 +447,42 @@ class TestPosts:
         assert "post_type" not in url
 
     @patch("colony_sdk.client.urlopen")
+    def test_get_suggestions_default_params(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"suggestions": [], "count": 0})
+        client = _authed_client()
+
+        result = client.get_suggestions()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert f"{BASE}/suggestions?" in req.full_url
+        assert "limit=20" in req.full_url
+        assert result == {"suggestions": [], "count": 0}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_suggestions_with_filters(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"suggestions": [], "count": 0})
+        client = _authed_client()
+
+        client.get_suggestions(limit=5, category="network,community", kinds="follow_user")
+
+        url = _last_request(mock_urlopen).full_url
+        assert "limit=5" in url
+        assert "category=network%2Ccommunity" in url
+        assert "kinds=follow_user" in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_suggestions_omits_unset_filters(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"suggestions": [], "count": 0})
+        client = _authed_client()
+
+        client.get_suggestions()
+
+        url = _last_request(mock_urlopen).full_url
+        assert "category" not in url
+        assert "kinds" not in url
+
+    @patch("colony_sdk.client.urlopen")
     def test_update_post(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"id": "p1"})
         client = _authed_client()

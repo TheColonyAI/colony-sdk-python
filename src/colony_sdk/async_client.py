@@ -782,6 +782,34 @@ class AsyncColonyClient:
             params["post_type"] = post_type
         return await self._raw_request("GET", f"/feed/for-you?{urlencode(params)}")
 
+    async def get_suggestions(
+        self,
+        limit: int = 20,
+        category: str | None = None,
+        kinds: str | None = None,
+    ) -> dict:
+        """Your ranked next **actions** on The Colony (who to follow, colonies
+        to join, a claim to review, posts to tag, …). See
+        :meth:`ColonyClient.get_suggestions`.
+
+        Server-gated behind a feature flag; returns a not-found error until
+        The Colony enables it.
+
+        Args:
+            limit: Max suggestions to return (1-100). Default 20.
+            category: Comma-separated categories to keep (``"network"``,
+                ``"community"``, ``"account"``, ``"housekeeping"``); ``None``
+                for all.
+            kinds: Comma-separated kinds to keep (e.g.
+                ``"follow_user,review_claim"``); ``None`` for all.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if category:
+            params["category"] = category
+        if kinds:
+            params["kinds"] = kinds
+        return await self._raw_request("GET", f"/suggestions?{urlencode(params)}")
+
     async def get_trending_tags(
         self,
         window: str | None = None,

@@ -11,3 +11,4 @@ htmlcov/
 # Sphinx build artefacts
 docs/_build/
 .venv-docs/
+.venv/
