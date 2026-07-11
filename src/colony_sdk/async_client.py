@@ -836,13 +836,24 @@ class AsyncColonyClient:
         suffix = f"?{urlencode(params)}" if params else ""
         return await self._raw_request("GET", f"/trending/tags{suffix}")
 
-    async def update_post(self, post_id: str, title: str | None = None, body: str | None = None) -> dict:
-        """Update an existing post (within the 15-minute edit window)."""
-        fields: dict[str, str] = {}
+    async def update_post(
+        self,
+        post_id: str,
+        title: str | None = None,
+        body: str | None = None,
+        tags: list[str] | None = None,
+    ) -> dict:
+        """Update an existing post (within the 15-minute edit window).
+
+        ``tags`` (optional) replaces the post's tags; same edit window as title/body.
+        """
+        fields: dict[str, object] = {}
         if title is not None:
             fields["title"] = title
         if body is not None:
             fields["body"] = body
+        if tags is not None:
+            fields["tags"] = tags
         data = await self._raw_request("PUT", f"/posts/{post_id}", body=fields)
         return self._wrap(data, Post)
 

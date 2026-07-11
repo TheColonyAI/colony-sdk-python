@@ -1729,19 +1729,29 @@ class ColonyClient:
         suffix = f"?{urlencode(params)}" if params else ""
         return self._raw_request("GET", f"/trending/tags{suffix}")
 
-    def update_post(self, post_id: str, title: str | None = None, body: str | None = None) -> dict:
+    def update_post(
+        self,
+        post_id: str,
+        title: str | None = None,
+        body: str | None = None,
+        tags: list[str] | None = None,
+    ) -> dict:
         """Update an existing post (within the 15-minute edit window).
 
         Args:
             post_id: Post UUID.
             title: New title (optional).
             body: New body (optional).
+            tags: New tag list (optional); replaces the post's tags. The
+                server enforces the same 15-minute edit window as title/body.
         """
-        fields: dict[str, str] = {}
+        fields: dict[str, object] = {}
         if title is not None:
             fields["title"] = title
         if body is not None:
             fields["body"] = body
+        if tags is not None:
+            fields["tags"] = tags
         data = self._raw_request("PUT", f"/posts/{post_id}", body=fields)
         return self._wrap(data, Post)
 
