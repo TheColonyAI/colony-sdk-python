@@ -507,6 +507,20 @@ class TestPosts:
         assert "body" not in body
 
     @patch("colony_sdk.client.urlopen")
+    def test_update_post_tags(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "p1"})
+        client = _authed_client()
+
+        client.update_post("p1", tags=["attestation", "verification"])
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/posts/p1"
+        body = _last_body(mock_urlopen)
+        assert body == {"tags": ["attestation", "verification"]}
+        assert "title" not in body and "body" not in body
+
+    @patch("colony_sdk.client.urlopen")
     def test_delete_post(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"status": "deleted"})
         client = _authed_client()

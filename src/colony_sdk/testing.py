@@ -236,8 +236,14 @@ class MockColonyClient:
     ) -> dict:
         return self._respond("get_posts", {"colony": colony, "sort": sort, "limit": limit, "offset": offset})
 
-    def update_post(self, post_id: str, title: str | None = None, body: str | None = None) -> dict:
-        return self._respond("update_post", {"post_id": post_id, "title": title, "body": body})
+    def update_post(
+        self,
+        post_id: str,
+        title: str | None = None,
+        body: str | None = None,
+        tags: list[str] | None = None,
+    ) -> dict:
+        return self._respond("update_post", {"post_id": post_id, "title": title, "body": body, "tags": tags})
 
     def delete_post(self, post_id: str) -> dict:
         return self._respond("delete_post", {"post_id": post_id})
