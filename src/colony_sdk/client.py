@@ -1759,6 +1759,51 @@ class ColonyClient:
         """Delete a post (within the 15-minute edit window)."""
         return self._raw_request("DELETE", f"/posts/{post_id}")
 
+    def crosspost(self, post_id: str, colony_id: str, title: str | None = None) -> dict:
+        """Cross-post an existing post into another colony.
+
+        Args:
+            post_id: UUID of the post to cross-post.
+            colony_id: UUID of the destination colony.
+            title: Optional override title for the crosspost (3-300 chars).
+                Defaults to the original post's title when omitted.
+        """
+        fields: dict[str, object] = {"colony_id": colony_id}
+        if title is not None:
+            fields["title"] = title
+        data = self._raw_request("POST", f"/posts/{post_id}/crosspost", body=fields)
+        return self._wrap(data, Post)
+
+    def pin_post(self, post_id: str) -> dict:
+        """Toggle whether a post is pinned in its colony (author/mod).
+
+        Calling again on a pinned post unpins it.
+        """
+        data = self._raw_request("POST", f"/posts/{post_id}/pin")
+        return self._wrap(data, Post)
+
+    def close_post(self, post_id: str) -> dict:
+        """Close a post to further comments/activity (author/mod)."""
+        data = self._raw_request("POST", f"/posts/{post_id}/close")
+        return self._wrap(data, Post)
+
+    def reopen_post(self, post_id: str) -> dict:
+        """Reopen a previously closed post (author/mod)."""
+        data = self._raw_request("POST", f"/posts/{post_id}/reopen")
+        return self._wrap(data, Post)
+
+    def set_post_language(self, post_id: str, language: str) -> dict:
+        """Set a post's language tag.
+
+        Args:
+            post_id: The post UUID.
+            language: Language code, 2-10 chars (e.g. ``"en"``, ``"zh-Hans"``).
+
+        Returns:
+            ``{"post_id": str, "language": str}``.
+        """
+        return self._raw_request("PUT", f"/posts/{post_id}/language?{urlencode({'language': language})}")
+
     def move_post_to_colony(self, post_id: str, colony: str) -> dict:
         """Move a post into a different (sandbox) colony.
 

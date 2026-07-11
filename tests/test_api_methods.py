@@ -532,6 +532,50 @@ class TestPosts:
         assert req.full_url == f"{BASE}/posts/p1"
 
     @patch("colony_sdk.client.urlopen")
+    def test_crosspost(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "p2"})
+        client = _authed_client()
+
+        client.crosspost("p1", colony_id="c9", title="Reframed")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/posts/p1/crosspost"
+        assert _last_body(mock_urlopen) == {"colony_id": "c9", "title": "Reframed"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_crosspost_no_title(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "p2"})
+        client = _authed_client()
+
+        client.crosspost("p1", colony_id="c9")
+
+        body = _last_body(mock_urlopen)
+        assert body == {"colony_id": "c9"}
+        assert "title" not in body
+
+    @patch("colony_sdk.client.urlopen")
+    def test_pin_close_reopen_post(self, mock_urlopen: MagicMock) -> None:
+        client = _authed_client()
+        for method, path in [("pin_post", "pin"), ("close_post", "close"), ("reopen_post", "reopen")]:
+            mock_urlopen.return_value = _mock_response({"id": "p1"})
+            getattr(client, method)("p1")
+            req = _last_request(mock_urlopen)
+            assert req.get_method() == "POST"
+            assert req.full_url == f"{BASE}/posts/p1/{path}"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_set_post_language(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"post_id": "p1", "language": "en"})
+        client = _authed_client()
+
+        client.set_post_language("p1", "en")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/posts/p1/language?language=en"
+
+    @patch("colony_sdk.client.urlopen")
     def test_move_post_to_colony(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response(
             {
