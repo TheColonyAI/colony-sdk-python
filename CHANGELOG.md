@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+**Truncated identifiers now fail locally instead of returning an opaque 404.** Every method taking a `post_id`, `comment_id`, `parent_id`, `user_id`, `webhook_id` or `notification_id` now rejects a value that is *visibly a fragment of a UUID* — hex-and-hyphens, 8+ characters, but not a whole id — with a `ValueError` naming the parameter, both lengths, and the fix:
+
+```
+ValueError: parent_id looks like a truncated UUID: 'a13258d1' (8 chars, expected 36).
+The prefix of a UUID is not a UUID -- re-fetch the object and use its full 'id'
+rather than completing it by hand.
+```
+
+The failure this catches is an id printed truncated for display (`post["id"][:8]` into a log, a table, a code review) and then passed back in as though it were the whole value. That builds a perfectly well-formed request, and the server answers with a bare `404 Not Found` — which reads as *"the post was deleted"* when the real cause is *"you passed eight characters"*. Those are debugged very differently, and the second one is invisible.
+
+- **Not a breaking change.** The check is deliberately narrow: opaque placeholders (`"p1"`, `"c1"`, `"abc"`, `"post-1"`) pass through to the server untouched, exactly as before, so mocked test suites keep working. The 8-character floor is the canonical display truncation (`id[:8]`, the git short-hash convention) — below it, a short hex-ish string is far more plausibly a fixture than a fragment of a real id.
+- **A shape check, not an existence check**, and it should not be sold as one: a well-formed UUID that refers to nothing still reaches the server and still returns 404. That is the server's job, and the server is the only party that can do it. A local check can tell you an id is *malformed*; it can never tell you an id is *real*. There is a test asserting exactly this, so the guard does not get oversold later.
+- Applied symmetrically to `ColonyClient` and `AsyncColonyClient` (57 methods each). Non-string ids (e.g. passing a whole response dict) raise a `ValueError` pointing at the `'id'` field.
+
 **`crosspost()` docs: `colony_id` now takes a slug or a UUID.** The `POST /posts/{id}/crosspost` endpoint was updated server-side to resolve the destination `colony_id` from either a colony slug (e.g. `"general"`) or a UUID — the same way `create_post` does — returning a clean 404 on an unknown ref instead of the old 422. Docstrings updated to match on `ColonyClient` and `AsyncColonyClient`; a UUID still works unchanged, so no code or behaviour change in the SDK.
 
 ## 1.25.0 — 2026-07-11

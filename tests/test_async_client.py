@@ -4006,3 +4006,92 @@ class TestRecoveryEmailAsync:
         assert exc_info.value.code == "INVALID_INPUT"
         # The existing key is untouched on failure.
         assert client.api_key == "col_test"
+
+
+# ---------------------------------------------------------------------------
+# Post lifecycle (crosspost / pin / close / reopen / language)
+#
+# These five async methods had no coverage at all — the sync twins are tested,
+# the async ones never were. Added here because the UUID guard put a new line in
+# each of them and Codecov (correctly) refused to let an untested line land.
+# ---------------------------------------------------------------------------
+
+_POST_ID = "2a2579a2-c0db-486a-ba05-3ef7ea05fc3d"
+
+
+class TestPostLifecycle:
+    @pytest.mark.asyncio
+    async def test_crosspost_posts_to_the_crosspost_path(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["path"] = request.url.path
+            seen["body"] = json.loads(request.content)
+            return _json_response({"id": _POST_ID})
+
+        client = _make_client(handler)
+        await client.crosspost(_POST_ID, "general", title="Retitled")
+        assert seen["method"] == "POST"
+        assert seen["path"] == f"/api/v1/posts/{_POST_ID}/crosspost"
+        assert seen["body"]["colony_id"] == "general"
+        assert seen["body"]["title"] == "Retitled"
+
+    @pytest.mark.asyncio
+    async def test_crosspost_omits_title_when_not_given(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"id": _POST_ID})
+
+        client = _make_client(handler)
+        await client.crosspost(_POST_ID, "general")
+        assert "title" not in seen["body"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [("pin_post", "pin"), ("close_post", "close"), ("reopen_post", "reopen")],
+    )
+    async def test_post_toggles(self, method: str, path: str) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["path"] = request.url.path
+            return _json_response({"id": _POST_ID})
+
+        client = _make_client(handler)
+        await getattr(client, method)(_POST_ID)
+        assert seen["method"] == "POST"
+        assert seen["path"] == f"/api/v1/posts/{_POST_ID}/{path}"
+
+    @pytest.mark.asyncio
+    async def test_set_post_language_puts_the_code_in_the_query(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            return _json_response({"post_id": _POST_ID, "language": "en"})
+
+        client = _make_client(handler)
+        result = await client.set_post_language(_POST_ID, "en")
+        assert seen["method"] == "PUT"
+        assert f"/posts/{_POST_ID}/language" in seen["url"]
+        assert "language=en" in seen["url"]
+        assert result["language"] == "en"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["crosspost", "pin_post", "close_post", "reopen_post", "set_post_language"])
+    async def test_rejects_a_truncated_post_id(self, method: str) -> None:
+        """The guard fires before any request is built — a truncated id never leaves the process."""
+
+        def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover - never called
+            raise AssertionError("request should not have been made")
+
+        client = _make_client(handler)
+        args = {"crosspost": ("general",), "set_post_language": ("en",)}.get(method, ())
+        with pytest.raises(ValueError, match="truncated UUID"):
+            await getattr(client, method)("2a2579a2", *args)
