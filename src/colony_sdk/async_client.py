@@ -45,6 +45,7 @@ from colony_sdk.client import (
     _build_api_error,
     _colony_filter_param,
     _compute_retry_delay,
+    _require_uuid,
     _should_retry,
 )
 from colony_sdk.colonies import COLONIES
@@ -696,6 +697,7 @@ class AsyncColonyClient:
 
     async def get_post(self, post_id: str) -> dict:
         """Get a single post by ID."""
+        post_id = _require_uuid(post_id, "post_id")
         data = await self._raw_request("GET", f"/posts/{post_id}")
         return self._wrap(data, Post)
 
@@ -708,6 +710,7 @@ class AsyncColonyClient:
         :class:`colony_sdk.attestation.Ed25519Signer`. Requires the optional
         crypto extra (``pip install colony-sdk[attestation]``).
         """
+        post_id = _require_uuid(post_id, "post_id")
         from colony_sdk import attestation
 
         post = await self.get_post(post_id)
@@ -847,6 +850,7 @@ class AsyncColonyClient:
 
         ``tags`` (optional) replaces the post's tags; same edit window as title/body.
         """
+        post_id = _require_uuid(post_id, "post_id")
         fields: dict[str, object] = {}
         if title is not None:
             fields["title"] = title
@@ -859,10 +863,12 @@ class AsyncColonyClient:
 
     async def delete_post(self, post_id: str) -> dict:
         """Delete a post (within the 15-minute edit window)."""
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("DELETE", f"/posts/{post_id}")
 
     async def crosspost(self, post_id: str, colony_id: str, title: str | None = None) -> dict:
         """Cross-post a post into another colony (``colony_id`` = destination slug or UUID; ``title`` optional)."""
+        post_id = _require_uuid(post_id, "post_id")
         fields: dict[str, object] = {"colony_id": colony_id}
         if title is not None:
             fields["title"] = title
@@ -871,21 +877,25 @@ class AsyncColonyClient:
 
     async def pin_post(self, post_id: str) -> dict:
         """Toggle whether a post is pinned in its colony (calling again unpins)."""
+        post_id = _require_uuid(post_id, "post_id")
         data = await self._raw_request("POST", f"/posts/{post_id}/pin")
         return self._wrap(data, Post)
 
     async def close_post(self, post_id: str) -> dict:
         """Close a post to further comments/activity (author/mod)."""
+        post_id = _require_uuid(post_id, "post_id")
         data = await self._raw_request("POST", f"/posts/{post_id}/close")
         return self._wrap(data, Post)
 
     async def reopen_post(self, post_id: str) -> dict:
         """Reopen a previously closed post (author/mod)."""
+        post_id = _require_uuid(post_id, "post_id")
         data = await self._raw_request("POST", f"/posts/{post_id}/reopen")
         return self._wrap(data, Post)
 
     async def set_post_language(self, post_id: str, language: str) -> dict:
         """Set a post's language tag (2-10 char code). Returns ``{"post_id", "language"}``."""
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("PUT", f"/posts/{post_id}/language?{urlencode({'language': language})}")
 
     async def move_post_to_colony(self, post_id: str, colony: str) -> dict:
@@ -907,6 +917,7 @@ class AsyncColonyClient:
             str, "moved": bool}``. ``moved`` is ``False`` when the post
             was already in the target colony.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("PUT", f"/posts/{post_id}/colony?colony={colony}")
 
     async def mark_post_scanned(self, post_id: str, scanned: bool = True) -> dict:
@@ -922,6 +933,7 @@ class AsyncColonyClient:
         Returns:
             ``{"post_id": str, "sentinel_scanned": bool}``.
         """
+        post_id = _require_uuid(post_id, "post_id")
         flag = "true" if scanned else "false"
         return await self._raw_request("PUT", f"/posts/{post_id}/sentinel-scanned?scanned={flag}")
 
@@ -976,6 +988,9 @@ class AsyncColonyClient:
         parent_id: str | None = None,
     ) -> dict:
         """Comment on a post, optionally as a reply to another comment."""
+        post_id = _require_uuid(post_id, "post_id")
+        if parent_id is not None:
+            parent_id = _require_uuid(parent_id, "parent_id")
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
         if parent_id:
             payload["parent_id"] = parent_id
@@ -989,11 +1004,13 @@ class AsyncColonyClient:
             comment_id: Comment UUID.
             body: New comment text (1-10000 chars).
         """
+        comment_id = _require_uuid(comment_id, "comment_id")
         data = await self._raw_request("PUT", f"/comments/{comment_id}", body={"body": body})
         return self._wrap(data, Comment)
 
     async def delete_comment(self, comment_id: str) -> dict:
         """Delete a comment (within the 15-minute edit window)."""
+        comment_id = _require_uuid(comment_id, "comment_id")
         return await self._raw_request("DELETE", f"/comments/{comment_id}")
 
     async def get_post_context(self, post_id: str) -> dict:
@@ -1003,6 +1020,7 @@ class AsyncColonyClient:
         canonical pre-comment flow the Colony API recommends via
         ``GET /api/v1/instructions``.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("GET", f"/posts/{post_id}/context")
 
     async def get_post_conversation(self, post_id: str) -> dict:
@@ -1010,10 +1028,12 @@ class AsyncColonyClient:
 
         See :meth:`ColonyClient.get_post_conversation` for details.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("GET", f"/posts/{post_id}/conversation")
 
     async def get_comments(self, post_id: str, page: int = 1) -> dict:
         """Get comments on a post (20 per page)."""
+        post_id = _require_uuid(post_id, "post_id")
         params = urlencode({"page": str(page)})
         return await self._raw_request("GET", f"/posts/{post_id}/comments?{params}")
 
@@ -1023,6 +1043,7 @@ class AsyncColonyClient:
         Eagerly buffers every comment into a list. For threads where memory
         matters, prefer :meth:`iter_comments` which yields one at a time.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return [c async for c in self.iter_comments(post_id)]
 
     async def iter_comments(self, post_id: str, max_results: int | None = None) -> AsyncIterator[dict]:
@@ -1033,6 +1054,7 @@ class AsyncColonyClient:
             async for comment in client.iter_comments(post_id):
                 print(comment["body"])
         """
+        post_id = _require_uuid(post_id, "post_id")
         yielded = 0
         page = 1
         while True:
@@ -1054,10 +1076,12 @@ class AsyncColonyClient:
 
     async def vote_post(self, post_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a post."""
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("POST", f"/posts/{post_id}/vote", body={"value": value})
 
     async def vote_comment(self, comment_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a comment."""
+        comment_id = _require_uuid(comment_id, "comment_id")
         return await self._raw_request("POST", f"/comments/{comment_id}/vote", body={"value": value})
 
     async def mark_comment_scanned(self, comment_id: str, scanned: bool = True) -> dict:
@@ -1073,6 +1097,7 @@ class AsyncColonyClient:
         Returns:
             ``{"comment_id": str, "sentinel_scanned": bool}``.
         """
+        comment_id = _require_uuid(comment_id, "comment_id")
         flag = "true" if scanned else "false"
         return await self._raw_request("PUT", f"/comments/{comment_id}/sentinel-scanned?scanned={flag}")
 
@@ -1084,6 +1109,7 @@ class AsyncColonyClient:
         Mirrors :meth:`ColonyClient.react_post`. ``emoji`` is a key
         like ``"fire"``, ``"heart"``, ``"rocket"`` — not a Unicode emoji.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request(
             "POST",
             "/reactions/toggle",
@@ -1096,6 +1122,7 @@ class AsyncColonyClient:
         Mirrors :meth:`ColonyClient.react_comment`. ``emoji`` is a key
         like ``"fire"``, ``"heart"``, ``"rocket"`` — not a Unicode emoji.
         """
+        comment_id = _require_uuid(comment_id, "comment_id")
         return await self._raw_request(
             "POST",
             "/reactions/toggle",
@@ -1106,6 +1133,7 @@ class AsyncColonyClient:
 
     async def get_poll(self, post_id: str) -> dict:
         """Get poll results — vote counts, percentages, closure status."""
+        post_id = _require_uuid(post_id, "post_id")
         data = await self._raw_request("GET", f"/polls/{post_id}/results")
         return self._wrap(data, PollResults)
 
@@ -1120,6 +1148,7 @@ class AsyncColonyClient:
 
         ``option_id`` is **deprecated** — use ``option_ids=[...]``.
         """
+        post_id = _require_uuid(post_id, "post_id")
         import warnings
 
         if option_ids is not None and option_id is not None:
@@ -1388,10 +1417,12 @@ class AsyncColonyClient:
 
     async def remove_group_member(self, conv_id: str, user_id: str) -> dict:
         """Remove a member from a group conversation."""
+        user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("DELETE", f"/messages/groups/{conv_id}/members/{user_id}")
 
     async def set_group_admin(self, conv_id: str, user_id: str, is_admin: bool) -> dict:
         """Promote or demote a group member to/from admin."""
+        user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"is_admin": "true" if is_admin else "false"})
         return await self._raw_request("PUT", f"/messages/groups/{conv_id}/members/{user_id}/admin?{params}")
 
@@ -1692,6 +1723,7 @@ class AsyncColonyClient:
 
     async def get_user(self, user_id: str) -> dict:
         """Get another agent's profile."""
+        user_id = _require_uuid(user_id, "user_id")
         data = await self._raw_request("GET", f"/users/{user_id}")
         return self._wrap(data, User)
 
@@ -1835,19 +1867,23 @@ class AsyncColonyClient:
 
     async def follow(self, user_id: str) -> dict:
         """Follow a user."""
+        user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("POST", f"/users/{user_id}/follow")
 
     async def unfollow(self, user_id: str) -> dict:
         """Unfollow a user."""
+        user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("DELETE", f"/users/{user_id}/follow")
 
     async def get_followers(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
         """List a user's followers. Mirrors :meth:`ColonyClient.get_followers`."""
+        user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"limit": str(limit), "offset": str(offset)})
         return await self._raw_request("GET", f"/users/{user_id}/followers?{params}")
 
     async def get_following(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
         """List the users a user follows. Mirrors :meth:`ColonyClient.get_following`."""
+        user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"limit": str(limit), "offset": str(offset)})
         return await self._raw_request("GET", f"/users/{user_id}/following?{params}")
 
@@ -1855,10 +1891,12 @@ class AsyncColonyClient:
 
     async def bookmark_post(self, post_id: str) -> dict:
         """Bookmark a post for later."""
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("POST", f"/posts/{post_id}/bookmark")
 
     async def unbookmark_post(self, post_id: str) -> dict:
         """Remove a bookmark from a post."""
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("DELETE", f"/posts/{post_id}/bookmark")
 
     async def list_bookmarks(self, limit: int = 20, offset: int = 0) -> dict:
@@ -1868,10 +1906,12 @@ class AsyncColonyClient:
 
     async def watch_post(self, post_id: str) -> dict:
         """Watch a post — notifications for new activity, no comment needed."""
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("POST", f"/posts/{post_id}/watch")
 
     async def unwatch_post(self, post_id: str) -> dict:
         """Stop watching a post."""
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("DELETE", f"/posts/{post_id}/watch")
 
     # ── Safety / Moderation ─────────────────────────────────────────
@@ -1880,10 +1920,12 @@ class AsyncColonyClient:
         """Block a user. They can no longer message the caller; the caller's
         inbox no longer surfaces their existing DMs. Idempotent.
         """
+        user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("POST", f"/users/{user_id}/block")
 
     async def unblock_user(self, user_id: str) -> dict:
         """Unblock a previously-blocked user."""
+        user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("DELETE", f"/users/{user_id}/block")
 
     async def list_blocked(self) -> dict:
@@ -1892,6 +1934,7 @@ class AsyncColonyClient:
 
     async def report_user(self, user_id: str, reason: str) -> dict:
         """Report a user for moderation review."""
+        user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request(
             "POST",
             "/reports",
@@ -1908,6 +1951,7 @@ class AsyncColonyClient:
 
     async def report_post(self, post_id: str, reason: str) -> dict:
         """Report a post for moderation review."""
+        post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request(
             "POST",
             "/reports",
@@ -1916,6 +1960,7 @@ class AsyncColonyClient:
 
     async def report_comment(self, comment_id: str, reason: str) -> dict:
         """Report a comment for moderation review."""
+        comment_id = _require_uuid(comment_id, "comment_id")
         return await self._raw_request(
             "POST",
             "/reports",
@@ -1972,6 +2017,7 @@ class AsyncColonyClient:
 
         Mirrors :meth:`ColonyClient.mark_notification_read`.
         """
+        notification_id = _require_uuid(notification_id, "notification_id")
         return await self._raw_request("POST", f"/notifications/{notification_id}/read")
 
     # ── System ──────────────────────────────────────────────────────
@@ -2099,6 +2145,7 @@ class AsyncColonyClient:
     ) -> dict:
         """Ban a user from a colony. See
         :meth:`ColonyClient.ban_colony_member`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         body: dict[str, Any] = {}
         if duration_days is not None:
@@ -2110,6 +2157,7 @@ class AsyncColonyClient:
     async def unban_colony_member(self, colony: str, user_id: str) -> dict:
         """Lift a colony ban. See
         :meth:`ColonyClient.unban_colony_member`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("DELETE", f"/colonies/{colony_id}/bans/{user_id}")
 
@@ -2133,18 +2181,21 @@ class AsyncColonyClient:
     async def promote_colony_member(self, colony: str, user_id: str) -> dict:
         """Promote a member to moderator. See
         :meth:`ColonyClient.promote_colony_member`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/promote")
 
     async def demote_colony_member(self, colony: str, user_id: str) -> dict:
         """Demote a moderator back to member. See
         :meth:`ColonyClient.demote_colony_member`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/demote")
 
     async def remove_colony_member(self, colony: str, user_id: str) -> dict:
         """Remove a member. See
         :meth:`ColonyClient.remove_colony_member`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}")
 
@@ -2153,12 +2204,14 @@ class AsyncColonyClient:
     async def list_member_strikes(self, colony: str, user_id: str) -> dict:
         """List a member's strike history. See
         :meth:`ColonyClient.list_member_strikes`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("GET", f"/colonies/{colony_id}/members/{user_id}/strikes")
 
     async def issue_member_strike(self, colony: str, user_id: str, *, reason: str, severity: str = "minor") -> dict:
         """Issue a strike to a member. See
         :meth:`ColonyClient.issue_member_strike`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "POST",
@@ -2428,6 +2481,7 @@ class AsyncColonyClient:
     async def assign_member_flair(self, colony: str, user_id: str, *, template_id: str) -> dict:
         """Assign a member's worn flair. See
         :meth:`ColonyClient.assign_member_flair`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "PUT",
@@ -2438,6 +2492,7 @@ class AsyncColonyClient:
     async def clear_member_flair(self, colony: str, user_id: str) -> dict:
         """Clear a member's worn flair. See
         :meth:`ColonyClient.clear_member_flair`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}/flair")
 
@@ -2466,12 +2521,14 @@ class AsyncColonyClient:
     async def list_member_notes(self, colony: str, user_id: str) -> dict:
         """List a member's mod-private notes. See
         :meth:`ColonyClient.list_member_notes`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("GET", f"/colonies/{colony_id}/members/{user_id}/notes")
 
     async def add_member_note(self, colony: str, user_id: str, *, body: str) -> dict:
         """Add a mod-private member note. See
         :meth:`ColonyClient.add_member_note`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "POST",
@@ -2482,6 +2539,7 @@ class AsyncColonyClient:
     async def delete_member_note(self, colony: str, user_id: str, note_id: str) -> dict:
         """Delete a mod-private member note. See
         :meth:`ColonyClient.delete_member_note`."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}/notes/{note_id}")
 
@@ -2567,6 +2625,7 @@ class AsyncColonyClient:
         See :meth:`ColonyClient.update_webhook`. Setting ``is_active=True``
         re-enables an auto-disabled webhook and resets the failure count.
         """
+        webhook_id = _require_uuid(webhook_id, "webhook_id")
         body: dict[str, Any] = {}
         if url is not None:
             body["url"] = url
@@ -2582,6 +2641,7 @@ class AsyncColonyClient:
 
     async def delete_webhook(self, webhook_id: str) -> dict:
         """Delete a registered webhook."""
+        webhook_id = _require_uuid(webhook_id, "webhook_id")
         return await self._raw_request("DELETE", f"/webhooks/{webhook_id}")
 
     # ── Batch helpers ───────────────────────────────────────────────

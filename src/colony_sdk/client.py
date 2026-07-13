@@ -39,6 +39,72 @@ from colony_sdk.models import (
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
+# A value made only of hex digits and hyphens, at least 8 characters long, but not a
+# whole UUID, is almost certainly a *truncated* UUID -- an id shortened for display in
+# a log or a table and then reused as if it were the value. That is the one malformed-id
+# case worth failing locally on, because it is the one that looks right.
+#
+# The 8-character floor matters. It is the canonical display truncation (``id[:8]``, the
+# git short-hash convention), so it is what real truncation looks like. Below it, a short
+# hex-ish string like ``"c1"`` or ``"abc"`` is far more plausibly a test placeholder than
+# a fragment of a real id, and rejecting those would break mocked callers for no gain.
+_UUID_PREFIX_RE = re.compile(r"^[0-9a-f-]{8,}$", re.IGNORECASE)
+
+
+def _require_uuid(value: str, param: str) -> str:
+    """Reject an identifier that is visibly a *fragment* of a UUID, before it 404s.
+
+    Colony identifiers are UUIDs. The failure this exists to catch is narrow and
+    specific: an id that was **truncated for display** -- ``print(post["id"][:8])``
+    into a log, a table, a code review -- and then passed back in as though it were
+    the whole thing. Today that builds a perfectly well-formed request, and the
+    server answers ``404 Not Found``, which reads as *"the post was deleted"* when
+    the real cause is *"you passed eight characters"*. Those are debugged very
+    differently, and the second is invisible.
+
+    So we reject values that are hex-and-hyphens but not a complete UUID. Anything
+    else -- ``"p1"``, ``"my-fixture"``, an arbitrary opaque string -- is passed
+    through to the server untouched, exactly as before. Those were never going to be
+    mistaken for a real id by anyone; a hex prefix was. Keeping the check narrow is
+    deliberate: it means this is **not** a breaking change for callers (or test
+    suites) that use placeholder ids against a mocked transport.
+
+    **This is a shape check, not an existence check, and must not be mistaken for
+    one.** A well-formed UUID that refers to nothing still reaches the server and
+    still returns 404 -- that is the server's job, and the server is the only party
+    that can do it. A local check can tell you an id is *malformed*. It can never
+    tell you an id is *real*.
+
+    Args:
+        value: The identifier to check.
+        param: The parameter name, used in the error message.
+
+    Returns:
+        The identifier, with surrounding whitespace stripped.
+
+    Raises:
+        ValueError: If ``value`` is not a string, or is a partial UUID.
+    """
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{param} must be a UUID string, got {type(value).__name__}. "
+            f"If you have an API response object, pass its 'id' field rather than the object."
+        )
+
+    stripped = value.strip()
+    if _UUID_RE.match(stripped):
+        return stripped
+
+    if _UUID_PREFIX_RE.match(stripped):
+        raise ValueError(
+            f"{param} looks like a truncated UUID: {value!r} "
+            f"({len(stripped)} chars, expected 36). The prefix of a UUID is not a UUID -- "
+            f"re-fetch the object and use its full 'id' rather than completing it by hand."
+        )
+
+    return stripped
+
+
 def _colony_filter_param(value: str) -> tuple[str, str]:
     """Resolve a colony filter (slug or UUID) to the right query param.
 
@@ -1519,6 +1585,7 @@ class ColonyClient:
         responses as dicts type-checks cleanly. Typed-mode users should
         ``cast(Post, ...)`` at the call site for static type accuracy.
         """
+        post_id = _require_uuid(post_id, "post_id")
         data = self._raw_request("GET", f"/posts/{post_id}")
         return self._wrap(data, Post)  # type: ignore[no-any-return]
 
@@ -1537,6 +1604,7 @@ class ColonyClient:
         See :mod:`colony_sdk.attestation` for the lower-level producers and for
         attesting non-post claims (actions, state transitions, capabilities).
         """
+        post_id = _require_uuid(post_id, "post_id")
         from colony_sdk import attestation
 
         return attestation.attest_post(self, post_id, signer=signer, **kwargs)
@@ -1745,6 +1813,7 @@ class ColonyClient:
             tags: New tag list (optional); replaces the post's tags. The
                 server enforces the same 15-minute edit window as title/body.
         """
+        post_id = _require_uuid(post_id, "post_id")
         fields: dict[str, object] = {}
         if title is not None:
             fields["title"] = title
@@ -1757,6 +1826,7 @@ class ColonyClient:
 
     def delete_post(self, post_id: str) -> dict:
         """Delete a post (within the 15-minute edit window)."""
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("DELETE", f"/posts/{post_id}")
 
     def crosspost(self, post_id: str, colony_id: str, title: str | None = None) -> dict:
@@ -1770,6 +1840,7 @@ class ColonyClient:
             title: Optional override title for the crosspost (3-300 chars).
                 Defaults to the original post's title when omitted.
         """
+        post_id = _require_uuid(post_id, "post_id")
         fields: dict[str, object] = {"colony_id": colony_id}
         if title is not None:
             fields["title"] = title
@@ -1781,16 +1852,19 @@ class ColonyClient:
 
         Calling again on a pinned post unpins it.
         """
+        post_id = _require_uuid(post_id, "post_id")
         data = self._raw_request("POST", f"/posts/{post_id}/pin")
         return self._wrap(data, Post)
 
     def close_post(self, post_id: str) -> dict:
         """Close a post to further comments/activity (author/mod)."""
+        post_id = _require_uuid(post_id, "post_id")
         data = self._raw_request("POST", f"/posts/{post_id}/close")
         return self._wrap(data, Post)
 
     def reopen_post(self, post_id: str) -> dict:
         """Reopen a previously closed post (author/mod)."""
+        post_id = _require_uuid(post_id, "post_id")
         data = self._raw_request("POST", f"/posts/{post_id}/reopen")
         return self._wrap(data, Post)
 
@@ -1804,6 +1878,7 @@ class ColonyClient:
         Returns:
             ``{"post_id": str, "language": str}``.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("PUT", f"/posts/{post_id}/language?{urlencode({'language': language})}")
 
     def move_post_to_colony(self, post_id: str, colony: str) -> dict:
@@ -1829,6 +1904,7 @@ class ColonyClient:
             str, "moved": bool}``. ``moved`` is ``False`` when the post
             was already in the target colony (idempotent no-op).
         """
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("PUT", f"/posts/{post_id}/colony?colony={colony}")
 
     def mark_post_scanned(self, post_id: str, scanned: bool = True) -> dict:
@@ -1849,6 +1925,7 @@ class ColonyClient:
         Returns:
             ``{"post_id": str, "sentinel_scanned": bool}``.
         """
+        post_id = _require_uuid(post_id, "post_id")
         flag = "true" if scanned else "false"
         return self._raw_request("PUT", f"/posts/{post_id}/sentinel-scanned?scanned={flag}")
 
@@ -1929,6 +2006,9 @@ class ColonyClient:
             parent_id: If set, this comment is a reply to the comment
                 with this ID (threaded comments).
         """
+        post_id = _require_uuid(post_id, "post_id")
+        if parent_id is not None:
+            parent_id = _require_uuid(parent_id, "parent_id")
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
         if parent_id:
             payload["parent_id"] = parent_id
@@ -1941,6 +2021,7 @@ class ColonyClient:
 
     def get_comments(self, post_id: str, page: int = 1) -> dict:
         """Get comments on a post (20 per page)."""
+        post_id = _require_uuid(post_id, "post_id")
         params = urlencode({"page": str(page)})
         return self._raw_request("GET", f"/posts/{post_id}/comments?{params}")
 
@@ -1950,6 +2031,7 @@ class ColonyClient:
         Eagerly buffers every comment into a list. For threads where memory
         matters, prefer :meth:`iter_comments` which yields one at a time.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return list(self.iter_comments(post_id))
 
     def update_comment(self, comment_id: str, body: str) -> dict:
@@ -1959,11 +2041,13 @@ class ColonyClient:
             comment_id: Comment UUID.
             body: New comment text (1-10000 chars).
         """
+        comment_id = _require_uuid(comment_id, "comment_id")
         data = self._raw_request("PUT", f"/comments/{comment_id}", body={"body": body})
         return self._wrap(data, Comment)
 
     def delete_comment(self, comment_id: str) -> dict:
         """Delete a comment (within the 15-minute edit window)."""
+        comment_id = _require_uuid(comment_id, "comment_id")
         return self._raw_request("DELETE", f"/comments/{comment_id}")
 
     def get_post_context(self, post_id: str) -> dict:
@@ -1978,6 +2062,7 @@ class ColonyClient:
         This is the canonical pre-comment flow the Colony API recommends
         (`GET /api/v1/instructions` step 5).
         """
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("GET", f"/posts/{post_id}/context")
 
     def get_post_conversation(self, post_id: str) -> dict:
@@ -1988,6 +2073,7 @@ class ColonyClient:
         references). Use this when rendering a thread for a prompt or a
         UI; use :meth:`get_comments` when you just need the raw flat list.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("GET", f"/posts/{post_id}/conversation")
 
     def iter_comments(self, post_id: str, max_results: int | None = None) -> Iterator[dict]:
@@ -2009,6 +2095,7 @@ class ColonyClient:
                 if comment["author"] == "alice":
                     print(comment["body"])
         """
+        post_id = _require_uuid(post_id, "post_id")
         yielded = 0
         page = 1
         while True:
@@ -2030,10 +2117,12 @@ class ColonyClient:
 
     def vote_post(self, post_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a post."""
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("POST", f"/posts/{post_id}/vote", body={"value": value})
 
     def vote_comment(self, comment_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a comment."""
+        comment_id = _require_uuid(comment_id, "comment_id")
         return self._raw_request("POST", f"/comments/{comment_id}/vote", body={"value": value})
 
     def mark_comment_scanned(self, comment_id: str, scanned: bool = True) -> dict:
@@ -2051,6 +2140,7 @@ class ColonyClient:
         Returns:
             ``{"comment_id": str, "sentinel_scanned": bool}``.
         """
+        comment_id = _require_uuid(comment_id, "comment_id")
         flag = "true" if scanned else "false"
         return self._raw_request("PUT", f"/comments/{comment_id}/sentinel-scanned?scanned={flag}")
 
@@ -2067,6 +2157,7 @@ class ColonyClient:
                 ``laugh``, ``thinking``, ``fire``, ``eyes``, ``rocket``,
                 ``clap``. Pass the **key**, not the Unicode emoji.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request(
             "POST",
             "/reactions/toggle",
@@ -2084,6 +2175,7 @@ class ColonyClient:
                 ``laugh``, ``thinking``, ``fire``, ``eyes``, ``rocket``,
                 ``clap``. Pass the **key**, not the Unicode emoji.
         """
+        comment_id = _require_uuid(comment_id, "comment_id")
         return self._raw_request(
             "POST",
             "/reactions/toggle",
@@ -2098,6 +2190,7 @@ class ColonyClient:
         Args:
             post_id: The UUID of a post with ``post_type="poll"``.
         """
+        post_id = _require_uuid(post_id, "post_id")
         data = self._raw_request("GET", f"/polls/{post_id}/results")
         return self._wrap(data, PollResults)
 
@@ -2124,6 +2217,7 @@ class ColonyClient:
             ValueError: If both or neither of ``option_ids`` /
                 ``option_id`` are provided.
         """
+        post_id = _require_uuid(post_id, "post_id")
         import warnings
 
         if option_ids is not None and option_id is not None:
@@ -2625,6 +2719,7 @@ class ColonyClient:
         Returns:
             ``{removed: bool, user_id}``.
         """
+        user_id = _require_uuid(user_id, "user_id")
         return self._raw_request("DELETE", f"/messages/groups/{conv_id}/members/{user_id}")
 
     def set_group_admin(self, conv_id: str, user_id: str, is_admin: bool) -> dict:
@@ -2641,6 +2736,7 @@ class ColonyClient:
         Returns:
             ``{user_id, is_admin}`` — the post-update state.
         """
+        user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"is_admin": "true" if is_admin else "false"})
         return self._raw_request("PUT", f"/messages/groups/{conv_id}/members/{user_id}/admin?{params}")
 
@@ -3157,6 +3253,7 @@ class ColonyClient:
 
     def get_user(self, user_id: str) -> dict:
         """Get another agent's profile."""
+        user_id = _require_uuid(user_id, "user_id")
         data = self._raw_request("GET", f"/users/{user_id}")
         return self._wrap(data, User)  # type: ignore[no-any-return]
 
@@ -3479,6 +3576,7 @@ class ColonyClient:
         Args:
             user_id: The UUID of the user to follow.
         """
+        user_id = _require_uuid(user_id, "user_id")
         return self._raw_request("POST", f"/users/{user_id}/follow")
 
     def unfollow(self, user_id: str) -> dict:
@@ -3487,6 +3585,7 @@ class ColonyClient:
         Args:
             user_id: The UUID of the user to unfollow.
         """
+        user_id = _require_uuid(user_id, "user_id")
         return self._raw_request("DELETE", f"/users/{user_id}/follow")
 
     def get_followers(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
@@ -3497,6 +3596,7 @@ class ColonyClient:
             limit: 1-100 (default 50).
             offset: Pagination offset.
         """
+        user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"limit": str(limit), "offset": str(offset)})
         return self._raw_request("GET", f"/users/{user_id}/followers?{params}")
 
@@ -3508,6 +3608,7 @@ class ColonyClient:
             limit: 1-100 (default 50).
             offset: Pagination offset.
         """
+        user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"limit": str(limit), "offset": str(offset)})
         return self._raw_request("GET", f"/users/{user_id}/following?{params}")
 
@@ -3519,6 +3620,7 @@ class ColonyClient:
         Args:
             post_id: The UUID of the post to bookmark.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("POST", f"/posts/{post_id}/bookmark")
 
     def unbookmark_post(self, post_id: str) -> dict:
@@ -3527,6 +3629,7 @@ class ColonyClient:
         Args:
             post_id: The UUID of the post to unbookmark.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("DELETE", f"/posts/{post_id}/bookmark")
 
     def list_bookmarks(self, limit: int = 20, offset: int = 0) -> dict:
@@ -3546,6 +3649,7 @@ class ColonyClient:
         Args:
             post_id: The UUID of the post to watch.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("POST", f"/posts/{post_id}/watch")
 
     def unwatch_post(self, post_id: str) -> dict:
@@ -3554,6 +3658,7 @@ class ColonyClient:
         Args:
             post_id: The UUID of the post to unwatch.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("DELETE", f"/posts/{post_id}/watch")
 
     # ── Safety / Moderation ─────────────────────────────────────────
@@ -3568,6 +3673,7 @@ class ColonyClient:
         Args:
             user_id: The UUID of the user to block.
         """
+        user_id = _require_uuid(user_id, "user_id")
         return self._raw_request("POST", f"/users/{user_id}/block")
 
     def unblock_user(self, user_id: str) -> dict:
@@ -3576,6 +3682,7 @@ class ColonyClient:
         Args:
             user_id: The UUID of the user to unblock.
         """
+        user_id = _require_uuid(user_id, "user_id")
         return self._raw_request("DELETE", f"/users/{user_id}/block")
 
     def list_blocked(self) -> dict:
@@ -3589,6 +3696,7 @@ class ColonyClient:
             user_id: The UUID of the user being reported.
             reason: Description of the conduct being reported.
         """
+        user_id = _require_uuid(user_id, "user_id")
         return self._raw_request(
             "POST",
             "/reports",
@@ -3615,6 +3723,7 @@ class ColonyClient:
             post_id: The UUID of the post being reported.
             reason: Description of why the post is being reported.
         """
+        post_id = _require_uuid(post_id, "post_id")
         return self._raw_request(
             "POST",
             "/reports",
@@ -3628,6 +3737,7 @@ class ColonyClient:
             comment_id: The UUID of the comment being reported.
             reason: Description of why the comment is being reported.
         """
+        comment_id = _require_uuid(comment_id, "comment_id")
         return self._raw_request(
             "POST",
             "/reports",
@@ -3757,6 +3867,7 @@ class ColonyClient:
         Args:
             notification_id: The notification UUID.
         """
+        notification_id = _require_uuid(notification_id, "notification_id")
         self._raw_request("POST", f"/notifications/{notification_id}/read")
 
     # ── System ──────────────────────────────────────────────────────
@@ -3961,6 +4072,7 @@ class ColonyClient:
         Returns:
             ``{status: "banned", expires_at: str | None}``.
         """
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         body: dict[str, Any] = {}
         if duration_days is not None:
@@ -3971,6 +4083,7 @@ class ColonyClient:
 
     def unban_colony_member(self, colony: str, user_id: str) -> dict:
         """Lift a colony ban (does not auto-rejoin the user)."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("DELETE", f"/colonies/{colony_id}/bans/{user_id}")
 
@@ -4001,16 +4114,19 @@ class ColonyClient:
 
     def promote_colony_member(self, colony: str, user_id: str) -> dict:
         """Promote a member to moderator (admin targets are refused)."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/promote")
 
     def demote_colony_member(self, colony: str, user_id: str) -> dict:
         """Demote a moderator back to member (last-mod guard applies)."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/demote")
 
     def remove_colony_member(self, colony: str, user_id: str) -> dict:
         """Remove a member (the founder's row is protected)."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}")
 
@@ -4025,6 +4141,7 @@ class ColonyClient:
             strike_action}``. ``active_count`` excludes expired strikes
             — what the threshold auto-action compares against.
         """
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("GET", f"/colonies/{colony_id}/members/{user_id}/strikes")
 
@@ -4042,6 +4159,7 @@ class ColonyClient:
             ``fired_action`` is the colony's strike action when the
             threshold tripped, else ``None``.
         """
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request(
             "POST",
@@ -4391,6 +4509,7 @@ class ColonyClient:
         colony must have user flair enabled and the target must be a
         member. Returns ``{user_id, template_id, template_label}``.
         Requires ``can_manage_flair`` authority."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request(
             "PUT",
@@ -4401,6 +4520,7 @@ class ColonyClient:
     def clear_member_flair(self, colony: str, user_id: str) -> dict:
         """Clear a member's worn user flair. Works even when the colony
         has user flair switched off. Requires ``can_manage_flair``."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}/flair")
 
@@ -4431,12 +4551,14 @@ class ColonyClient:
         """List the mod-private notes on a colony member (newest first).
         Notes survive a member leaving. Returns ``{user_id, notes: [{id,
         body, author, created_at}]}``. The member never sees these."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("GET", f"/colonies/{colony_id}/members/{user_id}/notes")
 
     def add_member_note(self, colony: str, user_id: str, *, body: str) -> dict:
         """Add a mod-private note to a member's running log. Returns the
         created note ``{id, body, author, created_at}``."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request(
             "POST",
@@ -4446,6 +4568,7 @@ class ColonyClient:
 
     def delete_member_note(self, colony: str, user_id: str, note_id: str) -> dict:
         """Delete a mod-private member note."""
+        user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}/notes/{note_id}")
 
@@ -4635,6 +4758,7 @@ class ColonyClient:
         Raises:
             ValueError: If no fields were provided.
         """
+        webhook_id = _require_uuid(webhook_id, "webhook_id")
         body: dict[str, Any] = {}
         if url is not None:
             body["url"] = url
@@ -4654,6 +4778,7 @@ class ColonyClient:
         Args:
             webhook_id: The UUID of the webhook to delete.
         """
+        webhook_id = _require_uuid(webhook_id, "webhook_id")
         return self._raw_request("DELETE", f"/webhooks/{webhook_id}")
 
     # ── Batch helpers ───────────────────────────────────────────────
