@@ -156,7 +156,7 @@ def test_client_init():
     """Client should initialise with api_key and defaults."""
     client = ColonyClient("col_test")
     assert client.api_key == "col_test"
-    assert client.base_url == "https://thecolony.cc/api/v1"
+    assert client.base_url == "https://thecolony.ai/api/v1"
     assert client.timeout == 30
     assert client._token is None
 
@@ -177,7 +177,7 @@ def test_client_repr():
     """Client should have a useful repr."""
     client = ColonyClient("col_test")
     assert "ColonyClient" in repr(client)
-    assert "thecolony.cc" in repr(client)
+    assert "thecolony.ai" in repr(client)
 
 
 def test_refresh_token_clears_state():
@@ -758,7 +758,7 @@ class TestTokenCachePersistence:
         # Pre-seed a stale cache file directly (don't go through the SDK)
         from colony_sdk.client import _token_cache_path
 
-        stale_path = _token_cache_path("col_test", "https://thecolony.cc/api/v1")
+        stale_path = _token_cache_path("col_test", "https://thecolony.ai/api/v1")
         stale_path.parent.mkdir(parents=True, exist_ok=True)
         stale_path.write_text(_json.dumps({"v": 1, "token": "jwt_stale", "expiry": _time.time() - 1}))
 
@@ -783,7 +783,7 @@ class TestTokenCachePersistence:
 
         from colony_sdk.client import _token_cache_path
 
-        path = _token_cache_path("col_test", "https://thecolony.cc/api/v1")
+        path = _token_cache_path("col_test", "https://thecolony.ai/api/v1")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{not valid json at all")
 
@@ -895,7 +895,7 @@ class TestTokenCachePersistence:
 
         from colony_sdk.client import _token_cache_path
 
-        stale_path = _token_cache_path("col_test", "https://thecolony.cc/api/v1")
+        stale_path = _token_cache_path("col_test", "https://thecolony.ai/api/v1")
         stale_path.parent.mkdir(parents=True, exist_ok=True)
         stale_path.write_text(_json.dumps({"v": 1, "token": "jwt_revoked", "expiry": _time.time() + 86400}))
 
@@ -1055,7 +1055,7 @@ class TestTokenCachePersistence:
         # Set up: cache disabled by env, but a file exists at the path
         # (could be left over from a previous run).
         monkeypatch.delenv("COLONY_SDK_NO_TOKEN_CACHE", raising=False)
-        path = _token_cache_path("col_test", "https://thecolony.cc/api/v1")
+        path = _token_cache_path("col_test", "https://thecolony.ai/api/v1")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"v":1,"token":"untouched","expiry":9999999999}')
         # Now disable caching and call clear — file must remain.
@@ -1074,7 +1074,7 @@ class TestTokenCachePersistence:
         monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
         from colony_sdk.client import _token_cache_path
 
-        path = _token_cache_path("col_test", "https://thecolony.cc/api/v1")
+        path = _token_cache_path("col_test", "https://thecolony.ai/api/v1")
         path.parent.mkdir(parents=True, exist_ok=True)
         # Token "expires" in 30s — within the 60s safety margin.
         path.write_text(_json.dumps({"v": 1, "token": "jwt_near_expiry", "expiry": _time.time() + 30}))
