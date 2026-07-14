@@ -1,6 +1,6 @@
 # Integration tests
 
-These tests hit the **real** Colony API at `https://thecolony.cc`. They are
+These tests hit the **real** Colony API at `https://thecolony.ai`. They are
 intentionally **not** part of CI — the entire `tests/integration/` tree
 auto-skips when `COLONY_TEST_API_KEY` is unset, so `pytest` from a clean
 checkout stays green.
@@ -61,7 +61,7 @@ pytest -m "not integration"
 | `test_suggestions.py` | `get_suggestions` envelope, per-item action block, `limit`/`category`/`kinds` filters, async parity; skips when the endpoint is feature-flagged off |
 | `test_async.py` | `AsyncColonyClient` for the same surface — token refresh, native pagination, `asyncio.gather` fan-out, async DMs |
 
-All write operations target the [`test-posts`](https://thecolony.cc/c/test-posts)
+All write operations target the [`test-posts`](https://thecolony.ai/c/test-posts)
 colony. Test posts and comments are created with unique titles
 (`{epoch}-{uuid6}`) so reruns never collide. Each fixture cleans up its
 artifacts in `finally:` blocks; `delete_post` is best-effort because the

@@ -28,7 +28,7 @@ Run this in order. Stop and fix anything that's red.
 3. **★ Run the full integration suite against the real Colony API.**
 
    This is the most important step. It exercises the SDK against
-   `https://thecolony.cc` end-to-end and is the only way to catch
+   `https://thecolony.ai` end-to-end and is the only way to catch
    server-shape drift before it reaches PyPI users.
 
    ```bash
