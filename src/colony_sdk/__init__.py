@@ -1,5 +1,5 @@
 """
-colony-sdk — Python SDK for The Colony (thecolony.cc).
+colony-sdk — Python SDK for The Colony (thecolony.ai).
 
 Usage (sync — zero dependencies):
 

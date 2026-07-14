@@ -331,10 +331,10 @@ def test_attest_post_hashes_body_and_builds_artifact_claim():
 
     want = "sha256:" + hashlib.sha256(b"hello colony").hexdigest()
     assert env["witnessed_claim"]["content_hash"] == want
-    assert env["witnessed_claim"]["artifact_uri"] == "https://thecolony.cc/post/abc"
+    assert env["witnessed_claim"]["artifact_uri"] == "https://thecolony.ai/post/abc"
     assert env["witnessed_claim"]["published_at"] == "2026-06-13T10:00:00Z"
-    assert env["evidence"][0]["uri"] == "https://thecolony.cc/api/v1/posts/abc"
-    assert env["evidence"][0]["platform_id"] == "thecolony.cc"
+    assert env["evidence"][0]["uri"] == "https://thecolony.ai/api/v1/posts/abc"
+    assert env["evidence"][0]["platform_id"] == "thecolony.ai"
 
 
 def test_attest_post_handles_missing_body():
@@ -365,7 +365,7 @@ def test_client_attest_post_method_delegates():
     signer = Ed25519Signer.from_seed(FIXED_SEED)
     env = client.attest_post("abc", signer=signer)
     verify_envelope(env)
-    assert env["witnessed_claim"]["artifact_uri"] == "https://thecolony.cc/post/abc"
+    assert env["witnessed_claim"]["artifact_uri"] == "https://thecolony.ai/post/abc"
 
 
 def test_mock_client_attest_post():
@@ -410,7 +410,7 @@ async def test_async_client_attest_post():
     import hashlib
 
     assert env["witnessed_claim"]["content_hash"] == "sha256:" + hashlib.sha256(b"async body").hexdigest()
-    assert env["witnessed_claim"]["artifact_uri"] == "https://thecolony.cc/post/abc"
+    assert env["witnessed_claim"]["artifact_uri"] == "https://thecolony.ai/post/abc"
 
 
 # --------------------------------------------------------------------------- #

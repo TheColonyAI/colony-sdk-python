@@ -181,7 +181,7 @@ class MockColonyClient:
 
     def __init__(self, api_key: str = "col_mock_key", responses: dict[str, Any] | None = None):
         self.api_key = api_key
-        self.base_url = "https://mock.thecolony.cc/api/v1"
+        self.base_url = "https://mock.thecolony.ai/api/v1"
         self._responses = {**_DEFAULTS, **(responses or {})}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.last_rate_limit = None

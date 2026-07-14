@@ -1,0 +1,221 @@
+﻿2026-06-03T17:18:26.8130203Z Current runner version: '2.334.0'
+2026-06-03T17:18:26.8153788Z ##[group]Runner Image Provisioner
+2026-06-03T17:18:26.8154934Z Hosted Compute Agent
+2026-06-03T17:18:26.8155850Z Version: 20260520.533
+2026-06-03T17:18:26.8156496Z Commit: 189110e25284a9812c124fd27b339e2fb4f2f9db
+2026-06-03T17:18:26.8157294Z Build Date: 2026-05-20T17:44:04Z
+2026-06-03T17:18:26.8157993Z Worker ID: {e7e50a72-2c69-44d7-9a95-1e074f05085e}
+2026-06-03T17:18:26.8158716Z Azure Region: westcentralus
+2026-06-03T17:18:26.8159431Z ##[endgroup]
+2026-06-03T17:18:26.8160924Z ##[group]Operating System
+2026-06-03T17:18:26.8161691Z Ubuntu
+2026-06-03T17:18:26.8162235Z 24.04.4
+2026-06-03T17:18:26.8162777Z LTS
+2026-06-03T17:18:26.8163361Z ##[endgroup]
+2026-06-03T17:18:26.8163925Z ##[group]Runner Image
+2026-06-03T17:18:26.8164563Z Image: ubuntu-24.04
+2026-06-03T17:18:26.8165359Z Version: 20260525.161.1
+2026-06-03T17:18:26.8166701Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260525.161/images/ubuntu/Ubuntu2404-Readme.md
+2026-06-03T17:18:26.8168254Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260525.161
+2026-06-03T17:18:26.8169270Z ##[endgroup]
+2026-06-03T17:18:26.8170451Z ##[group]GITHUB_TOKEN Permissions
+2026-06-03T17:18:26.8172756Z Contents: read
+2026-06-03T17:18:26.8173408Z Metadata: read
+2026-06-03T17:18:26.8173982Z Packages: read
+2026-06-03T17:18:26.8174607Z ##[endgroup]
+2026-06-03T17:18:26.8177061Z Secret source: Actions
+2026-06-03T17:18:26.8177862Z Prepare workflow directory
+2026-06-03T17:18:26.8569343Z Prepare all required actions
+2026-06-03T17:18:26.8607749Z Getting action download info
+2026-06-03T17:18:27.3420220Z Download action repository 'actions/checkout@v6' (SHA:df4cb1c069e1874edd31b4311f1884172cec0e10)
+2026-06-03T17:18:27.9822455Z Download action repository 'actions/setup-python@v6' (SHA:a309ff8b426b58ec0e2a45f0f869d46889d02405)
+2026-06-03T17:18:28.1566022Z Complete job name: lint
+2026-06-03T17:18:28.2322668Z ##[group]Run actions/checkout@v6
+2026-06-03T17:18:28.2323634Z with:
+2026-06-03T17:18:28.2324197Z   repository: TheColonyCC/colony-sdk-python
+2026-06-03T17:18:28.2329261Z   token: ***
+2026-06-03T17:18:28.2329771Z   ssh-strict: true
+2026-06-03T17:18:28.2330264Z   ssh-user: git
+2026-06-03T17:18:28.2330777Z   persist-credentials: true
+2026-06-03T17:18:28.2331328Z   clean: true
+2026-06-03T17:18:28.2331842Z   sparse-checkout-cone-mode: true
+2026-06-03T17:18:28.2332437Z   fetch-depth: 1
+2026-06-03T17:18:28.2332933Z   fetch-tags: false
+2026-06-03T17:18:28.2333439Z   show-progress: true
+2026-06-03T17:18:28.2333949Z   lfs: false
+2026-06-03T17:18:28.2334405Z   submodules: false
+2026-06-03T17:18:28.2334908Z   set-safe-directory: true
+2026-06-03T17:18:28.2335883Z ##[endgroup]
+2026-06-03T17:18:28.3291949Z Syncing repository: TheColonyCC/colony-sdk-python
+2026-06-03T17:18:28.3294060Z ##[group]Getting Git version info
+2026-06-03T17:18:28.3295406Z Working directory is '/home/runner/work/colony-sdk-python/colony-sdk-python'
+2026-06-03T17:18:28.3296755Z [command]/usr/bin/git version
+2026-06-03T17:18:28.3359228Z git version 2.54.0
+2026-06-03T17:18:28.3382320Z ##[endgroup]
+2026-06-03T17:18:28.3396629Z Temporarily overriding HOME='/home/runner/work/_temp/a413f28b-db36-4264-ad6c-87f66c67b39a' before making global git config changes
+2026-06-03T17:18:28.3398238Z Adding repository directory to the temporary git global config as a safe directory
+2026-06-03T17:18:28.3402258Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/colony-sdk-python/colony-sdk-python
+2026-06-03T17:18:28.3445458Z Deleting the contents of '/home/runner/work/colony-sdk-python/colony-sdk-python'
+2026-06-03T17:18:28.3449609Z ##[group]Determining repository object format
+2026-06-03T17:18:28.3451661Z ##[endgroup]
+2026-06-03T17:18:28.3452958Z ##[group]Initializing the repository
+2026-06-03T17:18:28.3456673Z [command]/usr/bin/git init /home/runner/work/colony-sdk-python/colony-sdk-python
+2026-06-03T17:18:28.3552257Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-06-03T17:18:28.3554287Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-06-03T17:18:28.3556131Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-06-03T17:18:28.3557179Z hint: call:
+2026-06-03T17:18:28.3557749Z hint:
+2026-06-03T17:18:28.3558746Z hint: 	git config --global init.defaultBranch <name>
+2026-06-03T17:18:28.3560003Z hint:
+2026-06-03T17:18:28.3561104Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-06-03T17:18:28.3562729Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-06-03T17:18:28.3563569Z hint:
+2026-06-03T17:18:28.3564056Z hint: 	git branch -m <name>
+2026-06-03T17:18:28.3564590Z hint:
+2026-06-03T17:18:28.3565573Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-06-03T17:18:28.3567000Z Initialized empty Git repository in /home/runner/work/colony-sdk-python/colony-sdk-python/.git/
+2026-06-03T17:18:28.3572593Z [command]/usr/bin/git remote add origin https://github.com/TheColonyCC/colony-sdk-python
+2026-06-03T17:18:28.3615692Z ##[endgroup]
+2026-06-03T17:18:28.3616584Z ##[group]Disabling automatic garbage collection
+2026-06-03T17:18:28.3619368Z [command]/usr/bin/git config --local gc.auto 0
+2026-06-03T17:18:28.3647508Z ##[endgroup]
+2026-06-03T17:18:28.3648706Z ##[group]Setting up auth
+2026-06-03T17:18:28.3649485Z Removing SSH command configuration
+2026-06-03T17:18:28.3654913Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-06-03T17:18:28.3687329Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-06-03T17:18:28.4020725Z Removing HTTP extra header
+2026-06-03T17:18:28.4026623Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-06-03T17:18:28.4056916Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-06-03T17:18:28.4265837Z Removing includeIf entries pointing to credentials config files
+2026-06-03T17:18:28.4271201Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-06-03T17:18:28.4300241Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-06-03T17:18:28.4520081Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-06-03T17:18:28.4556674Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/colony-sdk-python/colony-sdk-python/.git.path /home/runner/work/_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:28.4586572Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/colony-sdk-python/colony-sdk-python/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:28.4618141Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:28.4647401Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:28.4678258Z ##[endgroup]
+2026-06-03T17:18:28.4679104Z ##[group]Fetching the repository
+2026-06-03T17:18:28.4686145Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +410273d74b5498a72b595432ab9c5c99c092543a:refs/remotes/pull/63/merge
+2026-06-03T17:18:29.0605497Z From https://github.com/TheColonyCC/colony-sdk-python
+2026-06-03T17:18:29.0608058Z  * [new ref]         410273d74b5498a72b595432ab9c5c99c092543a -> pull/63/merge
+2026-06-03T17:18:29.0645422Z ##[endgroup]
+2026-06-03T17:18:29.0647640Z ##[group]Determining the checkout info
+2026-06-03T17:18:29.0650112Z ##[endgroup]
+2026-06-03T17:18:29.0653164Z [command]/usr/bin/git sparse-checkout disable
+2026-06-03T17:18:29.0700556Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-06-03T17:18:29.0732375Z ##[group]Checking out the ref
+2026-06-03T17:18:29.0736433Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/63/merge
+2026-06-03T17:18:29.0849153Z Note: switching to 'refs/remotes/pull/63/merge'.
+2026-06-03T17:18:29.0850463Z 
+2026-06-03T17:18:29.0851234Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-06-03T17:18:29.0853136Z changes and commit them, and you can discard any commits you make in this
+2026-06-03T17:18:29.0855558Z state without impacting any branches by switching back to a branch.
+2026-06-03T17:18:29.0856906Z 
+2026-06-03T17:18:29.0857686Z If you want to create a new branch to retain commits you create, you may
+2026-06-03T17:18:29.0859901Z do so (now or later) by using -c with the switch command. Example:
+2026-06-03T17:18:29.0861329Z 
+2026-06-03T17:18:29.0861907Z   git switch -c <new-branch-name>
+2026-06-03T17:18:29.0862781Z 
+2026-06-03T17:18:29.0863318Z Or undo this operation with:
+2026-06-03T17:18:29.0864154Z 
+2026-06-03T17:18:29.0864659Z   git switch -
+2026-06-03T17:18:29.0866052Z 
+2026-06-03T17:18:29.0867633Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-06-03T17:18:29.0869442Z 
+2026-06-03T17:18:29.0871186Z HEAD is now at 410273d Merge e556aae800dfa1c7a69690199e878926d7c95c81 into 7755c31c72dd938b1989c0571cac50f61a658c6f
+2026-06-03T17:18:29.0876571Z ##[endgroup]
+2026-06-03T17:18:29.0898408Z [command]/usr/bin/git log -1 --format=%H
+2026-06-03T17:18:29.0922334Z 410273d74b5498a72b595432ab9c5c99c092543a
+2026-06-03T17:18:29.1298111Z ##[group]Run actions/setup-python@v6
+2026-06-03T17:18:29.1299370Z with:
+2026-06-03T17:18:29.1300287Z   python-version: 3.12
+2026-06-03T17:18:29.1301332Z   check-latest: false
+2026-06-03T17:18:29.1313172Z   token: ***
+2026-06-03T17:18:29.1314123Z   update-environment: true
+2026-06-03T17:18:29.1315366Z   allow-prereleases: false
+2026-06-03T17:18:29.1316463Z   freethreaded: false
+2026-06-03T17:18:29.1382209Z ##[endgroup]
+2026-06-03T17:18:29.2698920Z ##[group]Installed versions
+2026-06-03T17:18:29.2800018Z Successfully set up CPython (3.12.13)
+2026-06-03T17:18:29.2801959Z ##[endgroup]
+2026-06-03T17:18:29.2961836Z ##[group]Run pip install ruff
+2026-06-03T17:18:29.2963083Z [36;1mpip install ruff[0m
+2026-06-03T17:18:29.3004496Z shell: /usr/bin/bash -e {0}
+2026-06-03T17:18:29.3005785Z env:
+2026-06-03T17:18:29.3006915Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:29.3008834Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib/pkgconfig
+2026-06-03T17:18:29.3010751Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:29.3012459Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:29.3014195Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:29.3016387Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib
+2026-06-03T17:18:29.3017875Z ##[endgroup]
+2026-06-03T17:18:30.6733779Z Collecting ruff
+2026-06-03T17:18:30.7730520Z   Downloading ruff-0.15.15-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (26 kB)
+2026-06-03T17:18:30.8072198Z Downloading ruff-0.15.15-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (11.4 MB)
+2026-06-03T17:18:31.0338250Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 11.4/11.4 MB 62.3 MB/s  0:00:00
+2026-06-03T17:18:31.0623976Z Installing collected packages: ruff
+2026-06-03T17:18:31.1844615Z Successfully installed ruff-0.15.15
+2026-06-03T17:18:31.1853551Z 
+2026-06-03T17:18:31.1854321Z [notice] A new release of pip is available: 26.1.1 -> 26.1.2
+2026-06-03T17:18:31.1855579Z [notice] To update, run: pip install --upgrade pip
+2026-06-03T17:18:31.2352006Z ##[group]Run ruff check src/ tests/
+2026-06-03T17:18:31.2352412Z [36;1mruff check src/ tests/[0m
+2026-06-03T17:18:31.2380078Z shell: /usr/bin/bash -e {0}
+2026-06-03T17:18:31.2380382Z env:
+2026-06-03T17:18:31.2380701Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:31.2381210Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib/pkgconfig
+2026-06-03T17:18:31.2381715Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:31.2382149Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:31.2382582Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:31.2383034Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib
+2026-06-03T17:18:31.2383415Z ##[endgroup]
+2026-06-03T17:18:31.2678813Z All checks passed!
+2026-06-03T17:18:31.2727781Z ##[group]Run ruff format --check src/ tests/
+2026-06-03T17:18:31.2728216Z [36;1mruff format --check src/ tests/[0m
+2026-06-03T17:18:31.2755983Z shell: /usr/bin/bash -e {0}
+2026-06-03T17:18:31.2756308Z env:
+2026-06-03T17:18:31.2756627Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:31.2757137Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib/pkgconfig
+2026-06-03T17:18:31.2757633Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:31.2758078Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:31.2758558Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-03T17:18:31.2759010Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib
+2026-06-03T17:18:31.2759407Z ##[endgroup]
+2026-06-03T17:18:31.3046592Z Would reformat: tests/integration/test_spam.py
+2026-06-03T17:18:31.3047371Z Would reformat: tests/test_api_methods.py
+2026-06-03T17:18:31.3048152Z 2 files would be reformatted, 35 files already formatted
+2026-06-03T17:18:31.3069886Z ##[error]Process completed with exit code 1.
+2026-06-03T17:18:31.3205983Z Post job cleanup.
+2026-06-03T17:18:31.4029318Z [command]/usr/bin/git version
+2026-06-03T17:18:31.4065074Z git version 2.54.0
+2026-06-03T17:18:31.4106015Z Temporarily overriding HOME='/home/runner/work/_temp/823aaa16-6e0d-4bcb-b7c1-5bdd416bb877' before making global git config changes
+2026-06-03T17:18:31.4108088Z Adding repository directory to the temporary git global config as a safe directory
+2026-06-03T17:18:31.4112591Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/colony-sdk-python/colony-sdk-python
+2026-06-03T17:18:31.4142524Z Removing SSH command configuration
+2026-06-03T17:18:31.4149643Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-06-03T17:18:31.4183929Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-06-03T17:18:31.4436877Z Removing HTTP extra header
+2026-06-03T17:18:31.4441578Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-06-03T17:18:31.4473018Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-06-03T17:18:31.4688153Z Removing includeIf entries pointing to credentials config files
+2026-06-03T17:18:31.4693940Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-06-03T17:18:31.4719145Z includeif.gitdir:/home/runner/work/colony-sdk-python/colony-sdk-python/.git.path
+2026-06-03T17:18:31.4720580Z includeif.gitdir:/home/runner/work/colony-sdk-python/colony-sdk-python/.git/worktrees/*.path
+2026-06-03T17:18:31.4721731Z includeif.gitdir:/github/workspace/.git.path
+2026-06-03T17:18:31.4722592Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-06-03T17:18:31.4734678Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/colony-sdk-python/colony-sdk-python/.git.path
+2026-06-03T17:18:31.4750593Z /home/runner/work/_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:31.4761938Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/colony-sdk-python/colony-sdk-python/.git.path /home/runner/work/_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:31.4794082Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/colony-sdk-python/colony-sdk-python/.git/worktrees/*.path
+2026-06-03T17:18:31.4815573Z /home/runner/work/_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:31.4824396Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/colony-sdk-python/colony-sdk-python/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:31.4855290Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-06-03T17:18:31.4877881Z /github/runner_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:31.4891823Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:31.4921467Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-06-03T17:18:31.4942931Z /github/runner_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:31.4953975Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config
+2026-06-03T17:18:31.4989911Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-06-03T17:18:31.5233379Z Removing credentials config '/home/runner/work/_temp/git-credentials-a149a040-495d-45e7-bd3b-8a5a1115b02a.config'
+2026-06-03T17:18:31.5374760Z Cleaning up orphan processes
