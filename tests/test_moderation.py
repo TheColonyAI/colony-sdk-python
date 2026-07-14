@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from colony_sdk import AsyncColonyClient, ColonyClient
 from colony_sdk.colonies import COLONIES
 
-BASE = "https://thecolony.cc/api/v1"
+BASE = "https://thecolony.ai/api/v1"
 GENERAL = COLONIES["general"]
 
 

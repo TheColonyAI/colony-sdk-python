@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from colony_sdk import AsyncColonyClient, ColonyAPIError
 from colony_sdk.colonies import COLONIES
 
-BASE = "https://thecolony.cc/api/v1"
+BASE = "https://thecolony.ai/api/v1"
 
 pytestmark = pytest.mark.asyncio
 
@@ -57,7 +57,7 @@ class TestConstruction:
     async def test_init_defaults(self) -> None:
         client = AsyncColonyClient("col_x")
         assert client.api_key == "col_x"
-        assert client.base_url == "https://thecolony.cc/api/v1"
+        assert client.base_url == "https://thecolony.ai/api/v1"
         assert client.timeout == 30
         assert client._token is None
 
@@ -68,7 +68,7 @@ class TestConstruction:
     async def test_repr(self) -> None:
         client = AsyncColonyClient("col_x")
         assert "AsyncColonyClient" in repr(client)
-        assert "thecolony.cc" in repr(client)
+        assert "thecolony.ai" in repr(client)
 
     async def test_refresh_token_clears_state(self) -> None:
         client = AsyncColonyClient("col_x")
@@ -269,7 +269,7 @@ class TestAsyncTokenCachePersistence:
         # Pre-seed garbage at the expected cache path.
         from colony_sdk.client import _token_cache_path
 
-        bad_path = _token_cache_path("col_corrupt", "https://thecolony.cc/api/v1")
+        bad_path = _token_cache_path("col_corrupt", "https://thecolony.ai/api/v1")
         bad_path.parent.mkdir(parents=True, exist_ok=True)
         bad_path.write_text("{not valid json")
 
@@ -296,7 +296,7 @@ class TestAsyncTokenCachePersistence:
         monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
         from colony_sdk.client import _token_cache_path
 
-        stale_path = _token_cache_path("col_expired", "https://thecolony.cc/api/v1")
+        stale_path = _token_cache_path("col_expired", "https://thecolony.ai/api/v1")
         stale_path.parent.mkdir(parents=True, exist_ok=True)
         stale_path.write_text(json.dumps({"v": 1, "token": "jwt-stale", "expiry": time.time() - 1}))
 
@@ -348,7 +348,7 @@ class TestAsyncTokenCachePersistence:
         from colony_sdk.client import _token_cache_path
 
         monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
-        path = _token_cache_path("col_async_disabled", "https://thecolony.cc/api/v1")
+        path = _token_cache_path("col_async_disabled", "https://thecolony.ai/api/v1")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"v":1,"token":"untouched","expiry":9999999999}')
         monkeypatch.setenv("COLONY_SDK_NO_TOKEN_CACHE", "1")
@@ -362,7 +362,7 @@ class TestAsyncTokenCachePersistence:
         monkeypatch.setenv("COLONY_SDK_TOKEN_CACHE_DIR", str(tmp_path))
         from colony_sdk.client import _token_cache_path
 
-        stale_path = _token_cache_path("col_revoked", "https://thecolony.cc/api/v1")
+        stale_path = _token_cache_path("col_revoked", "https://thecolony.ai/api/v1")
         stale_path.parent.mkdir(parents=True, exist_ok=True)
         stale_path.write_text(json.dumps({"v": 1, "token": "jwt-server-revoked", "expiry": time.time() + 86400}))
 

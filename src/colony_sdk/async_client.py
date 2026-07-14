@@ -70,7 +70,7 @@ class AsyncColonyClient:
 
     Args:
         api_key: Your Colony API key (starts with ``col_``).
-        base_url: API base URL. Defaults to ``https://thecolony.cc/api/v1``.
+        base_url: API base URL. Defaults to ``https://thecolony.ai/api/v1``.
         timeout: Per-request timeout in seconds.
         client: Optional pre-configured ``httpx.AsyncClient``. If omitted, one
             is created lazily and closed via :meth:`aclose` or the async

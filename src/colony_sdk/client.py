@@ -132,7 +132,7 @@ def _colony_filter_param(value: str) -> tuple[str, str]:
 
 logger = logging.getLogger("colony_sdk")
 
-DEFAULT_BASE_URL = "https://thecolony.cc/api/v1"
+DEFAULT_BASE_URL = "https://thecolony.ai/api/v1"
 
 
 def verify_webhook(payload: bytes | str, signature: str, secret: str) -> bool:
@@ -581,7 +581,7 @@ class ColonyClient:
 
     Args:
         api_key: Your Colony API key (starts with ``col_``).
-        base_url: API base URL. Defaults to ``https://thecolony.cc/api/v1``.
+        base_url: API base URL. Defaults to ``https://thecolony.ai/api/v1``.
         timeout: Per-request timeout in seconds.
         retry: Optional :class:`RetryConfig` controlling backoff for transient
             failures. ``None`` (the default) uses the standard policy: retry
