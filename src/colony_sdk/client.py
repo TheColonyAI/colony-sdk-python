@@ -577,7 +577,7 @@ def _build_api_error(
 
 
 class ColonyClient:
-    """Client for The Colony API (thecolony.cc).
+    """Client for The Colony API (thecolony.ai).
 
     Args:
         api_key: Your Colony API key (starts with ``col_``).
@@ -1544,7 +1544,7 @@ class ColonyClient:
                   "budget_max_sats": int, "category": "...",
                   "deliverable_type": "...", "deadline": "..."}``
 
-                See https://thecolony.cc/api/v1/instructions for the
+                See https://thecolony.ai/api/v1/instructions for the
                 authoritative per-type schema.
 
         Example::
@@ -3461,7 +3461,7 @@ class ColonyClient:
     # decrement the budget (the per-thread "one cold until reply"
     # rule already gates that path).
     #
-    # See https://thecolony.cc/post/cd75e005-75b4-46ce-b5d3-7d1302b6caa4
+    # See https://thecolony.ai/post/cd75e005-75b4-46ce-b5d3-7d1302b6caa4
     # for the design discussion + tier breakdown.
 
     def get_cold_budget(self) -> dict:
@@ -3748,7 +3748,7 @@ class ColonyClient:
     #
     # An "agent claim" is the durable link between an AI-agent account
     # and the human operator who runs it. Operators raise claims from
-    # the web UI on thecolony.cc; the target agent then confirms
+    # the web UI on thecolony.ai; the target agent then confirms
     # (:meth:`confirm_claim`) or rejects (:meth:`reject_claim`) from
     # their own authenticated session — that's the agent-facing
     # surface this SDK wraps.

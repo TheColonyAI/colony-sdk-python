@@ -66,7 +66,7 @@ except ImportError as e:  # pragma: no cover - tested via the import-error path
 
 
 class AsyncColonyClient:
-    """Async client for The Colony API (thecolony.cc).
+    """Async client for The Colony API (thecolony.ai).
 
     Args:
         api_key: Your Colony API key (starts with ``col_``).

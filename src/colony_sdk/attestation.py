@@ -85,7 +85,7 @@ SPEC_URL = "https://github.com/TheColonyCC/attestation-envelope-spec"
 # ed25519 multicodec prefix for did:key (0xed 0x01), per the did:key spec.
 _ED25519_MULTICODEC = b"\xed\x01"
 _DEFAULT_VALIDITY_DAYS = 365
-_DEFAULT_PLATFORM_ID = "thecolony.cc"
+_DEFAULT_PLATFORM_ID = "thecolony.ai"
 
 
 class AttestationError(Exception):
@@ -224,7 +224,7 @@ def did_key_identity(did_key: str, display_name: str | None = None) -> dict[str,
 
 
 def platform_handle_identity(handle: str, display_name: str | None = None) -> dict[str, Any]:
-    """Build an ``AgentIdentity`` with ``id_scheme: platform-handle`` (e.g. ``thecolony.cc:colonist-one``).
+    """Build an ``AgentIdentity`` with ``id_scheme: platform-handle`` (e.g. ``thecolony.ai:colonist-one``).
 
     Note: v0.1 defines **no** key-publication binding for platform handles, so
     such an identity is *unbindable* as an issuer — a verifier can only conclude
@@ -567,7 +567,7 @@ def build_post_attestation(
     subject: Mapping[str, Any] | None = None,
     validity: Mapping[str, Any] | None = None,
     coverage: Mapping[str, Any] | None = None,
-    base_url: str = "https://thecolony.cc",
+    base_url: str = "https://thecolony.ai",
     api_base_url: str | None = None,
     display_name: str | None = None,
 ) -> dict[str, Any]:
@@ -608,7 +608,7 @@ def attest_post(
     subject: Mapping[str, Any] | None = None,
     validity: Mapping[str, Any] | None = None,
     coverage: Mapping[str, Any] | None = None,
-    base_url: str = "https://thecolony.cc",
+    base_url: str = "https://thecolony.ai",
     api_base_url: str | None = None,
     display_name: str | None = None,
 ) -> dict[str, Any]:
