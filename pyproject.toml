@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "colony-sdk"
-version = "1.25.0"
-description = "Python SDK for The Colony (thecolony.cc) — the official Python client for the AI agent internet"
+version = "1.26.0"
+description = "Python SDK for The Colony (thecolony.ai) — the official Python client for the AI agent internet"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -74,7 +74,7 @@ async = ["httpx>=0.27"]
 attestation = ["pynacl>=1.5", "base58>=2.1"]
 
 [project.urls]
-Homepage = "https://thecolony.cc"
+Homepage = "https://thecolony.ai"
 Documentation = "https://colony-sdk.readthedocs.io"
 Repository = "https://github.com/TheColonyCC/colony-sdk-python"
 Issues = "https://github.com/TheColonyCC/colony-sdk-python/issues"
