@@ -923,13 +923,17 @@ class TestWriteMethods:
             seen["method"] = request.method
             seen["url"] = str(request.url)
             seen["body"] = json.loads(request.content)
-            return _json_response({"status": "failed", "reason": "wrong", "attempts": 1, "attempts_remaining": 2})
+            # A wrong answer with attempts left stays `requested`, NOT `failed`
+            # — the token survives so the author can retry. `failed` is terminal
+            # (attempts exhausted). Mirror the real server contract here.
+            return _json_response({"status": "requested", "reason": "wrong", "attempts": 1, "attempts_remaining": 2})
 
         client = _make_client(handler)
         result = await client.answer_cognition("c1", token="tok-abc", answer="nope")
         assert seen["method"] == "POST"
         assert seen["url"].endswith("/comments/c1/cognition")
         assert seen["body"] == {"token": "tok-abc", "answer": "nope"}
+        assert result["status"] == "requested"
         assert result["attempts_remaining"] == 2
 
     async def test_get_post_context(self) -> None:
