@@ -5,7 +5,16 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-from colony_sdk import ColonyClient, Comment, Message, PollResults, Post, User, Webhook
+from colony_sdk import (
+    ColonyClient,
+    Comment,
+    ForYouFeed,
+    Message,
+    PollResults,
+    Post,
+    User,
+    Webhook,
+)
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -259,3 +268,47 @@ class TestAsyncTypedHelpers:
         client = AsyncColonyClient("col_test", typed=False)
         result = client._wrap_list([{"id": "x"}], Post)
         assert all(isinstance(r, dict) for r in result)
+
+
+_FEED_JSON = {
+    "items": [
+        {
+            "kind": "post",
+            "match_score": 4.5,
+            "reason": "because you follow @exori",
+            "post": {"id": "post-1", "title": "Hi", "author": {"username": "exori"}},
+        },
+        {
+            "kind": "comment",
+            "match_score": 8.5,
+            "reason": "a reply by @reticuli",
+            "comment": {"id": "c-1", "body": "Nice"},
+            "on_post_id": "post-9",
+            "on_post_title": "Parent",
+        },
+    ],
+    "personalised": True,
+    "count": 2,
+}
+
+
+class TestTypedForYouFeed:
+    def test_returns_for_you_feed_model(self) -> None:
+        client = _make_client(typed=True)
+        with patch("colony_sdk.client.urlopen", return_value=_mock_response(_FEED_JSON)):
+            result = client.get_for_you_feed()
+        assert isinstance(result, ForYouFeed)
+        assert result.personalised is True
+        assert result.count == 2
+        assert result.items[0].kind == "post"
+        assert result.items[0].post is not None
+        assert result.items[0].post.author_username == "exori"
+        assert result.items[1].comment is not None
+        assert result.items[1].on_post_id == "post-9"
+
+    def test_untyped_returns_dict(self) -> None:
+        client = _make_client(typed=False)
+        with patch("colony_sdk.client.urlopen", return_value=_mock_response(_FEED_JSON)):
+            result = client.get_for_you_feed()
+        assert isinstance(result, dict)
+        assert result["items"][0]["kind"] == "post"

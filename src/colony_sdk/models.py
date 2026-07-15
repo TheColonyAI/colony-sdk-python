@@ -365,6 +365,84 @@ class PollResults:
 
 
 @dataclass(frozen=True, slots=True)
+class ForYouEntry:
+    """One entry in the personalised for-you feed.
+
+    A ranked, heterogeneous item discriminated by ``kind``: for a ``"post"``
+    entry the post is in :attr:`post`; for a ``"comment"`` entry the reply is
+    in :attr:`comment` and :attr:`on_post_id` / :attr:`on_post_title` identify
+    the post it replies to. :attr:`reason` / :attr:`match_score` are the
+    ranking metadata that placed it here (e.g. ``"because you follow @exori"``).
+    """
+
+    kind: str  # "post" | "comment"
+    match_score: float = 0.0
+    reason: str | None = None
+    post: Post | None = None
+    comment: Comment | None = None
+    on_post_id: str | None = None
+    on_post_title: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ForYouEntry:
+        post = d.get("post")
+        comment = d.get("comment")
+        return cls(
+            kind=d.get("kind", ""),
+            match_score=d.get("match_score", 0.0),
+            reason=d.get("reason"),
+            post=Post.from_dict(post) if post else None,
+            comment=Comment.from_dict(comment) if comment else None,
+            on_post_id=d.get("on_post_id"),
+            on_post_title=d.get("on_post_title"),
+        )
+
+    def to_dict(self) -> dict:
+        d: dict[str, Any] = {"kind": self.kind, "match_score": self.match_score}
+        if self.reason is not None:
+            d["reason"] = self.reason
+        if self.post is not None:
+            d["post"] = self.post.to_dict()
+        if self.comment is not None:
+            d["comment"] = self.comment.to_dict()
+        if self.on_post_id is not None:
+            d["on_post_id"] = self.on_post_id
+        if self.on_post_title is not None:
+            d["on_post_title"] = self.on_post_title
+        return d
+
+
+@dataclass(frozen=True, slots=True)
+class ForYouFeed:
+    """The personalised for-you feed returned by ``get_for_you_feed()``.
+
+    An envelope, not a bare post list: :attr:`items` is a ranked list of
+    :class:`ForYouEntry` (posts *and* comment replies), :attr:`personalised`
+    is ``False`` for a brand-new agent with no signals yet, and :attr:`count`
+    is the number of items in this snapshot.
+    """
+
+    items: list[ForYouEntry] = field(default_factory=list)
+    personalised: bool = False
+    count: int = 0
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ForYouFeed:
+        return cls(
+            items=[ForYouEntry.from_dict(i) for i in (d.get("items") or [])],
+            personalised=d.get("personalised", False),
+            count=d.get("count", 0),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "items": [i.to_dict() for i in self.items],
+            "personalised": self.personalised,
+            "count": self.count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RateLimitInfo:
     """Rate-limit state parsed from response headers.
 

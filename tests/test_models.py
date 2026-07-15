@@ -3,6 +3,8 @@
 from colony_sdk.models import (
     Colony,
     Comment,
+    ForYouEntry,
+    ForYouFeed,
     Message,
     Notification,
     PollResults,
@@ -365,3 +367,89 @@ class TestPollResultsToDict:
         assert d["total_votes"] == 10
         assert d["is_closed"] is True
         assert len(d["options"]) == 1
+
+
+class TestForYouEntry:
+    def test_post_entry(self) -> None:
+        e = ForYouEntry.from_dict(
+            {
+                "kind": "post",
+                "match_score": 4.5,
+                "reason": "because you follow @exori",
+                "post": {"id": "post-1", "title": "Hi", "author": {"username": "exori"}},
+            }
+        )
+        assert e.kind == "post"
+        assert e.match_score == 4.5
+        assert e.reason == "because you follow @exori"
+        assert e.post is not None and e.post.id == "post-1"
+        assert e.post.author_username == "exori"
+        assert e.comment is None
+
+    def test_comment_entry(self) -> None:
+        e = ForYouEntry.from_dict(
+            {
+                "kind": "comment",
+                "match_score": 8.5,
+                "comment": {"id": "c-1", "body": "Nice", "author": {"username": "reticuli"}},
+                "on_post_id": "post-9",
+                "on_post_title": "Parent thread",
+            }
+        )
+        assert e.kind == "comment"
+        assert e.comment is not None and e.comment.id == "c-1"
+        assert e.post is None
+        assert e.on_post_id == "post-9"
+        assert e.on_post_title == "Parent thread"
+
+    def test_minimal_and_roundtrip(self) -> None:
+        e = ForYouEntry.from_dict({"kind": "post"})
+        assert e.match_score == 0.0
+        assert e.reason is None
+        assert e.post is None and e.comment is None
+        assert e.to_dict() == {"kind": "post", "match_score": 0.0}
+
+    def test_to_dict_full(self) -> None:
+        raw = {
+            "kind": "comment",
+            "match_score": 8.5,
+            "reason": "a reply by @reticuli",
+            "comment": {"id": "c-1", "body": "Nice"},
+            "on_post_id": "post-9",
+            "on_post_title": "Parent",
+        }
+        d = ForYouEntry.from_dict(raw).to_dict()
+        assert d["kind"] == "comment"
+        assert d["reason"] == "a reply by @reticuli"
+        assert d["comment"]["id"] == "c-1"
+        assert d["on_post_id"] == "post-9"
+        assert "post" not in d
+
+
+class TestForYouFeed:
+    def test_from_dict_and_roundtrip(self) -> None:
+        f = ForYouFeed.from_dict(
+            {
+                "items": [
+                    {"kind": "post", "match_score": 4.0, "post": {"id": "p1", "title": "A"}},
+                    {"kind": "comment", "match_score": 8.5, "comment": {"id": "c1", "body": "B"}},
+                ],
+                "personalised": True,
+                "count": 2,
+            }
+        )
+        assert f.personalised is True
+        assert f.count == 2
+        assert len(f.items) == 2
+        assert f.items[0].kind == "post"
+        assert f.items[1].comment is not None and f.items[1].comment.id == "c1"
+        d = f.to_dict()
+        assert d["count"] == 2
+        assert d["personalised"] is True
+        assert len(d["items"]) == 2
+
+    def test_empty(self) -> None:
+        f = ForYouFeed.from_dict({})
+        assert f.items == []
+        assert f.personalised is False
+        assert f.count == 0

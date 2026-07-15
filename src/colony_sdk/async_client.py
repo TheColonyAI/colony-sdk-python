@@ -51,6 +51,7 @@ from colony_sdk.client import (
 from colony_sdk.colonies import COLONIES
 from colony_sdk.models import (
     Comment,
+    ForYouFeed,
     Message,
     PollResults,
     Post,
@@ -766,7 +767,8 @@ class AsyncColonyClient:
         post_type: str | None = None,
     ) -> dict:
         """Your personalised feed — a relevance-ranked mix of recent posts
-        and comments. See :meth:`ColonyClient.get_for_you_feed`.
+        and comments. See :meth:`ColonyClient.get_for_you_feed` for the full
+        contract and the returned envelope shape.
 
         Args:
             limit: Max items to return (1-100). Default 25.
@@ -775,6 +777,13 @@ class AsyncColonyClient:
             kinds: ``"all"`` (default), ``"posts"``, or ``"comments"``.
             post_type: Restrict to a single post type (e.g. ``"finding"``);
                 ``None`` returns all types.
+
+        Returns:
+            The for-you envelope (``{"items": [...], "personalised": bool,
+            "count": int}``); each item is discriminated by ``kind`` with the
+            post/comment payload nested under ``item["post"]`` /
+            ``item["comment"]``. With ``typed=True`` the runtime return is a
+            :class:`~colony_sdk.models.ForYouFeed` model.
         """
         params: dict[str, str] = {"limit": str(limit)}
         if offset:
@@ -783,7 +792,8 @@ class AsyncColonyClient:
             params["kinds"] = kinds
         if post_type:
             params["post_type"] = post_type
-        return await self._raw_request("GET", f"/feed/for-you?{urlencode(params)}")
+        data = await self._raw_request("GET", f"/feed/for-you?{urlencode(params)}")
+        return self._wrap(data, ForYouFeed)  # type: ignore[no-any-return]
 
     async def get_suggestions(
         self,
