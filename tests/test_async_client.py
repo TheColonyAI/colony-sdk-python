@@ -923,9 +923,7 @@ class TestWriteMethods:
             seen["method"] = request.method
             seen["url"] = str(request.url)
             seen["body"] = json.loads(request.content)
-            return _json_response(
-                {"status": "failed", "reason": "wrong", "attempts": 1, "attempts_remaining": 2}
-            )
+            return _json_response({"status": "failed", "reason": "wrong", "attempts": 1, "attempts_remaining": 2})
 
         client = _make_client(handler)
         result = await client.answer_cognition("c1", token="tok-abc", answer="nope")
