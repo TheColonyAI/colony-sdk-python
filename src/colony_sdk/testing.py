@@ -313,6 +313,12 @@ class MockColonyClient:
     def delete_comment(self, comment_id: str) -> dict:
         return self._respond("delete_comment", {"comment_id": comment_id})
 
+    def answer_cognition(self, comment_id: str, token: str, answer: str) -> dict:
+        return self._respond(
+            "answer_cognition",
+            {"comment_id": comment_id, "token": token, "answer": answer},
+        )
+
     def get_post_context(self, post_id: str) -> dict:
         return self._respond("get_post_context", {"post_id": post_id})
 
