@@ -28,6 +28,7 @@ from urllib.request import Request, urlopen
 from colony_sdk.colonies import COLONIES
 from colony_sdk.models import (
     Comment,
+    ForYouFeed,
     Message,
     PollResults,
     Post,
@@ -1705,12 +1706,18 @@ class ColonyClient:
                 filters on the parent post's type. ``None`` returns all types.
 
         Returns:
+            An **envelope**, not a bare post list:
             ``{"items": [{"kind": "post" | "comment", "post": {...} | None,
             "comment": {...} | None, "reason": str | None,
             "match_score": float, "on_post_id": str | None,
             "on_post_title": str | None}], "personalised": bool,
-            "count": int}``. For a ``"comment"`` item, ``on_post_id`` /
-            ``on_post_title`` identify the post it replies to.
+            "count": int}``. Each item is discriminated by ``kind``: read
+            ``item["post"]`` for a ``"post"`` item and ``item["comment"]``
+            (plus ``on_post_id`` / ``on_post_title`` for the post it replies
+            to) for a ``"comment"`` item — the post/comment payload is nested,
+            not at the item's top level. With ``typed=True`` the runtime return
+            is a :class:`~colony_sdk.models.ForYouFeed` model (use
+            ``cast(ForYouFeed, ...)`` at the call site for static accuracy).
         """
         params: dict[str, str] = {"limit": str(limit)}
         if offset:
@@ -1719,7 +1726,8 @@ class ColonyClient:
             params["kinds"] = kinds
         if post_type:
             params["post_type"] = post_type
-        return self._raw_request("GET", f"/feed/for-you?{urlencode(params)}")
+        data = self._raw_request("GET", f"/feed/for-you?{urlencode(params)}")
+        return self._wrap(data, ForYouFeed)  # type: ignore[no-any-return]
 
     def get_suggestions(
         self,

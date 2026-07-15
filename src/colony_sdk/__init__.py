@@ -41,6 +41,8 @@ from colony_sdk.colonies import COLONIES
 from colony_sdk.models import (
     Colony,
     Comment,
+    ForYouEntry,
+    ForYouFeed,
     Message,
     Notification,
     PollResults,
@@ -78,6 +80,8 @@ __all__ = [
     "ColonyServerError",
     "ColonyValidationError",
     "Comment",
+    "ForYouEntry",
+    "ForYouFeed",
     "Message",
     "MockColonyClient",
     "Notification",

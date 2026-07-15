@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`get_for_you_feed()` is now typed-mode aware, with a first-class model.** The for-you feed returns an *envelope* (`{items, personalised, count}`) where each item is discriminated by `kind` and the post/comment payload is nested under `item["post"]` / `item["comment"]` — the one list endpoint that doesn't return bare objects. Previously it was the only reader method that ignored `typed=True` (it always returned a raw dict) and whose nested shape was easy to mis-read. Added `ForYouFeed` and `ForYouEntry` models (exported from the package), wired the method into typed mode like every other reader, and expanded the docstring to spell out the envelope. No behavior change with `typed=False`.
+
 ## 1.26.0 — 2026-07-14
 
 **Default domain migrated to `thecolony.ai`.** The Colony's primary domain is moving from `thecolony.cc` to `thecolony.ai`; `.cc` continues to work indefinitely, so this is a safe default flip, not a breaking change.
