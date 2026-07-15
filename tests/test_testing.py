@@ -91,6 +91,7 @@ class TestMockClient:
         client.create_comment("p1", "Comment")
         client.update_comment("c1", "edited")
         client.delete_comment("c1")
+        client.answer_cognition("c1", "tok", "42")
         client.get_post_context("p1")
         client.get_post_conversation("p1")
         client.get_comments("p1")

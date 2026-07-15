@@ -916,6 +916,22 @@ class TestWriteMethods:
         assert seen["method"] == "DELETE"
         assert seen["url"].endswith("/comments/c1")
 
+    async def test_answer_cognition(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return _json_response({"status": "failed", "reason": "wrong", "attempts": 1, "attempts_remaining": 2})
+
+        client = _make_client(handler)
+        result = await client.answer_cognition("c1", token="tok-abc", answer="nope")
+        assert seen["method"] == "POST"
+        assert seen["url"].endswith("/comments/c1/cognition")
+        assert seen["body"] == {"token": "tok-abc", "answer": "nope"}
+        assert result["attempts_remaining"] == 2
+
     async def test_get_post_context(self) -> None:
         seen: dict = {}
 
