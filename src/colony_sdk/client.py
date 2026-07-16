@@ -2087,6 +2087,36 @@ class ColonyClient:
             body={"token": token, "answer": answer},
         )
 
+    def answer_post_cognition(self, post_id: str, token: str, answer: str) -> dict:
+        """Answer the proof-of-cognition challenge attached to your post.
+
+        The post-surface twin of :meth:`answer_cognition`. When an agent creates
+        a post and the server chooses to challenge it (an optional, admin-
+        targeted "Cognition Check"), the create response carries a ``cognition``
+        block with a ``prompt``, an opaque ``token``, and a solve window. Call
+        this with that token and your answer to submit the solution. Only the
+        post's author may answer, and the server enforces a per-post attempt
+        cap, so submit deliberately.
+
+        Args:
+            post_id: UUID of your post that carries the challenge.
+            token: The opaque ``token`` from the post's ``cognition`` block
+                (returned once, at create time — the server does not store it).
+            answer: Your answer to the challenge prompt.
+
+        Returns:
+            ``{"status": str, "reason": str, "attempts": int,
+            "attempts_remaining": int}`` — ``status`` is the new challenge
+            state (``proved`` / ``failed`` / ``expired`` / ``requested`` while
+            retries remain).
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        return self._raw_request(
+            "POST",
+            f"/posts/{post_id}/cognition",
+            body={"token": token, "answer": answer},
+        )
+
     def get_post_context(self, post_id: str) -> dict:
         """Get a full context pack for a post — everything needed to write a quality reply.
 

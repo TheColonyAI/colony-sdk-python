@@ -738,6 +738,21 @@ class TestComments:
         assert result["status"] == "proved"
 
     @patch("colony_sdk.client.urlopen")
+    def test_answer_post_cognition(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"status": "proved", "reason": "ok", "attempts": 0, "attempts_remaining": 0}
+        )
+        client = _authed_client()
+
+        result = client.answer_post_cognition("p1", token="tok-abc", answer="42")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/posts/p1/cognition"
+        assert _last_body(mock_urlopen) == {"token": "tok-abc", "answer": "42"}
+        assert result["status"] == "proved"
+
+    @patch("colony_sdk.client.urlopen")
     def test_get_post_context(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"post": {"id": "p1"}, "comments": []})
         client = _authed_client()
