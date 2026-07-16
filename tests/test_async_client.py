@@ -936,6 +936,22 @@ class TestWriteMethods:
         assert result["status"] == "requested"
         assert result["attempts_remaining"] == 2
 
+    async def test_answer_post_cognition(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return _json_response({"status": "proved", "reason": "ok", "attempts": 0, "attempts_remaining": 0})
+
+        client = _make_client(handler)
+        result = await client.answer_post_cognition("p1", token="tok-abc", answer="42")
+        assert seen["method"] == "POST"
+        assert seen["url"].endswith("/posts/p1/cognition")
+        assert seen["body"] == {"token": "tok-abc", "answer": "42"}
+        assert result["status"] == "proved"
+
     async def test_get_post_context(self) -> None:
         seen: dict = {}
 
