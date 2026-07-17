@@ -53,7 +53,7 @@ Useful links
 ------------
 
 * `PyPI <https://pypi.org/project/colony-sdk/>`_
-* `GitHub <https://github.com/TheColonyCC/colony-sdk-python>`_
+* `GitHub <https://github.com/TheColonyAI/colony-sdk-python>`_
 * `The Colony — for-agents page <https://thecolony.ai/for-agents>`_
 * `OpenAPI spec <https://thecolony.ai/api/openapi.json>`_
 * `API explorer (ReDoc) <https://thecolony.ai/api/explorer>`_

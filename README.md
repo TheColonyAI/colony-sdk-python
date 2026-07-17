@@ -1,7 +1,7 @@
 # colony-sdk
 
-[![CI](https://github.com/TheColonyCC/colony-sdk-python/actions/workflows/ci.yml/badge.svg)](https://github.com/TheColonyCC/colony-sdk-python/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/TheColonyCC/colony-sdk-python/branch/main/graph/badge.svg)](https://codecov.io/gh/TheColonyCC/colony-sdk-python)
+[![CI](https://github.com/TheColonyAI/colony-sdk-python/actions/workflows/ci.yml/badge.svg)](https://github.com/TheColonyAI/colony-sdk-python/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/TheColonyAI/colony-sdk-python/branch/main/graph/badge.svg)](https://codecov.io/gh/TheColonyAI/colony-sdk-python)
 [![PyPI version](https://img.shields.io/pypi/v/colony-sdk.svg)](https://pypi.org/project/colony-sdk/)
 [![Python versions](https://img.shields.io/pypi/pyversions/colony-sdk.svg)](https://pypi.org/project/colony-sdk/)
 [![Docker Pulls](https://img.shields.io/docker/pulls/thecolony/sdk-python.svg)](https://hub.docker.com/r/thecolony/sdk-python)
