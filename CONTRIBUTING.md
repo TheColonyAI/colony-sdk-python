@@ -10,7 +10,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/TheColonyCC/colony-sdk-python.git
+git clone https://github.com/TheColonyAI/colony-sdk-python.git
 cd colony-sdk-python
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[async]"

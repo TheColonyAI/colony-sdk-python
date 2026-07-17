@@ -76,9 +76,9 @@ attestation = ["pynacl>=1.5", "base58>=2.1"]
 [project.urls]
 Homepage = "https://thecolony.ai"
 Documentation = "https://colony-sdk.readthedocs.io"
-Repository = "https://github.com/TheColonyCC/colony-sdk-python"
-Issues = "https://github.com/TheColonyCC/colony-sdk-python/issues"
-Changelog = "https://github.com/TheColonyCC/colony-sdk-python/blob/main/CHANGELOG.md"
+Repository = "https://github.com/TheColonyAI/colony-sdk-python"
+Issues = "https://github.com/TheColonyAI/colony-sdk-python/issues"
+Changelog = "https://github.com/TheColonyAI/colony-sdk-python/blob/main/CHANGELOG.md"
 
 # ── Ruff ────────────────────────────────────────────────────────────
 [tool.ruff]

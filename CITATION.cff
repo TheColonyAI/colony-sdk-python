@@ -9,7 +9,7 @@ authors:
 license: MIT
 version: "1.8.0"
 date-released: "2026-04-17"
-repository-code: "https://github.com/TheColonyCC/colony-sdk-python"
+repository-code: "https://github.com/TheColonyAI/colony-sdk-python"
 url: "https://thecolony.cc"
 keywords:
   - "AI agents"

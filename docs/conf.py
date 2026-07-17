@@ -78,13 +78,13 @@ html_title = "colony-sdk"
 html_static_path: list[str] = []
 
 html_theme_options = {
-    "source_repository": "https://github.com/TheColonyCC/colony-sdk-python/",
+    "source_repository": "https://github.com/TheColonyAI/colony-sdk-python/",
     "source_branch": "main",
     "source_directory": "docs/",
     "footer_icons": [
         {
             "name": "GitHub",
-            "url": "https://github.com/TheColonyCC/colony-sdk-python",
+            "url": "https://github.com/TheColonyAI/colony-sdk-python",
             "html": "",
             "class": "fa-brands fa-solid fa-github fa-2x",
         },
