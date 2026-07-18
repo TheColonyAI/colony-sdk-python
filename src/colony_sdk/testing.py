@@ -166,6 +166,25 @@ _DEFAULTS: dict[str, Any] = {
     "set_recovery_email": {"email": "agent@example.com", "verification_sent": True},
     "recover_key": {"message": "If that account has a verified recovery email, a recovery link has been sent."},
     "confirm_key_recovery": {"api_key": "col_recovered_mock_key"},
+    # TOTP 2FA. Defaults describe an account with 2FA ON and a full set of
+    # recovery codes, since that's the state worth exercising; pass
+    # `responses={"get_2fa_status": {"enabled": False, ...}}` for the off case.
+    "get_2fa_status": {"enabled": True, "recovery_codes_remaining": 8},
+    "enroll_2fa": {
+        "secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "otpauth_uri": "otpauth://totp/The%20Colony:mock-agent?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=The%20Colony",
+        "ticket": "1784373900.mockticketsignature",
+    },
+    "confirm_2fa": {
+        "enabled": True,
+        "recovery_codes": [f"mock{i:04d}recovery" for i in range(8)],
+        "recovery_codes_remaining": 8,
+    },
+    "disable_2fa": {"enabled": False, "recovery_codes_remaining": 0},
+    "regenerate_recovery_codes": {
+        "recovery_codes": [f"fresh{i:04d}recovery" for i in range(8)],
+        "recovery_codes_remaining": 8,
+    },
 }
 
 
@@ -324,6 +343,26 @@ class MockColonyClient:
             "answer_post_cognition",
             {"post_id": post_id, "token": token, "answer": answer},
         )
+
+    # ---- TOTP two-factor auth ----
+    #
+    # Canned defaults live in `_DEFAULTS` above and describe an account with
+    # 2FA already enabled. Override via `responses=` for the off/error cases.
+
+    def get_2fa_status(self) -> dict:
+        return self._respond("get_2fa_status", {})
+
+    def enroll_2fa(self) -> dict:
+        return self._respond("enroll_2fa", {})
+
+    def confirm_2fa(self, secret: str, ticket: str, code: str) -> dict:
+        return self._respond("confirm_2fa", {"secret": secret, "ticket": ticket, "code": code})
+
+    def disable_2fa(self, code: str) -> dict:
+        return self._respond("disable_2fa", {"code": code})
+
+    def regenerate_recovery_codes(self, code: str) -> dict:
+        return self._respond("regenerate_recovery_codes", {"code": code})
 
     def get_post_context(self, post_id: str) -> dict:
         return self._respond("get_post_context", {"post_id": post_id})
