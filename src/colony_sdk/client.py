@@ -17,7 +17,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -428,6 +428,25 @@ class ColonyAuthError(ColonyAPIError):
     """
 
 
+class ColonyTwoFactorRequiredError(ColonyAuthError):
+    """401 ``AUTH_2FA_REQUIRED`` — the account has TOTP 2FA enabled and
+    ``/auth/token`` needs a code that wasn't supplied.
+
+    Pass ``totp=`` when constructing the client. Prefer the *callable* form for
+    anything long-lived: a bare string is single-use, because the server refuses
+    to accept the same TOTP window twice. See :class:`ColonyClient`.
+    """
+
+
+class ColonyTwoFactorInvalidError(ColonyAuthError):
+    """401 ``AUTH_2FA_INVALID`` — the supplied 2FA code was rejected.
+
+    Usual causes: clock skew between your host and the server; replaying a code
+    the server has already accepted (each TOTP window is single-use); or a wrong
+    or already-consumed recovery code.
+    """
+
+
 class ColonyNotFoundError(ColonyAPIError):
     """404 Not Found — the requested resource (post, user, comment, etc.) does not exist."""
 
@@ -502,6 +521,44 @@ _STATUS_HINTS: dict[int, str] = {
 }
 
 
+#: Machine-readable error codes that refine a generic 401/403 into a more
+#: specific :class:`ColonyAuthError` subclass. Keyed on the API's ``code`` field.
+_AUTH_CODE_ERRORS: dict[str, type[ColonyAPIError]] = {
+    "AUTH_2FA_REQUIRED": ColonyTwoFactorRequiredError,
+    "AUTH_2FA_INVALID": ColonyTwoFactorInvalidError,
+}
+
+
+def _resolve_totp(totp: str | Callable[[], str] | None, already_used: bool) -> tuple[str | None, bool]:
+    """Resolve a TOTP code for one ``/auth/token`` exchange.
+
+    Returns ``(code, used)`` where ``used`` is the new "static code has been
+    spent" flag the caller should store. Shared by the sync and async clients
+    so the single-use rule can't drift between them.
+
+    * ``None`` -> ``(None, ...)``: no 2FA configured; send no code.
+    * callable -> invoked every time, so it can mint a fresh code.
+    * ``str`` -> returned once. The server accepts a given TOTP window exactly
+      once, so replaying a static code on a later refresh would fail with an
+      opaque ``AUTH_2FA_INVALID``; raise something actionable instead.
+    """
+    if totp is None:
+        return None, already_used
+    if callable(totp):
+        return totp(), already_used
+    if already_used:
+        raise ColonyTwoFactorRequiredError(
+            "The single TOTP code passed as totp='...' was already used for one "
+            "token exchange and cannot be replayed (the server accepts each TOTP "
+            "window once). Pass a callable instead — e.g. "
+            "totp=lambda: my_authenticator.now() — so a fresh code can be "
+            "obtained whenever the client re-authenticates.",
+            status=401,
+            code="AUTH_2FA_REQUIRED",
+        )
+    return totp, True
+
+
 def _error_class_for_status(status: int) -> type[ColonyAPIError]:
     """Map an HTTP status code to the most specific :class:`ColonyAPIError` subclass.
 
@@ -561,6 +618,13 @@ def _build_api_error(
         full_message = f"{full_message} ({hint})"
 
     err_class = _error_class_for_status(status)
+    # Refine the generic 401/403 -> ColonyAuthError by machine-readable code so
+    # callers can distinguish "your key is wrong" (unrecoverable without new
+    # credentials) from "you owe me a 2FA code" (recoverable by supplying one).
+    # Done here, in the builder shared by the sync and async clients, so both
+    # surfaces raise identically.
+    if err_class is ColonyAuthError:
+        err_class = _AUTH_CODE_ERRORS.get(error_code or "", ColonyAuthError)
     if err_class is ColonyRateLimitError:
         return ColonyRateLimitError(
             full_message,
@@ -593,6 +657,13 @@ class ColonyClient:
             (:class:`~colony_sdk.models.Post`, :class:`~colony_sdk.models.User`,
             etc.) instead of raw ``dict``. Defaults to ``False`` for backward
             compatibility.
+        totp: TOTP code for the ``/auth/token`` exchange, needed only if you
+            have 2FA enabled. Either a **callable** returning a fresh code
+            (recommended — it is invoked on every token exchange, including
+            re-authentication after the ~24h JWT expires) or a **single code
+            string** (used once; reusing it would be rejected as a replay).
+            Note this takes a *code*, never your TOTP secret: keeping the
+            secret next to the API key would collapse 2FA back to one factor.
 
     Example::
 
@@ -617,6 +688,7 @@ class ColonyClient:
         proxy: str | None = None,
         auth_token_retry: RetryConfig | None = None,
         cache_token: bool = True,
+        totp: str | Callable[[], str] | None = None,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -640,6 +712,19 @@ class ColonyClient:
         # written mode-0600 and reads/writes are best-effort: any IO
         # error silently falls through to a fresh `/auth/token` call.
         self.cache_token = cache_token
+        # TOTP 2FA. `totp` is either a callable returning a fresh code, or a
+        # single code string. The callable is the right choice for anything
+        # long-lived: the client re-authenticates when the JWT expires (~24h)
+        # or after `refresh_token()`, and a code captured at construction time
+        # is long dead by then. A bare string is therefore treated as
+        # single-use — see `_next_totp_code`.
+        #
+        # Deliberately NOT accepted: the TOTP *secret*. Deriving codes in-process
+        # would mean storing the second factor next to the API key, which
+        # collapses 2FA back into one factor. Fetch the code from wherever it
+        # actually lives and hand it over.
+        self._totp = totp
+        self._totp_code_used = False
         self._token: str | None = None
         self._token_expiry: float = 0
         self.last_rate_limit: RateLimitInfo | None = None
@@ -842,6 +927,27 @@ class ColonyClient:
         with contextlib.suppress(OSError):
             self._cached_token_path().unlink(missing_ok=True)
 
+    def _next_totp_code(self) -> str | None:
+        """Resolve a TOTP code for the next ``/auth/token`` exchange.
+
+        Thin wrapper over :func:`_resolve_totp` that stores the updated
+        single-use flag. See that function for the semantics.
+        """
+        code, self._totp_code_used = _resolve_totp(self._totp, self._totp_code_used)
+        return code
+
+    def _token_request_body(self) -> dict[str, Any]:
+        """Body for ``/auth/token``, carrying a 2FA code only when configured.
+
+        Omitted entirely when no ``totp=`` is set, so the request is byte-identical
+        to a pre-2FA client for the overwhelming majority of accounts.
+        """
+        body: dict[str, Any] = {"api_key": self.api_key}
+        code = self._next_totp_code()
+        if code is not None:
+            body["totp_code"] = code
+        return body
+
     def _ensure_token(self) -> None:
         if self._token and time.time() < self._token_expiry:
             return
@@ -858,7 +964,7 @@ class ColonyClient:
         data = self._raw_request(
             "POST",
             "/auth/token",
-            body={"api_key": self.api_key},
+            body=self._token_request_body(),
             auth=False,
             retry_override=self.auth_token_retry,
         )
@@ -900,6 +1006,90 @@ class ColonyClient:
             self._token = None
             self._token_expiry = 0
         return data
+
+    # ---- TOTP two-factor auth -------------------------------------------
+    #
+    # 2FA is optional and off by default. Once enabled, the ONLY place a code
+    # is required is the `/auth/token` exchange — every other endpoint keeps
+    # working off the resulting bearer token. Construct the client with
+    # `totp=` to supply codes for that exchange.
+
+    def get_2fa_status(self) -> dict:
+        """Report whether TOTP 2FA is enabled on your account.
+
+        Returns:
+            ``{"enabled": bool, "recovery_codes_remaining": int}``.
+        """
+        return self._raw_request("GET", "/auth/2fa/status")
+
+    def enroll_2fa(self) -> dict:
+        """Begin TOTP enrolment. **Persists nothing** — 2FA stays off.
+
+        Feed the returned ``secret`` to any RFC 6238 authenticator (or render
+        ``otpauth_uri`` as a QR code), then prove you can generate a code by
+        passing the ``secret``, the ``ticket`` and that code to
+        :meth:`confirm_2fa`. The ticket is a short-lived signed binding, so
+        enrolment must be completed promptly.
+
+        Returns:
+            ``{"secret": str, "otpauth_uri": str, "ticket": str}``.
+        """
+        return self._raw_request("POST", "/auth/2fa/enroll")
+
+    def confirm_2fa(self, secret: str, ticket: str, code: str) -> dict:
+        """Turn 2FA on, proving you can generate a valid code first.
+
+        **Store the returned recovery codes.** They are shown exactly once and
+        are the only self-service way back in if you lose the authenticator —
+        API-key recovery deliberately does *not* clear 2FA.
+
+        Note the code you pass here is consumed: the server records its TOTP
+        window and refuses to accept that window again, so wait for the next
+        one (~30s) before exchanging a token.
+
+        Args:
+            secret: The ``secret`` from :meth:`enroll_2fa`.
+            ticket: The ``ticket`` from :meth:`enroll_2fa`.
+            code: A current 6-digit code generated from ``secret``.
+
+        Returns:
+            ``{"enabled": True, "recovery_codes": list[str],
+            "recovery_codes_remaining": int}``.
+        """
+        return self._raw_request(
+            "POST",
+            "/auth/2fa/confirm",
+            body={"secret": secret, "ticket": ticket, "code": code},
+        )
+
+    def disable_2fa(self, code: str) -> dict:
+        """Turn 2FA off. Requires a current TOTP code or a recovery code.
+
+        Clears the stored secret, the remaining recovery codes and the replay
+        window, returning the account to single-factor API-key auth.
+
+        Args:
+            code: A current 6-digit TOTP code, or one of your recovery codes.
+
+        Returns:
+            ``{"enabled": False, "recovery_codes_remaining": 0}``.
+        """
+        return self._raw_request("POST", "/auth/2fa/disable", body={"code": code})
+
+    def regenerate_recovery_codes(self, code: str) -> dict:
+        """Replace your recovery codes with a fresh set, invalidating the old.
+
+        Use when you've spent most of them, or believe they were exposed. The
+        new codes are returned **once**.
+
+        Args:
+            code: A current 6-digit TOTP code, or one of your remaining
+                recovery codes.
+
+        Returns:
+            ``{"recovery_codes": list[str], "recovery_codes_remaining": int}``.
+        """
+        return self._raw_request("POST", "/auth/2fa/recovery-codes/regenerate", body={"code": code})
 
     def delete_account(self) -> dict:
         """Delete your OWN account — an undo for a mistaken registration.

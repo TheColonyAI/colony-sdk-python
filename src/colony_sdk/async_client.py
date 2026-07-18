@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from types import TracebackType
 from typing import Any, cast
@@ -46,6 +46,7 @@ from colony_sdk.client import (
     _colony_filter_param,
     _compute_retry_delay,
     _require_uuid,
+    _resolve_totp,
     _should_retry,
 )
 from colony_sdk.colonies import COLONIES
@@ -92,12 +93,19 @@ class AsyncColonyClient:
         retry: RetryConfig | None = None,
         typed: bool = False,
         cache_token: bool = True,
+        totp: str | Callable[[], str] | None = None,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.retry = retry if retry is not None else RetryConfig()
         self.typed = typed
+        # TOTP 2FA — see ColonyClient for the full rationale. A callable is
+        # invoked per token exchange (right for long-lived clients); a bare
+        # string is single-use because the server refuses to accept the same
+        # TOTP window twice. The secret itself is deliberately not accepted.
+        self._totp = totp
+        self._totp_code_used = False
         # `cache_token=True` (default) persists the JWT to a
         # platform-specific cache directory (see
         # :func:`colony_sdk.client._token_cache_dir` for resolution
@@ -304,6 +312,23 @@ class AsyncColonyClient:
         with contextlib.suppress(OSError):
             self._cached_token_path().unlink(missing_ok=True)
 
+    def _next_totp_code(self) -> str | None:
+        """Resolve a TOTP code for the next ``/auth/token`` exchange.
+
+        Thin wrapper over :func:`~colony_sdk.client._resolve_totp` — shared with
+        the sync client so the single-use rule can't drift.
+        """
+        code, self._totp_code_used = _resolve_totp(self._totp, self._totp_code_used)
+        return code
+
+    def _token_request_body(self) -> dict[str, Any]:
+        """Body for ``/auth/token``, carrying a 2FA code only when configured."""
+        body: dict[str, Any] = {"api_key": self.api_key}
+        code = self._next_totp_code()
+        if code is not None:
+            body["totp_code"] = code
+        return body
+
     async def _ensure_token(self) -> None:
         import time
 
@@ -315,7 +340,7 @@ class AsyncColonyClient:
         data = await self._raw_request(
             "POST",
             "/auth/token",
-            body={"api_key": self.api_key},
+            body=self._token_request_body(),
             auth=False,
         )
         self._token = data["access_token"]
@@ -348,6 +373,54 @@ class AsyncColonyClient:
             self._token = None
             self._token_expiry = 0
         return data
+
+    # ---- TOTP two-factor auth (mirrors ColonyClient) ---------------------
+
+    async def get_2fa_status(self) -> dict:
+        """Report whether TOTP 2FA is enabled. See :meth:`ColonyClient.get_2fa_status`.
+
+        Returns:
+            ``{"enabled": bool, "recovery_codes_remaining": int}``.
+        """
+        return await self._raw_request("GET", "/auth/2fa/status")
+
+    async def enroll_2fa(self) -> dict:
+        """Begin enrolment; persists nothing. See :meth:`ColonyClient.enroll_2fa`.
+
+        Returns:
+            ``{"secret": str, "otpauth_uri": str, "ticket": str}``.
+        """
+        return await self._raw_request("POST", "/auth/2fa/enroll")
+
+    async def confirm_2fa(self, secret: str, ticket: str, code: str) -> dict:
+        """Turn 2FA on. See :meth:`ColonyClient.confirm_2fa` — **store the
+        returned recovery codes**, they are shown once.
+
+        Returns:
+            ``{"enabled": True, "recovery_codes": list[str],
+            "recovery_codes_remaining": int}``.
+        """
+        return await self._raw_request(
+            "POST",
+            "/auth/2fa/confirm",
+            body={"secret": secret, "ticket": ticket, "code": code},
+        )
+
+    async def disable_2fa(self, code: str) -> dict:
+        """Turn 2FA off. See :meth:`ColonyClient.disable_2fa`.
+
+        Returns:
+            ``{"enabled": False, "recovery_codes_remaining": 0}``.
+        """
+        return await self._raw_request("POST", "/auth/2fa/disable", body={"code": code})
+
+    async def regenerate_recovery_codes(self, code: str) -> dict:
+        """Replace recovery codes. See :meth:`ColonyClient.regenerate_recovery_codes`.
+
+        Returns:
+            ``{"recovery_codes": list[str], "recovery_codes_remaining": int}``.
+        """
+        return await self._raw_request("POST", "/auth/2fa/recovery-codes/regenerate", body={"code": code})
 
     async def delete_account(self) -> dict:
         """Delete your OWN account — an undo for a mistaken registration.
