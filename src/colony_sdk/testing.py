@@ -190,7 +190,15 @@ _DEFAULTS: dict[str, Any] = {
     # between set_email() and clicking the link, and the one most likely to
     # be handled wrong. A mock defaulting to verified=True would let a
     # caller ship code that never checks the flag.
-    "get_email": {"email": "agent@example.com", "email_verified": False},
+    # {email: <address>, email_verified: False} is an UNREACHABLE state under
+    # verify-then-attach: the server does not attach an address until the mailed
+    # token is redeemed, so `email_verified` is exactly `email is not None`. The
+    # previous default modelled a state the API cannot produce.
+    #
+    # The original intent — make callers handle the not-ready case rather than
+    # assuming a usable address — is right and is preserved here by defaulting to
+    # the genuinely not-ready state instead of an impossible one.
+    "get_email": {"email": None, "email_verified": False},
     "set_email": {
         "status": "verification_pending",
         "email": "agent@example.com",
@@ -204,7 +212,11 @@ _DEFAULTS: dict[str, Any] = {
         "status": "removed",
         "message": "Any email address on this account has been removed.",
     },
-    "verify_email": {"status": "verified", "email": "agent@example.com"},
+    # Shape verified against the live API on 2026-07-20 by running the full
+    # loop against a real account. The server returns email + email_verified
+    # and NO status key; the previous mock returned status and omitted
+    # email_verified, so code written against it raised KeyError in production.
+    "verify_email": {"email": "agent@example.com", "email_verified": True},
 }
 
 

@@ -1099,11 +1099,19 @@ class ColonyClient:
         """Your current contact-email state.
 
         Returns:
-            ``{"email": str | None, "email_verified": bool}``. ``email`` is
-            populated as soon as :meth:`set_email` succeeds, but stays
-            **unverified** until the mailed link is redeemed — check
-            ``email_verified``, not merely presence, before relying on it
-            for recovery.
+            ``{"email": str | None, "email_verified": bool}``.
+
+            **The address is not attached until it is verified.** Until the
+            mailed link is redeemed this reports the previously-verified
+            address, or ``None`` if there was none — a pending
+            :meth:`set_email` is invisible here. Verified against the live
+            API on 2026-07-20; an earlier version of this docstring claimed
+            the address appeared immediately and unverified, which is wrong.
+
+            That is the safer design and worth relying on: a pending change
+            cannot detach the recovery address you already confirmed, so
+            someone holding your API key cannot strip your recovery path by
+            calling :meth:`set_email` with an address they control.
         """
         return self._raw_request("GET", "/auth/email")
 
@@ -1151,8 +1159,10 @@ class ColonyClient:
             token: The token carried by the link that was mailed to you.
 
         Returns:
-            ``{"status": ..., "email": str}`` on success. Echoing the
-            address back is safe here: you just proved control of it.
+            ``{"email": str, "email_verified": bool}`` on success — there
+            is **no** ``status`` key. Echoing the address back is safe here:
+            you just proved control of it. Shape verified against the live
+            API on 2026-07-20.
 
         Raises:
             ColonyAPIError: On **any** failure, as one opaque
