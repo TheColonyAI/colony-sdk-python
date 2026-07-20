@@ -120,15 +120,20 @@ class TestMockClient:
         assert mock.get_email()["email_verified"] is False
         assert mock.set_email("x@example.com")["status"] == "verification_pending"
         assert mock.remove_email()["status"] == "removed"
-        assert mock.verify_email("tok")["status"] == "verified"
+        assert mock.verify_email("tok")["email_verified"] is True
 
-    def test_mock_defaults_to_UNVERIFIED(self) -> None:
-        """Deliberate: the window between set_email() and redeeming the link.
+    def test_mock_defaults_to_NOT_READY(self) -> None:
+        """Deliberate: the state an account is in before the link is redeemed.
 
-        Defaulting to verified=True would let a caller ship code that never
-        checks the flag and only discovers the gap against a real server.
+        Under verify-then-attach the server does not attach an address until the
+        token is redeemed, so the not-ready state is {None, False} — NOT
+        {address, False}, which the API cannot produce at all. Defaulting to a
+        usable verified address would let a caller ship code that never handles
+        the not-ready path and only discovers the gap against a real server.
         """
-        assert MockColonyClient().get_email()["email_verified"] is False
+        got = MockColonyClient().get_email()
+        assert got["email"] is None
+        assert got["email_verified"] is False
 
     def test_mock_records_the_call_arguments(self) -> None:
         mock = MockColonyClient()
@@ -137,3 +142,60 @@ class TestMockClient:
         calls = {c[0]: c[1] for c in mock.calls}
         assert calls["set_email"] == {"email": "recorded@example.com"}
         assert calls["verify_email"] == {"token": "recorded-token"}
+
+
+class TestMockMatchesLiveApi:
+    """The mock's shapes, pinned against the LIVE API.
+
+    Recorded 2026-07-20 by running the whole loop against a real account:
+    set_email -> read the mailed token from the mailbox -> verify_email ->
+    get_email. Before that, the mock returned ``{"status", "email"}`` for
+    verify_email while the server returns ``{"email", "email_verified"}``, so a
+    caller who wrote ``resp["status"] == "verified"`` against the mock got a
+    KeyError in production — precisely the failure a testing mock exists to
+    prevent, and it shipped because every test asserted the mock against itself.
+
+    These assert exact key sets rather than individual fields, so an added or
+    dropped key fails here rather than in a consumer's production logs.
+    """
+
+    def test_verify_email_shape(self) -> None:
+        got = MockColonyClient().verify_email("tok")
+        assert set(got) == {"email", "email_verified"}, (
+            f"mock verify_email keys {sorted(got)} do not match the live API {{'email', 'email_verified'}}"
+        )
+        assert isinstance(got["email_verified"], bool)
+
+    def test_get_email_shape(self) -> None:
+        got = MockColonyClient().get_email()
+        assert set(got) == {"email", "email_verified"}
+
+    def test_set_email_shape(self) -> None:
+        got = MockColonyClient().set_email("a@example.com")
+        assert set(got) == {"status", "email", "message"}
+
+    def test_remove_email_shape(self) -> None:
+        got = MockColonyClient().remove_email()
+        assert set(got) == {"status", "message"}
+
+
+class TestReachableStatesOnly:
+    """Under verify-then-attach, `email_verified` is exactly `email is not None`.
+
+    Ruled 2026-07-20: verify-then-attach is the intended design — the address is
+    not attached until the mailed token is redeemed. That makes
+    {email: <address>, email_verified: False} UNREACHABLE, and this pins it so
+    the mock cannot drift back to modelling a state the server cannot produce.
+
+    Confirmed empirically against a live account: polled at +2s, +10s and +30s
+    after set_email on both a verified account and a freshly-emptied one, and the
+    pending address never appeared.
+    """
+
+    def test_mock_never_emits_the_unreachable_state(self) -> None:
+        for resp in (MockColonyClient().get_email(), MockColonyClient().verify_email("t")):
+            if "email" in resp and "email_verified" in resp:
+                assert (resp["email"] is not None) == resp["email_verified"], (
+                    f"{resp} is unreachable: under verify-then-attach an attached "
+                    "address is always verified, and an unverified one is always None"
+                )
