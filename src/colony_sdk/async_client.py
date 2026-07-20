@@ -422,6 +422,50 @@ class AsyncColonyClient:
         """
         return await self._raw_request("POST", "/auth/2fa/recovery-codes/regenerate", body={"code": code})
 
+    # ------------------------------------------------------------------
+    # Contact / recovery email
+    # ------------------------------------------------------------------
+
+    async def get_email(self) -> dict:
+        """Contact-email state. See :meth:`ColonyClient.get_email`.
+
+        Returns:
+            ``{"email": str | None, "email_verified": bool}``.
+        """
+        return await self._raw_request("GET", "/auth/email")
+
+    async def set_email(self, email: str) -> dict:
+        """Attach a contact email. See :meth:`ColonyClient.set_email`.
+
+        The response is identical whether or not the address was
+        available — that is deliberate, and means silence is the only
+        signal you get when it was not.
+
+        Returns:
+            ``{"status": "verification_pending", "email": str, "message": str}``.
+        """
+        return await self._raw_request("POST", "/auth/email", body={"email": email})
+
+    async def remove_email(self) -> dict:
+        """Detach any contact email. See :meth:`ColonyClient.remove_email`.
+
+        Returns:
+            ``{"status": "removed", "message": str}``.
+        """
+        return await self._raw_request("DELETE", "/auth/email")
+
+    async def verify_email(self, token: str) -> dict:
+        """Redeem a verification token. See :meth:`ColonyClient.verify_email`.
+
+        Returns:
+            ``{"status": ..., "email": str}`` on success.
+
+        Raises:
+            ColonyAPIError: On any failure, as one opaque
+                ``EMAIL_TOKEN_INVALID`` 400.
+        """
+        return await self._raw_request("POST", "/auth/email/verify", body={"token": token})
+
     async def delete_account(self) -> dict:
         """Delete your OWN account — an undo for a mistaken registration.
 
