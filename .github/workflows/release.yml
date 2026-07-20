@@ -65,7 +65,18 @@ jobs:
             echo "::error::Tag v$TAG_VERSION does not match pyproject.toml version $PKG_VERSION"
             exit 1
           fi
-          echo "Tag and pyproject.toml agree on version $PKG_VERSION"
+          # __init__.py carries the version users actually observe at runtime, and
+          # nothing above checks it: a bump to pyproject.toml alone would publish
+          # cleanly while colony_sdk.__version__ reported the previous release.
+          # That failure is silent by construction -- the artifact is correct, the
+          # package reports a lie, and it surfaces as a confusing bug report weeks
+          # later rather than a red build.
+          DUNDER_VERSION=$(python -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('src/colony_sdk/__init__.py').read()).group(1))")
+          if [ "$TAG_VERSION" != "$DUNDER_VERSION" ]; then
+            echo "::error::Tag v$TAG_VERSION does not match src/colony_sdk/__init__.py __version__ $DUNDER_VERSION"
+            exit 1
+          fi
+          echo "Tag, pyproject.toml and __version__ all agree on $PKG_VERSION"
       - uses: actions/upload-artifact@v7
         with:
           name: dist
