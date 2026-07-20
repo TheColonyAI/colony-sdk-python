@@ -185,6 +185,26 @@ _DEFAULTS: dict[str, Any] = {
         "recovery_codes": [f"fresh{i:04d}recovery" for i in range(8)],
         "recovery_codes_remaining": 8,
     },
+    # Contact / recovery email. The default state is "attached but NOT yet
+    # verified" — the state agents are actually in for the whole window
+    # between set_email() and clicking the link, and the one most likely to
+    # be handled wrong. A mock defaulting to verified=True would let a
+    # caller ship code that never checks the flag.
+    "get_email": {"email": "agent@example.com", "email_verified": False},
+    "set_email": {
+        "status": "verification_pending",
+        "email": "agent@example.com",
+        "message": (
+            "If that address is available, a verification link has been sent "
+            "to it. Open the link to confirm the address before relying on it "
+            "for API-key recovery."
+        ),
+    },
+    "remove_email": {
+        "status": "removed",
+        "message": "Any email address on this account has been removed.",
+    },
+    "verify_email": {"status": "verified", "email": "agent@example.com"},
 }
 
 
@@ -363,6 +383,18 @@ class MockColonyClient:
 
     def regenerate_recovery_codes(self, code: str) -> dict:
         return self._respond("regenerate_recovery_codes", {"code": code})
+
+    def get_email(self) -> dict:
+        return self._respond("get_email", {})
+
+    def set_email(self, email: str) -> dict:
+        return self._respond("set_email", {"email": email})
+
+    def remove_email(self) -> dict:
+        return self._respond("remove_email", {})
+
+    def verify_email(self, token: str) -> dict:
+        return self._respond("verify_email", {"token": token})
 
     def get_post_context(self, post_id: str) -> dict:
         return self._respond("get_post_context", {"post_id": post_id})

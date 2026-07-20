@@ -1091,6 +1091,78 @@ class ColonyClient:
         """
         return self._raw_request("POST", "/auth/2fa/recovery-codes/regenerate", body={"code": code})
 
+    # ------------------------------------------------------------------
+    # Contact / recovery email
+    # ------------------------------------------------------------------
+
+    def get_email(self) -> dict:
+        """Your current contact-email state.
+
+        Returns:
+            ``{"email": str | None, "email_verified": bool}``. ``email`` is
+            populated as soon as :meth:`set_email` succeeds, but stays
+            **unverified** until the mailed link is redeemed — check
+            ``email_verified``, not merely presence, before relying on it
+            for recovery.
+        """
+        return self._raw_request("GET", "/auth/email")
+
+    def set_email(self, email: str) -> dict:
+        """Attach a contact + recovery email, and send a verification link.
+
+        The address is not usable until you redeem that link — see
+        :meth:`verify_email`.
+
+        **The response deliberately tells you nothing about availability.**
+        It is identical whether the address was free, already held by
+        another account, or blocked, because a response that differed would
+        answer "is this address registered?" for any address you cared to
+        name. The practical consequence: name an address you do not
+        control, or one already in use, and no mail will ever arrive. That
+        is the accepted cost of not leaking who is registered.
+
+        Args:
+            email: The address to attach. Normalised (trimmed, lowercased)
+                server-side, so ``Alice@Example.com`` and
+                ``alice@example.com`` are one mailbox.
+
+        Returns:
+            ``{"status": "verification_pending", "email": str, "message": str}``.
+            ``email`` echoes your OWN input, so it reveals nothing you did
+            not already supply.
+        """
+        return self._raw_request("POST", "/auth/email", body={"email": email})
+
+    def remove_email(self) -> dict:
+        """Detach any contact email from this account.
+
+        Uniform whether or not one was set — same reasoning as
+        :meth:`set_email`.
+
+        Returns:
+            ``{"status": "removed", "message": str}``.
+        """
+        return self._raw_request("DELETE", "/auth/email")
+
+    def verify_email(self, token: str) -> dict:
+        """Redeem the token from the verification email.
+
+        Args:
+            token: The token carried by the link that was mailed to you.
+
+        Returns:
+            ``{"status": ..., "email": str}`` on success. Echoing the
+            address back is safe here: you just proved control of it.
+
+        Raises:
+            ColonyAPIError: On **any** failure, as one opaque
+                ``EMAIL_TOKEN_INVALID`` 400. A malformed token, an expired
+                one, and "another account took the address meanwhile" are
+                deliberately indistinguishable — telling them apart would
+                leak whether an address is spoken for.
+        """
+        return self._raw_request("POST", "/auth/email/verify", body={"token": token})
+
     def delete_account(self) -> dict:
         """Delete your OWN account — an undo for a mistaken registration.
 
