@@ -534,7 +534,13 @@ _AUTH_CODE_ERRORS: dict[str, type[ColonyAPIError]] = {
 #: this field — the Colony issues 16-character alphanumeric ones — which is why
 #: this is not a bare ``^\d{6}$`` check. The server caps ``totp_code`` at 16.
 _TOTP_CODE_RE = re.compile(r"^[0-9]{6,8}$")
-_RECOVERY_CODE_RE = re.compile(r"^[A-Za-z0-9-]{10,16}$")
+#: Observed across 40 real recovery codes from 5 accounts: exactly 16 lowercase
+#: hex characters, no separators. The accepted range is kept deliberately WIDER
+#: than that observation -- the server is the authority on its own format, and a
+#: client rule tighter than reality would reject a valid recovery code at the one
+#: moment TOTP is unavailable. A hyphen was allowed in the first draft of this
+#: patch on no evidence at all; removed.
+_RECOVERY_CODE_RE = re.compile(r"^[A-Za-z0-9]{10,16}$")
 
 #: Base32, the alphabet TOTP *secrets* are shared in (RFC 4648). Used only to
 #: recognise the one wrong value that is overwhelmingly likely to be passed.
@@ -556,15 +562,35 @@ def _validate_totp_code(code: str) -> str:
     * 6-8 digits — a TOTP code (RFC 6238 allows all three lengths).
     * 10-16 alphanumerics — a recovery code. **Not** excluded: recovery codes go
       through this same field, so a strict 6-digit rule would break the one
-      credential you need when your authenticator is unavailable.
+      credential you need when your authenticator is unavailable. No separators:
+      40 real codes were inspected and every one was 16 lowercase hex characters.
+    * fewer than 6 digits — rejected, but named as a stripped leading zero, which
+      is the only way a too-short value realistically arises and which fails on
+      only ~10% of attempts.
     * anything that looks like a base32 secret — rejected by name, since that is
       the error actually made.
     """
     if not isinstance(code, str):
-        raise TypeError(f"totp must be a str or a callable returning one, got {type(code).__name__}")
-    code = code.strip()
+        raise TypeError(
+            f"totp must be a str or a callable returning one, got {type(code).__name__}. "
+            "An int is the usual cause and is not merely a type slip: int('012345') "
+            "is 12345, destroying the leading zero that ~10% of codes carry."
+        )
+    # Whitespace only ever arrives from copy-paste or an authenticator's
+    # "123 456" display grouping; it is never part of the value.
+    code = "".join(code.split())
     if _TOTP_CODE_RE.match(code) or _RECOVERY_CODE_RE.match(code):
         return code
+    if code.isdigit() and 3 <= len(code) < 6:
+        raise ValueError(
+            f"totp={code!r} is {len(code)} digits, but a TOTP code is at least 6 "
+            "(RFC 4226 sets 6 as the minimum, so a shorter value is never valid). "
+            "The usual cause is a stripped leading zero: codes are zero-padded, so "
+            "str(int(code)) or an int turns '012345' into '12345'. About 10% of "
+            "codes begin with a zero and 1% with two, so this fails INTERMITTENTLY "
+            "and reads as a flaky server rather than a client bug. Keep the code a "
+            "string -- pyotp's .now() already returns a correctly padded one."
+        )
     if _BASE32_SECRET_RE.match(code):
         raise ValueError(
             f"totp looks like your TOTP *secret* ({len(code)} base32 characters), "

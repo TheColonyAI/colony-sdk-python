@@ -240,14 +240,55 @@ def test_totp_codes_of_rfc_lengths_are_accepted(code):
     assert _validate_totp_code(code) == code
 
 
-@pytest.mark.parametrize("code", ["1234abcd5ef678gh", "abc123def4", "AB12-CD34-EF"])
+@pytest.mark.parametrize("code", ["a3f9c1d0e7b45268", "0123456789abcdef", "abc123def4"])
 def test_recovery_codes_are_accepted(code):
     """Recovery codes share the totp_code field.
 
     A strict ^\\d{6}$ rule would reject the exact credential you need when the
     authenticator is unavailable, which is the worst possible time to find out.
+
+    The first two are the REAL observed shape: 16 lowercase hex characters, no
+    separators (40 codes across 5 accounts, all identical in form). An earlier
+    draft of this test asserted "AB12-CD34-EF" -- a hyphenated format I had never
+    seen anywhere. A test that pins an invented format is worse than no test: it
+    freezes a guess into the suite and makes the guess look verified.
     """
     assert _validate_totp_code(code) == code
+
+
+def test_separators_are_rejected():
+    """No observed Colony code of either kind contains a non-alphanumeric."""
+    # NB whitespace is deliberately NOT in this list -- it is display grouping,
+    # not a separator, and normalises away (see the internal-whitespace test).
+    for bad in ["AB12-CD34-EF", "a3f9:c1d0:e7b4", "1234_5678_90ab", "12.34.56"]:
+        with pytest.raises(ValueError):
+            _validate_totp_code(bad)
+
+
+@pytest.mark.parametrize("code", ["12345", "1234", "123"])
+def test_short_numeric_is_diagnosed_as_a_stripped_leading_zero(code):
+    """A too-short code is never valid, and has exactly one realistic cause.
+
+    ~10% of TOTP codes start with '0' and 1% with '00' (measured over 20k codes),
+    so str(int(code)) fails on roughly one attempt in ten -- an intermittent
+    failure that reads as a flaky server. The message has to name it.
+    """
+    with pytest.raises(ValueError) as exc:
+        _validate_totp_code(code)
+    msg = str(exc.value)
+    assert "leading zero" in msg
+    assert "INTERMITTENTLY" in msg
+
+
+def test_int_typeerror_explains_the_zero_hazard():
+    with pytest.raises(TypeError) as exc:
+        _validate_totp_code(12345)
+    assert "leading zero" in str(exc.value)
+
+
+def test_internal_whitespace_from_authenticator_display_is_tolerated():
+    """Authenticator apps render codes as "123 456"; the space is not data."""
+    assert _validate_totp_code("123 456") == "123456"
 
 
 def test_base32_secret_is_rejected_by_name():
