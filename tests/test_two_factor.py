@@ -24,7 +24,12 @@ from colony_sdk import (
     ColonyTwoFactorInvalidError,
     ColonyTwoFactorRequiredError,
 )
-from colony_sdk.client import ColonyAuthError, _build_api_error, _resolve_totp
+from colony_sdk.client import (
+    ColonyAuthError,
+    _build_api_error,
+    _resolve_totp,
+    _validate_totp_code,
+)
 
 
 class TestTotpResolution:
@@ -221,3 +226,114 @@ class TestParity:
         recorded = [name for name, _ in mock.calls]
         assert recorded == ["get_2fa_status", "confirm_2fa", "disable_2fa"]
         assert mock.calls[1][1] == {"secret": "s", "ticket": "t", "code": "123456"}
+
+
+# --- totp argument validation (added 2026-07-21) ----------------------------
+# Motivated by a live incident: the 32-char base32 SECRET was passed as `totp=`,
+# forwarded verbatim, and surfaced only as the server's 422 `string_too_long` on
+# a field the caller had never named. These pin the message that replaces it.
+
+
+@pytest.mark.parametrize("code", ["123456", "1234567", "12345678"])
+def test_totp_codes_of_rfc_lengths_are_accepted(code):
+    """RFC 6238 permits 6, 7 and 8 digits — do not hard-code 6."""
+    assert _validate_totp_code(code) == code
+
+
+@pytest.mark.parametrize("code", ["a3f9c1d0e7b45268", "0123456789abcdef", "abc123def4"])
+def test_recovery_codes_are_accepted(code):
+    """Recovery codes share the totp_code field.
+
+    A strict ^\\d{6}$ rule would reject the exact credential you need when the
+    authenticator is unavailable, which is the worst possible time to find out.
+
+    The first two are the REAL observed shape: 16 lowercase hex characters, no
+    separators (40 codes across 5 accounts, all identical in form). An earlier
+    draft of this test asserted "AB12-CD34-EF" -- a hyphenated format I had never
+    seen anywhere. A test that pins an invented format is worse than no test: it
+    freezes a guess into the suite and makes the guess look verified.
+    """
+    assert _validate_totp_code(code) == code
+
+
+def test_separators_are_rejected():
+    """No observed Colony code of either kind contains a non-alphanumeric."""
+    for bad in ["AB12-CD34-EF", "a3f9:c1d0:e7b4", "1234_5678_90ab", "12.34.56", "123 456 7"]:
+        with pytest.raises(ValueError):
+            _validate_totp_code(bad)
+
+
+@pytest.mark.parametrize("code", ["12345", "1234", "123"])
+def test_short_numeric_is_diagnosed_as_a_stripped_leading_zero(code):
+    """A too-short code is never valid, and has exactly one realistic cause.
+
+    ~10% of TOTP codes start with '0' and 1% with '00' (measured over 20k codes),
+    so str(int(code)) fails on roughly one attempt in ten -- an intermittent
+    failure that reads as a flaky server. The message has to name it.
+    """
+    with pytest.raises(ValueError) as exc:
+        _validate_totp_code(code)
+    msg = str(exc.value)
+    assert "leading zero" in msg
+    assert "INTERMITTENTLY" in msg
+
+
+def test_int_typeerror_explains_the_zero_hazard():
+    with pytest.raises(TypeError) as exc:
+        _validate_totp_code(12345)
+    assert "leading zero" in str(exc.value)
+
+
+def test_base32_secret_is_rejected_by_name():
+    """The actual incident: the secret passed where a code was expected."""
+    secret = "SROSG7JW2QSCX4IWEQ5ZRW6IVDTEUHUX"  # 32 chars, base32 alphabet
+    with pytest.raises(ValueError) as exc:
+        _validate_totp_code(secret)
+    msg = str(exc.value)
+    assert "secret" in msg.lower()
+    assert "pyotp.TOTP(secret).now()" in msg  # tells you the fix
+    assert "32" in msg  # tells you what you passed
+
+
+def test_obvious_rubbish_is_rejected():
+    for bad in ["", "12345", "not a code", "1" * 40]:
+        with pytest.raises(ValueError):
+            _validate_totp_code(bad)
+
+
+def test_non_string_raises_typeerror():
+    with pytest.raises(TypeError):
+        _validate_totp_code(123456)
+
+
+@pytest.mark.parametrize("code", ["  123456 ", "123 456", "123\t456", "123456\n"])
+def test_whitespace_is_rejected_not_stripped(code):
+    """No normalising. This SDK is consumed by programs, not by a human copying
+    a code off a phone, so there is no display grouping to forgive. A space means
+    the caller assembled the value wrongly, and repairing it silently would hide
+    the defect — the same class of helpfulness that let a 32-char secret through
+    as a code in the first place."""
+    with pytest.raises(ValueError) as exc:
+        _validate_totp_code(code)
+    assert "whitespace" in str(exc.value)
+
+
+def test_validation_applies_to_the_callable_branch_too():
+    """A callable returning the secret must fail the same way as a literal.
+
+    The callable form is the recommended one, so it is the likelier place to
+    wire the wrong value up and never notice.
+    """
+    with pytest.raises(ValueError):
+        _resolve_totp(lambda: "SROSG7JW2QSCX4IWEQ5ZRW6IVDTEUHUX", False)
+
+
+def test_valid_callable_still_resolves_and_does_not_burn_the_static_flag():
+    code, used = _resolve_totp(lambda: "654321", False)
+    assert code == "654321"
+    assert used is False  # callables are re-invocable; only str is single-use
+
+
+def test_valid_static_code_marks_itself_used():
+    code, used = _resolve_totp("654321", False)
+    assert (code, used) == ("654321", True)
