@@ -529,6 +529,58 @@ _AUTH_CODE_ERRORS: dict[str, type[ColonyAPIError]] = {
 }
 
 
+#: A TOTP code is 6 digits by RFC 6238 convention; the RFC permits 7 and 8, so
+#: those are accepted rather than guessed at. A RECOVERY code is also valid in
+#: this field — the Colony issues 16-character alphanumeric ones — which is why
+#: this is not a bare ``^\d{6}$`` check. The server caps ``totp_code`` at 16.
+_TOTP_CODE_RE = re.compile(r"^[0-9]{6,8}$")
+_RECOVERY_CODE_RE = re.compile(r"^[A-Za-z0-9-]{10,16}$")
+
+#: Base32, the alphabet TOTP *secrets* are shared in (RFC 4648). Used only to
+#: recognise the one wrong value that is overwhelmingly likely to be passed.
+_BASE32_SECRET_RE = re.compile(r"^[A-Z2-7]{16,}=*$")
+
+
+def _validate_totp_code(code: str) -> str:
+    """Reject values that cannot be a TOTP or recovery code, with a useful message.
+
+    Motivated by a real incident (2026-07-21): ``totp=<the 32-char base32 secret>``
+    was passed instead of a generated code. The SDK forwarded it verbatim, and the
+    only feedback was the server's ``422 string_too_long`` on a field the caller had
+    never heard of — which reads as "the API is broken", not "you passed the wrong
+    thing". The mistake is easy precisely because both values are called "the TOTP"
+    in conversation.
+
+    Deliberately permissive about what it accepts and specific about what it names:
+
+    * 6-8 digits — a TOTP code (RFC 6238 allows all three lengths).
+    * 10-16 alphanumerics — a recovery code. **Not** excluded: recovery codes go
+      through this same field, so a strict 6-digit rule would break the one
+      credential you need when your authenticator is unavailable.
+    * anything that looks like a base32 secret — rejected by name, since that is
+      the error actually made.
+    """
+    if not isinstance(code, str):
+        raise TypeError(f"totp must be a str or a callable returning one, got {type(code).__name__}")
+    code = code.strip()
+    if _TOTP_CODE_RE.match(code) or _RECOVERY_CODE_RE.match(code):
+        return code
+    if _BASE32_SECRET_RE.match(code):
+        raise ValueError(
+            f"totp looks like your TOTP *secret* ({len(code)} base32 characters), "
+            "not a one-time code. The secret is the seed your authenticator holds; "
+            "the code is the short number it produces. Generate one per request:\n"
+            "    totp=lambda: pyotp.TOTP(secret).now()\n"
+            "Passing the secret would be forwarded to the server and rejected as "
+            "`totp_code` (max 16 characters)."
+        )
+    raise ValueError(
+        f"totp={code!r} is not a valid one-time code: expected 6-8 digits, or a "
+        "10-16 character recovery code. Pass a callable if you need a fresh code "
+        "per request: totp=lambda: pyotp.TOTP(secret).now()"
+    )
+
+
 def _resolve_totp(totp: str | Callable[[], str] | None, already_used: bool) -> tuple[str | None, bool]:
     """Resolve a TOTP code for one ``/auth/token`` exchange.
 
@@ -545,7 +597,7 @@ def _resolve_totp(totp: str | Callable[[], str] | None, already_used: bool) -> t
     if totp is None:
         return None, already_used
     if callable(totp):
-        return totp(), already_used
+        return _validate_totp_code(totp()), already_used
     if already_used:
         raise ColonyTwoFactorRequiredError(
             "The single TOTP code passed as totp='...' was already used for one "
@@ -556,7 +608,7 @@ def _resolve_totp(totp: str | Callable[[], str] | None, already_used: bool) -> t
             status=401,
             code="AUTH_2FA_REQUIRED",
         )
-    return totp, True
+    return _validate_totp_code(totp), True
 
 
 def _error_class_for_status(status: int) -> type[ColonyAPIError]:
