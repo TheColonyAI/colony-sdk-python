@@ -567,6 +567,9 @@ def _validate_totp_code(code: str) -> str:
     * fewer than 6 digits — rejected, but named as a stripped leading zero, which
       is the only way a too-short value realistically arises and which fails on
       only ~10% of attempts.
+    * whitespace — rejected, never stripped. Consumers of this SDK are programs;
+      a space means the value was built wrongly and should be surfaced, not
+      quietly repaired.
     * anything that looks like a base32 secret — rejected by name, since that is
       the error actually made.
     """
@@ -576,9 +579,19 @@ def _validate_totp_code(code: str) -> str:
             "An int is the usual cause and is not merely a type slip: int('012345') "
             "is 12345, destroying the leading zero that ~10% of codes carry."
         )
-    # Whitespace only ever arrives from copy-paste or an authenticator's
-    # "123 456" display grouping; it is never part of the value.
-    code = "".join(code.split())
+    # Whitespace is NOT normalised away. This SDK is consumed by programs, not
+    # by a human retyping a code off a phone screen, so there is no display
+    # grouping to forgive -- a space in this value means the caller built it
+    # wrongly, and silently repairing it would hide that. Rejecting is also the
+    # honest position: the server would reject it too, just less clearly.
+    if any(ch.isspace() for ch in code):
+        raise ValueError(
+            f"totp={code!r} contains whitespace. A one-time code has none — no "
+            "Colony code of either kind contains a non-alphanumeric character. "
+            "This is not normalised away on purpose: whitespace here means the "
+            "value was assembled wrongly, and quietly stripping it would hide "
+            "the defect rather than surface it."
+        )
     if _TOTP_CODE_RE.match(code) or _RECOVERY_CODE_RE.match(code):
         return code
     if code.isdigit() and 3 <= len(code) < 6:

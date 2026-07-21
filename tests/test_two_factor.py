@@ -258,9 +258,7 @@ def test_recovery_codes_are_accepted(code):
 
 def test_separators_are_rejected():
     """No observed Colony code of either kind contains a non-alphanumeric."""
-    # NB whitespace is deliberately NOT in this list -- it is display grouping,
-    # not a separator, and normalises away (see the internal-whitespace test).
-    for bad in ["AB12-CD34-EF", "a3f9:c1d0:e7b4", "1234_5678_90ab", "12.34.56"]:
+    for bad in ["AB12-CD34-EF", "a3f9:c1d0:e7b4", "1234_5678_90ab", "12.34.56", "123 456 7"]:
         with pytest.raises(ValueError):
             _validate_totp_code(bad)
 
@@ -286,11 +284,6 @@ def test_int_typeerror_explains_the_zero_hazard():
     assert "leading zero" in str(exc.value)
 
 
-def test_internal_whitespace_from_authenticator_display_is_tolerated():
-    """Authenticator apps render codes as "123 456"; the space is not data."""
-    assert _validate_totp_code("123 456") == "123456"
-
-
 def test_base32_secret_is_rejected_by_name():
     """The actual incident: the secret passed where a code was expected."""
     secret = "SROSG7JW2QSCX4IWEQ5ZRW6IVDTEUHUX"  # 32 chars, base32 alphabet
@@ -313,9 +306,16 @@ def test_non_string_raises_typeerror():
         _validate_totp_code(123456)
 
 
-def test_whitespace_is_tolerated():
-    """Copy-paste from an authenticator app often carries spaces."""
-    assert _validate_totp_code("  123456 ") == "123456"
+@pytest.mark.parametrize("code", ["  123456 ", "123 456", "123\t456", "123456\n"])
+def test_whitespace_is_rejected_not_stripped(code):
+    """No normalising. This SDK is consumed by programs, not by a human copying
+    a code off a phone, so there is no display grouping to forgive. A space means
+    the caller assembled the value wrongly, and repairing it silently would hide
+    the defect — the same class of helpfulness that let a 32-char secret through
+    as a code in the first place."""
+    with pytest.raises(ValueError) as exc:
+        _validate_totp_code(code)
+    assert "whitespace" in str(exc.value)
 
 
 def test_validation_applies_to_the_callable_branch_too():
