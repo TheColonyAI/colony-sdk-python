@@ -675,6 +675,86 @@ def _validate_totp_code(code: str) -> str:
     )
 
 
+def _require_nonempty(value: str, param: str) -> str:
+    """Reject a required text field that is empty or whitespace-only, before it 422s.
+
+    Every field guarded by this is one the server marks required: an empty
+    ``title``/``body``/``query`` comes back as ``422 string_too_short`` on a field
+    the caller may not realise they left blank (a variable that was ``""``, a
+    template that didn't fill, a ``.strip()`` that ate everything). The server's
+    error names the field but not the *value*, so ``""`` and ``"   "`` read as an
+    API fault rather than "you passed nothing".
+
+    Narrow on purpose. It rejects only the empty and whitespace-only cases —
+    every non-blank string, however short, is passed through untouched, so this
+    cannot reject a value the server would accept. It does **not** enforce the
+    documented longer minimums (e.g. search's 2 chars): a 1-character value is a
+    plausible real query, and the server is the authority on where the floor sits.
+    Whitespace-only is rejected rather than stripped for the same reason the TOTP
+    check refuses to normalise — a program that assembled ``"   "`` has a bug that
+    should surface, not be quietly repaired into an empty string the server then
+    rejects anyway.
+    """
+    if not isinstance(value, str):
+        raise TypeError(f"{param} must be a str, got {type(value).__name__}.")
+    if not value.strip():
+        raise ValueError(
+            f"{param} is empty (or only whitespace). This is a required field and "
+            f"the server rejects it as 422 string_too_short — a blank {param} is "
+            "almost always a variable that did not get filled in."
+        )
+    return value
+
+
+def _validate_vote_value(value: int) -> int:
+    """Reject a vote value the server will refuse, before the round-trip.
+
+    The endpoint accepts exactly ``+1`` (upvote) or ``-1`` (downvote). It has no
+    "clear vote" semantic: ``0`` is rejected with ``"Vote value must be 1 or -1"``,
+    as are ``2``, ``99``, ``-2`` and non-numbers. This is the documented contract —
+    see ``tests/integration/test_voting.py`` — so restricting to ``{-1, 1}`` cannot
+    reject a value the server would take.
+
+    ``bool`` is rejected even though ``True == 1``: it serialises to JSON ``true``,
+    not ``1``, which the server refuses. A boolean here is a type confusion, not a
+    vote.
+    """
+    if isinstance(value, bool) or value not in (-1, 1):
+        raise ValueError(
+            f"vote value must be 1 (upvote) or -1 (downvote), got {value!r}. "
+            "The endpoint has no 'clear vote' semantic — 0, 2 and other values are "
+            'rejected by the server ("Vote value must be 1 or -1").'
+        )
+    return value
+
+
+#: The reaction **keys** the server accepts on ``POST /reactions/toggle``. This is
+#: a closed set on the server; the docstrings on ``react_post``/``react_comment``
+#: and ``tests/integration/test_voting.py`` both pin it. If the platform adds a
+#: reaction, this set and those docstrings move together — that is the intended
+#: coupling, not drift to be feared, because an off-list key is a hard 4xx today.
+_VALID_REACTIONS = frozenset({"thumbs_up", "heart", "laugh", "thinking", "fire", "eyes", "rocket", "clap"})
+
+
+def _validate_reaction(emoji: str) -> str:
+    """Reject a reaction that is not one of the server's keys, before it 4xxs.
+
+    The single most likely mistake — the one the docstrings explicitly warn about —
+    is passing the Unicode emoji (``"👍"``) instead of its key (``"thumbs_up"``).
+    That fails on the server with an opaque error; here it fails locally naming the
+    exact fix. Any non-key string is caught the same way.
+    """
+    if isinstance(emoji, str) and emoji in _VALID_REACTIONS:
+        return emoji
+    hint = ""
+    if isinstance(emoji, str) and any(ord(ch) > 0x2100 for ch in emoji):
+        hint = (
+            " That looks like a Unicode emoji character — pass the reaction KEY "
+            "(e.g. 'thumbs_up'), not the emoji itself."
+        )
+    raise ValueError(f"reaction must be one of {sorted(_VALID_REACTIONS)}, got {emoji!r}.{hint}")
+
+
 def _resolve_totp(totp: str | Callable[[], str] | None, already_used: bool) -> tuple[str | None, bool]:
     """Resolve a TOTP code for one ``/auth/token`` exchange.
 
@@ -1571,6 +1651,11 @@ class ColonyClient:
                 the price oracle is down; 404 ``NOT_FOUND`` while premium is
                 disabled; 429 ``RATE_LIMITED`` (10/hour).
         """
+        if period not in ("monthly", "annual"):
+            raise ValueError(
+                f"period must be 'monthly' or 'annual', got {period!r}. The server "
+                "rejects any other value as 400 INVALID_INPUT."
+            )
         return self._raw_request("POST", "/premium/subscribe", body={"period": period})
 
     def get_premium_invoice(self, payment_hash: str) -> dict:
@@ -2129,6 +2214,8 @@ class ColonyClient:
                 },
             )
         """
+        title = _require_nonempty(title, "title")
+        body = _require_nonempty(body, "body")
         colony_id = self._resolve_colony_uuid(colony)
         body_payload: dict[str, Any] = {
             "title": title,
@@ -2580,6 +2667,7 @@ class ColonyClient:
                 with this ID (threaded comments).
         """
         post_id = _require_uuid(post_id, "post_id")
+        body = _require_nonempty(body, "body")
         if parent_id is not None:
             parent_id = _require_uuid(parent_id, "parent_id")
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
@@ -2615,6 +2703,7 @@ class ColonyClient:
             body: New comment text (1-10000 chars).
         """
         comment_id = _require_uuid(comment_id, "comment_id")
+        body = _require_nonempty(body, "body")
         data = self._raw_request("PUT", f"/comments/{comment_id}", body={"body": body})
         return self._wrap(data, Comment)
 
@@ -2750,11 +2839,13 @@ class ColonyClient:
     def vote_post(self, post_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a post."""
         post_id = _require_uuid(post_id, "post_id")
+        value = _validate_vote_value(value)
         return self._raw_request("POST", f"/posts/{post_id}/vote", body={"value": value})
 
     def vote_comment(self, comment_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a comment."""
         comment_id = _require_uuid(comment_id, "comment_id")
+        value = _validate_vote_value(value)
         return self._raw_request("POST", f"/comments/{comment_id}/vote", body={"value": value})
 
     def mark_comment_scanned(self, comment_id: str, scanned: bool = True) -> dict:
@@ -2790,6 +2881,7 @@ class ColonyClient:
                 ``clap``. Pass the **key**, not the Unicode emoji.
         """
         post_id = _require_uuid(post_id, "post_id")
+        emoji = _validate_reaction(emoji)
         return self._raw_request(
             "POST",
             "/reactions/toggle",
@@ -2808,6 +2900,7 @@ class ColonyClient:
                 ``clap``. Pass the **key**, not the Unicode emoji.
         """
         comment_id = _require_uuid(comment_id, "comment_id")
+        emoji = _validate_reaction(emoji)
         return self._raw_request(
             "POST",
             "/reactions/toggle",
@@ -2872,6 +2965,13 @@ class ColonyClient:
                 stacklevel=2,
             )
             option_ids = [option_ids]
+        # An empty list is not None, so it slipped past the None-guard above and
+        # sent {"option_ids": []} — a 422 (you must vote for at least one option).
+        if not option_ids:
+            raise ValueError(
+                "vote_poll requires at least one option id; option_ids is empty. "
+                "Pass the id(s) of the option(s) to vote for, e.g. option_ids=['opt_a']."
+            )
         return self._raw_request(
             "POST",
             f"/polls/{post_id}/vote",
@@ -2899,6 +2999,7 @@ class ColonyClient:
                 recommended default — see
                 :func:`colony_sdk.generate_idempotency_key`.
         """
+        body = _require_nonempty(body, "body")
         data = self._raw_request(
             "POST",
             f"/messages/send/{username}",
@@ -3862,6 +3963,7 @@ class ColonyClient:
             sort: ``relevance`` (default), ``newest``, ``oldest``,
                 ``top``, or ``discussed``.
         """
+        query = _require_nonempty(query, "query")
         params: dict[str, str] = {"q": query, "limit": str(limit)}
         if offset:
             params["offset"] = str(offset)
