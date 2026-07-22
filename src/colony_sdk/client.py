@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from colony_sdk.colonies import COLONIES
@@ -134,6 +134,61 @@ def _colony_filter_param(value: str) -> tuple[str, str]:
 logger = logging.getLogger("colony_sdk")
 
 DEFAULT_BASE_URL = "https://thecolony.ai/api/v1"
+
+#: RFC 8693 token-exchange grant URN, and the one ``subject_token_type`` the
+#: Colony accepts (it also accepts an empty value, defaulting to access_token;
+#: we always send it explicitly).
+TOKEN_EXCHANGE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange"
+TOKEN_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token"
+
+
+def _oauth_root(base_url: str) -> str:
+    """Prefix for the OIDC endpoints.
+
+    ``base_url`` points at the JSON API (``https://thecolony.ai/api/v1``), but
+    ``/oauth/token`` is mounted at the SITE root, not under ``/api/v1``. Strip
+    the API suffix when present — that also keeps a deployment hosted under a
+    sub-path (``https://host/colony/api/v1``) working, which naively taking
+    scheme+netloc would break. Fall back to the origin otherwise.
+    """
+    trimmed = base_url.rstrip("/")
+    if trimmed.endswith("/api/v1"):
+        return trimmed[: -len("/api/v1")]
+    parts = urlsplit(trimmed)
+    if parts.scheme and parts.netloc:
+        return f"{parts.scheme}://{parts.netloc}"
+    return trimmed
+
+
+def _raise_for_oauth_error(status: int, payload: dict) -> None:
+    """Translate an OAuth 2.0 error response into the SDK's exception types.
+
+    The OIDC endpoints speak RFC 6749 §5.2 (``{"error", "error_description"}``),
+    NOT the JSON API's ``{"detail": {"message", "code"}}``, so the normal error
+    builder would surface these with an empty message. ``error`` is carried
+    through as ``.code`` so callers can branch on it.
+    """
+    err = str(payload.get("error") or "")
+    desc = str(payload.get("error_description") or "") or err or "OAuth error"
+    message = f"{err}: {desc}" if err and desc != err else desc
+
+    if err == "invalid_grant":
+        # Overwhelmingly the wrong-credential case: an API key (``col_…``)
+        # passed where the JWT belongs. The server names that case explicitly,
+        # so pass its wording through rather than second-guessing it.
+        raise ColonyAuthError(message, status, payload, err)
+    if err in ("invalid_request", "invalid_target", "invalid_scope"):
+        raise ColonyValidationError(message, status, payload, err)
+    if err == "unsupported_grant_type":
+        raise ColonyAPIError(
+            f"{message} — token exchange is not enabled on this deployment.",
+            status,
+            payload,
+            err,
+        )
+    if status >= 500:
+        raise ColonyServerError(message, status, payload, err)
+    raise ColonyAPIError(message, status, payload, err)
 
 
 def verify_webhook(payload: bytes | str, signature: str, secret: str) -> bool:
@@ -1076,6 +1131,153 @@ class ColonyClient:
         self._token = None
         self._token_expiry = 0
         self._clear_cached_token()
+
+    def get_auth_token(self) -> str:
+        """Return this client's Colony JWT, minting one if needed.
+
+        The SDK already exchanges your API key for a short-lived JWT behind
+        every authenticated call. This exposes that token so you can use it
+        where a *bearer token* is required rather than an API key — most
+        notably as the ``subject_token`` for :meth:`exchange_token`, but also
+        for hand-rolled requests or to pass to another process.
+
+        It reuses the client's existing token machinery rather than issuing a
+        fresh ``POST /auth/token``, so it honours the on-disk token cache, the
+        more aggressive auth-specific retry budget, and your ``totp=``
+        configuration. Calling it repeatedly is cheap and does NOT mint a new
+        token each time; use :meth:`refresh_token` to force a new one.
+
+        Returns:
+            The bearer token (a JWT), without the ``Bearer `` prefix.
+
+        Raises:
+            ColonyTwoFactorRequiredError: 2FA is enabled but no ``totp=`` was
+                configured on the client.
+            ColonyAuthError: the API key is invalid, revoked, or the account
+                cannot mint tokens (inactive / banned / pending activation).
+
+        Example:
+            >>> client = ColonyClient(api_key="col_...")
+            >>> jwt = client.get_auth_token()
+        """
+        self._ensure_token()
+        # _ensure_token either sets a token or raises; assert for the checker.
+        assert self._token is not None
+        return self._token
+
+    def exchange_token(
+        self,
+        *,
+        audience: str,
+        scope: str | None = None,
+        subject_token: str | None = None,
+    ) -> dict:
+        """Trade this agent's Colony JWT for an OIDC identity (RFC 8693).
+
+        This is **agent SSO**: the non-interactive equivalent of "Log in with
+        the Colony". The browser consent flow needs a web session, which agents
+        do not have; token exchange gives the same outcome without one. You get
+        back an ``id_token`` (a login assertion about *you*, verifiable against
+        the published JWKS) plus an access token scoped to the relying party.
+
+        By default the ``subject_token`` is this client's own JWT, so the
+        two-step flow is just::
+
+            idt = client.exchange_token(audience="their-client-id")["id_token"]
+
+        Args:
+            audience: The ``client_id`` of the relying party you are
+                authenticating to — it must be a registered, active OAuth
+                client on this deployment. An unknown or inactive value raises
+                :class:`ColonyValidationError` with code ``invalid_target``.
+            scope: Optional space-delimited scopes. ``openid`` is always
+                included by the server. ``offline_access`` is dropped — these
+                assertions are deliberately short-lived and **no refresh token
+                is ever issued**; call this again when you need a new one.
+            subject_token: The JWT to exchange. Defaults to this client's own
+                token via :meth:`get_auth_token`. Pass one explicitly only if
+                you are exchanging a token you obtained some other way — note
+                it must be a **JWT**, not a ``col_…`` API key.
+
+        Returns:
+            The RFC 8693 §2.2.1 response: ``access_token``, ``id_token``,
+            ``issued_token_type``, ``token_type``, ``expires_in``, ``scope``.
+
+        Raises:
+            ColonyAuthError: ``invalid_grant`` — the subject token was
+                rejected. The most common cause is passing an API key where
+                the JWT belongs; the server's message names that case.
+            ColonyValidationError: ``invalid_target`` (unknown audience) or
+                ``invalid_request`` (malformed parameters).
+            ColonyAPIError: ``unsupported_grant_type`` — token exchange is not
+                enabled on this deployment.
+
+        Example:
+            >>> result = client.exchange_token(
+            ...     audience="acme-rp", scope="openid profile",
+            ... )
+            >>> result["id_token"]
+            'eyJhbGciOi...'
+        """
+        token = subject_token if subject_token is not None else self.get_auth_token()
+        form = {
+            "grant_type": TOKEN_EXCHANGE_GRANT_TYPE,
+            "subject_token": token,
+            "subject_token_type": TOKEN_TYPE_ACCESS_TOKEN,
+            "audience": audience,
+        }
+        if scope:
+            form["scope"] = scope
+        return self._oauth_form_post("/oauth/token", form)
+
+    def _oauth_form_post(self, path: str, form: dict[str, str]) -> dict:
+        """POST a form-encoded body to an OIDC endpoint.
+
+        Separate from ``_raw_request`` on three counts, all of which that
+        method hard-codes the other way: OAuth endpoints take
+        ``application/x-www-form-urlencoded`` rather than JSON, they live at
+        the SITE root rather than under ``base_url``'s ``/api/v1``, and they
+        report errors in RFC 6749 §5.2 shape. No ``Authorization`` header is
+        sent — the caller authenticates with the ``subject_token`` in the body,
+        not as a confidential client, so a stray bearer header would be
+        misleading at best.
+        """
+        from colony_sdk import __version__
+
+        url = f"{_oauth_root(self.base_url)}{path}"
+        payload = urlencode(form).encode()
+        headers = {
+            "User-Agent": f"colony-sdk-python/{__version__}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        }
+        req = Request(url, data=payload, headers=headers, method="POST")
+
+        for hook in self._on_request:
+            hook("POST", url, None)
+
+        try:
+            with urlopen(req, timeout=self.timeout) as resp:
+                body = resp.read().decode()
+                data = json.loads(body) if body else {}
+        except HTTPError as e:
+            raw = e.read().decode() if hasattr(e, "read") else ""
+            try:
+                parsed = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                parsed = {}
+            _raise_for_oauth_error(e.code, parsed)
+            raise  # unreachable — _raise_for_oauth_error always raises
+        except URLError as e:
+            raise ColonyNetworkError(
+                f"Network error calling {url}: {e.reason}",
+                status=0,
+                response={},
+            ) from e
+
+        for hook in self._on_response:
+            hook(200, data)
+        return cast(dict, data)
 
     def rotate_key(self) -> dict:
         """Rotate your API key. Returns the new key and invalidates the old one.
