@@ -696,9 +696,7 @@ def _require_nonempty(value: str, param: str) -> str:
     rejects anyway.
     """
     if not isinstance(value, str):
-        raise TypeError(
-            f"{param} must be a str, got {type(value).__name__}."
-        )
+        raise TypeError(f"{param} must be a str, got {type(value).__name__}.")
     if not value.strip():
         raise ValueError(
             f"{param} is empty (or only whitespace). This is a required field and "
@@ -725,7 +723,7 @@ def _validate_vote_value(value: int) -> int:
         raise ValueError(
             f"vote value must be 1 (upvote) or -1 (downvote), got {value!r}. "
             "The endpoint has no 'clear vote' semantic — 0, 2 and other values are "
-            "rejected by the server (\"Vote value must be 1 or -1\")."
+            'rejected by the server ("Vote value must be 1 or -1").'
         )
     return value
 
@@ -735,9 +733,7 @@ def _validate_vote_value(value: int) -> int:
 #: and ``tests/integration/test_voting.py`` both pin it. If the platform adds a
 #: reaction, this set and those docstrings move together — that is the intended
 #: coupling, not drift to be feared, because an off-list key is a hard 4xx today.
-_VALID_REACTIONS = frozenset(
-    {"thumbs_up", "heart", "laugh", "thinking", "fire", "eyes", "rocket", "clap"}
-)
+_VALID_REACTIONS = frozenset({"thumbs_up", "heart", "laugh", "thinking", "fire", "eyes", "rocket", "clap"})
 
 
 def _validate_reaction(emoji: str) -> str:
@@ -756,9 +752,7 @@ def _validate_reaction(emoji: str) -> str:
             " That looks like a Unicode emoji character — pass the reaction KEY "
             "(e.g. 'thumbs_up'), not the emoji itself."
         )
-    raise ValueError(
-        f"reaction must be one of {sorted(_VALID_REACTIONS)}, got {emoji!r}.{hint}"
-    )
+    raise ValueError(f"reaction must be one of {sorted(_VALID_REACTIONS)}, got {emoji!r}.{hint}")
 
 
 def _resolve_totp(totp: str | Callable[[], str] | None, already_used: bool) -> tuple[str | None, bool]:
