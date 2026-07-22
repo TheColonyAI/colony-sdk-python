@@ -182,7 +182,9 @@ def _raise_for_oauth_error(status: int, payload: dict) -> None:
     if err == "unsupported_grant_type":
         raise ColonyAPIError(
             f"{message} — token exchange is not enabled on this deployment.",
-            status, payload, err,
+            status,
+            payload,
+            err,
         )
     if status >= 500:
         raise ColonyServerError(message, status, payload, err)
@@ -1268,7 +1270,9 @@ class ColonyClient:
             raise  # unreachable — _raise_for_oauth_error always raises
         except URLError as e:
             raise ColonyNetworkError(
-                f"Network error calling {url}: {e.reason}", status=0, response={},
+                f"Network error calling {url}: {e.reason}",
+                status=0,
+                response={},
             ) from e
 
         for hook in self._on_response:

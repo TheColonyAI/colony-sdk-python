@@ -118,8 +118,7 @@ class TestExchangeToken:
 
         req = mock_urlopen.call_args[0][0]
         assert req.full_url == "https://thecolony.ai/oauth/token", (
-            "the exchange must go to the SITE root — /oauth/token is not "
-            "mounted under /api/v1"
+            "the exchange must go to the SITE root — /oauth/token is not mounted under /api/v1"
         )
         assert req.get_header("Content-type") == "application/x-www-form-urlencoded"
         assert result["id_token"] == "idt-456"
@@ -137,7 +136,8 @@ class TestExchangeToken:
 
     @patch("colony_sdk.client.urlopen")
     def test_defaults_the_subject_token_to_the_clients_own(
-        self, mock_urlopen: MagicMock,
+        self,
+        mock_urlopen: MagicMock,
     ) -> None:
         """The whole ergonomic point: one call, no manual token plumbing."""
         mock_urlopen.return_value = _mock_response(_EXCHANGE_OK)
@@ -178,7 +178,8 @@ class TestExchangeErrors:
 
     @patch("colony_sdk.client.urlopen")
     def test_invalid_grant_raises_auth_error_carrying_the_description(
-        self, mock_urlopen: MagicMock,
+        self,
+        mock_urlopen: MagicMock,
     ) -> None:
         """The description is the payload here: it names the wrong-credential
         case (an API key passed where the JWT belongs), which is the single
@@ -203,10 +204,12 @@ class TestExchangeErrors:
 
     @patch("colony_sdk.client.urlopen")
     def test_invalid_target_raises_validation_error(
-        self, mock_urlopen: MagicMock,
+        self,
+        mock_urlopen: MagicMock,
     ) -> None:
         mock_urlopen.side_effect = _make_http_error(
-            400, {"error": "invalid_target", "error_description": "Unknown audience."},
+            400,
+            {"error": "invalid_target", "error_description": "Unknown audience."},
         )
         with pytest.raises(ColonyValidationError) as exc:
             _authed_client().exchange_token(audience="nope")
@@ -214,7 +217,8 @@ class TestExchangeErrors:
 
     @patch("colony_sdk.client.urlopen")
     def test_unsupported_grant_type_says_the_feature_is_off(
-        self, mock_urlopen: MagicMock,
+        self,
+        mock_urlopen: MagicMock,
     ) -> None:
         """When the flag is off the server returns `unsupported_grant_type`,
         deliberately indistinguishable from "we don't implement it". The SDK
@@ -233,7 +237,8 @@ class TestExchangeErrors:
 
     @patch("colony_sdk.client.urlopen")
     def test_a_non_json_error_body_still_raises_cleanly(
-        self, mock_urlopen: MagicMock,
+        self,
+        mock_urlopen: MagicMock,
     ) -> None:
         """A 502 from a proxy is HTML, not JSON. It must not surface as a
         JSONDecodeError from inside the SDK."""
@@ -287,7 +292,8 @@ class TestAsyncAgentSso:
             return httpx.Response(200, content=json.dumps(_EXCHANGE_OK).encode())
 
         client = AsyncColonyClient(
-            "col_test", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            "col_test",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
         client._token = "fake-jwt"
         client._token_expiry = 9_999_999_999
@@ -313,7 +319,8 @@ class TestAsyncAgentSso:
             return httpx.Response(200, content=b"{}")
 
         client = AsyncColonyClient(
-            "col_test", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            "col_test",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
         client._token = "fake-jwt"
         client._token_expiry = 9_999_999_999
@@ -330,14 +337,17 @@ class TestAsyncAgentSso:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 400,
-                content=json.dumps({
-                    "error": "invalid_grant",
-                    "error_description": "subject_token is invalid or expired.",
-                }).encode(),
+                content=json.dumps(
+                    {
+                        "error": "invalid_grant",
+                        "error_description": "subject_token is invalid or expired.",
+                    }
+                ).encode(),
             )
 
         client = AsyncColonyClient(
-            "col_test", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            "col_test",
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
         client._token = "fake-jwt"
         client._token_expiry = 9_999_999_999

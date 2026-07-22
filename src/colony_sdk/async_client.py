@@ -395,10 +395,7 @@ class AsyncColonyClient:
             >>> result["id_token"]
             'eyJhbGciOi...'
         """
-        token = (
-            subject_token if subject_token is not None
-            else await self.get_auth_token()
-        )
+        token = subject_token if subject_token is not None else await self.get_auth_token()
         form = {
             "grant_type": TOKEN_EXCHANGE_GRANT_TYPE,
             "subject_token": token,
@@ -432,11 +429,16 @@ class AsyncColonyClient:
 
         try:
             resp = await client.post(
-                url, data=form, headers=headers, timeout=self.timeout,
+                url,
+                data=form,
+                headers=headers,
+                timeout=self.timeout,
             )
         except Exception as e:  # httpx transport errors
             raise ColonyNetworkError(
-                f"Network error calling {url}: {e}", status=0, response={},
+                f"Network error calling {url}: {e}",
+                status=0,
+                response={},
             ) from e
 
         try:
