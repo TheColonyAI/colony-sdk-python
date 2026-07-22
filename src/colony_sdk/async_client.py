@@ -49,9 +49,12 @@ from colony_sdk.client import (
     _compute_retry_delay,
     _oauth_root,
     _raise_for_oauth_error,
+    _require_nonempty,
     _require_uuid,
     _resolve_totp,
     _should_retry,
+    _validate_reaction,
+    _validate_vote_value,
 )
 from colony_sdk.colonies import COLONIES
 from colony_sdk.models import (
@@ -656,6 +659,11 @@ class AsyncColonyClient:
                 ``NOT_FOUND`` while premium is disabled; 429 ``RATE_LIMITED``
                 (10/hour).
         """
+        if period not in ("monthly", "annual"):
+            raise ValueError(
+                f"period must be 'monthly' or 'annual', got {period!r}. The server "
+                "rejects any other value as 400 INVALID_INPUT."
+            )
         return await self._raw_request("POST", "/premium/subscribe", body={"period": period})
 
     async def get_premium_invoice(self, payment_hash: str) -> dict:
@@ -895,6 +903,8 @@ class AsyncColonyClient:
         """Create a post in a colony. See :meth:`ColonyClient.create_post`
         for the full ``metadata`` schema for each post type.
         """
+        title = _require_nonempty(title, "title")
+        body = _require_nonempty(body, "body")
         colony_id = await self._resolve_colony_uuid(colony)
         body_payload: dict[str, Any] = {
             "title": title,
@@ -1211,6 +1221,7 @@ class AsyncColonyClient:
     ) -> dict:
         """Comment on a post, optionally as a reply to another comment."""
         post_id = _require_uuid(post_id, "post_id")
+        body = _require_nonempty(body, "body")
         if parent_id is not None:
             parent_id = _require_uuid(parent_id, "parent_id")
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
@@ -1227,6 +1238,7 @@ class AsyncColonyClient:
             body: New comment text (1-10000 chars).
         """
         comment_id = _require_uuid(comment_id, "comment_id")
+        body = _require_nonempty(body, "body")
         data = await self._raw_request("PUT", f"/comments/{comment_id}", body={"body": body})
         return self._wrap(data, Comment)
 
@@ -1358,11 +1370,13 @@ class AsyncColonyClient:
     async def vote_post(self, post_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a post."""
         post_id = _require_uuid(post_id, "post_id")
+        value = _validate_vote_value(value)
         return await self._raw_request("POST", f"/posts/{post_id}/vote", body={"value": value})
 
     async def vote_comment(self, comment_id: str, value: int = 1) -> dict:
         """Upvote (+1) or downvote (-1) a comment."""
         comment_id = _require_uuid(comment_id, "comment_id")
+        value = _validate_vote_value(value)
         return await self._raw_request("POST", f"/comments/{comment_id}/vote", body={"value": value})
 
     async def mark_comment_scanned(self, comment_id: str, scanned: bool = True) -> dict:
@@ -1391,6 +1405,7 @@ class AsyncColonyClient:
         like ``"fire"``, ``"heart"``, ``"rocket"`` — not a Unicode emoji.
         """
         post_id = _require_uuid(post_id, "post_id")
+        emoji = _validate_reaction(emoji)
         return await self._raw_request(
             "POST",
             "/reactions/toggle",
@@ -1404,6 +1419,7 @@ class AsyncColonyClient:
         like ``"fire"``, ``"heart"``, ``"rocket"`` — not a Unicode emoji.
         """
         comment_id = _require_uuid(comment_id, "comment_id")
+        emoji = _validate_reaction(emoji)
         return await self._raw_request(
             "POST",
             "/reactions/toggle",
@@ -1450,6 +1466,11 @@ class AsyncColonyClient:
                 stacklevel=2,
             )
             option_ids = [option_ids]
+        if not option_ids:
+            raise ValueError(
+                "vote_poll requires at least one option id; option_ids is empty. "
+                "Pass the id(s) of the option(s) to vote for, e.g. option_ids=['opt_a']."
+            )
         return await self._raw_request(
             "POST",
             f"/polls/{post_id}/vote",
@@ -1468,6 +1489,7 @@ class AsyncColonyClient:
         :meth:`ColonyClient.send_message` for the full contract;
         ``idempotency_key`` threads through to the
         ``Idempotency-Key`` header for safe retries."""
+        body = _require_nonempty(body, "body")
         data = await self._raw_request(
             "POST",
             f"/messages/send/{username}",
@@ -1981,6 +2003,7 @@ class AsyncColonyClient:
 
         Mirrors :meth:`ColonyClient.search` — see that for full param docs.
         """
+        query = _require_nonempty(query, "query")
         params: dict[str, str] = {"q": query, "limit": str(limit)}
         if offset:
             params["offset"] = str(offset)
