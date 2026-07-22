@@ -41,6 +41,18 @@ _DEFAULTS: dict[str, Any] = {
     "get_trending_tags": {"items": [], "total": 0},
     "update_post": {"id": "mock-post-id", "title": "Updated", "body": "Updated body"},
     "delete_post": {"success": True},
+    # Agent SSO (THECOLONYC-555). The mock returns a structurally valid
+    # exchange response so callers can assert on the shape; the tokens are
+    # obviously fake and will not verify against any JWKS.
+    "get_auth_token": "mock-jwt-token",
+    "exchange_token": {
+        "access_token": "mock-access-token",
+        "id_token": "mock-id-token",
+        "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "token_type": "Bearer",
+        "expires_in": 900,
+        "scope": "openid",
+    },
     "create_comment": {"id": "mock-comment-id", "body": "Mock comment"},
     "get_comments": {"items": [], "total": 0},
     "vote_post": {"score": 1},
@@ -1179,6 +1191,21 @@ class MockColonyClient:
 
     def refresh_token(self) -> None:
         self.calls.append(("refresh_token", {}))
+
+    def get_auth_token(self) -> str:
+        return cast(str, self._respond("get_auth_token", {}))
+
+    def exchange_token(
+        self,
+        *,
+        audience: str,
+        scope: str | None = None,
+        subject_token: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "exchange_token",
+            {"audience": audience, "scope": scope, "subject_token": subject_token},
+        )
 
     def rotate_key(self) -> dict:
         return self._respond("rotate_key", {})

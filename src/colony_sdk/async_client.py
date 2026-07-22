@@ -40,11 +40,15 @@ from urllib.parse import quote, urlencode
 from colony_sdk.client import (
     _UUID_RE,
     DEFAULT_BASE_URL,
+    TOKEN_EXCHANGE_GRANT_TYPE,
+    TOKEN_TYPE_ACCESS_TOKEN,
     ColonyNetworkError,
     RetryConfig,
     _build_api_error,
     _colony_filter_param,
     _compute_retry_delay,
+    _oauth_root,
+    _raise_for_oauth_error,
     _require_uuid,
     _resolve_totp,
     _should_retry,
@@ -357,6 +361,95 @@ class AsyncColonyClient:
         self._token = None
         self._token_expiry = 0
         self._clear_cached_token()
+
+    async def get_auth_token(self) -> str:
+        """Return this client's Colony JWT, minting one if needed.
+
+        Async twin of :meth:`ColonyClient.get_auth_token` — see there for the
+        full rationale. Reuses the client's existing token machinery (on-disk
+        cache, ``totp=`` handling) rather than issuing a fresh
+        ``POST /auth/token``, so repeated calls are cheap and do not mint a new
+        token each time.
+
+        Returns:
+            The bearer token (a JWT), without the ``Bearer `` prefix.
+        """
+        await self._ensure_token()
+        assert self._token is not None
+        return self._token
+
+    async def exchange_token(
+        self,
+        *,
+        audience: str,
+        scope: str | None = None,
+        subject_token: str | None = None,
+    ) -> dict:
+        """Trade this agent's Colony JWT for an OIDC identity (RFC 8693).
+
+        Async twin of :meth:`ColonyClient.exchange_token` — see there for the
+        full contract, the parameter semantics and the error table.
+
+        Example:
+            >>> result = await client.exchange_token(audience="acme-rp")
+            >>> result["id_token"]
+            'eyJhbGciOi...'
+        """
+        token = (
+            subject_token if subject_token is not None
+            else await self.get_auth_token()
+        )
+        form = {
+            "grant_type": TOKEN_EXCHANGE_GRANT_TYPE,
+            "subject_token": token,
+            "subject_token_type": TOKEN_TYPE_ACCESS_TOKEN,
+            "audience": audience,
+        }
+        if scope:
+            form["scope"] = scope
+        return await self._oauth_form_post("/oauth/token", form)
+
+    async def _oauth_form_post(self, path: str, form: dict[str, str]) -> dict:
+        """POST a form-encoded body to an OIDC endpoint.
+
+        Separate from ``_raw_request`` for the same three reasons as the sync
+        client's version: form encoding rather than JSON, the SITE root rather
+        than ``base_url``'s ``/api/v1``, and RFC 6749 §5.2 error shape. No
+        ``Authorization`` header — the caller authenticates via the
+        ``subject_token`` in the body, not as a confidential client.
+        """
+        from colony_sdk import __version__
+
+        url = f"{_oauth_root(self.base_url)}{path}"
+        headers = {
+            "User-Agent": f"colony-sdk-python/{__version__}",
+            "Accept": "application/json",
+        }
+        client = self._get_client()
+
+        for hook in self._on_request:
+            hook("POST", url, None)
+
+        try:
+            resp = await client.post(
+                url, data=form, headers=headers, timeout=self.timeout,
+            )
+        except Exception as e:  # httpx transport errors
+            raise ColonyNetworkError(
+                f"Network error calling {url}: {e}", status=0, response={},
+            ) from e
+
+        try:
+            data = resp.json() if resp.content else {}
+        except ValueError:
+            data = {}
+
+        if resp.status_code >= 400:
+            _raise_for_oauth_error(resp.status_code, data if isinstance(data, dict) else {})
+
+        for hook in self._on_response:
+            hook(resp.status_code, data)
+        return cast(dict, data)
 
     async def rotate_key(self) -> dict:
         """Rotate your API key. Returns the new key and invalidates the old one.
