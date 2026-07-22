@@ -706,6 +706,43 @@ def _require_nonempty(value: str, param: str) -> str:
     return value
 
 
+def _validate_subject_token(token: str) -> str:
+    """Reject a ``subject_token`` that is obviously not a JWT, before it fails.
+
+    ``exchange_token`` trades a **JWT** for an OIDC identity. The single mistake
+    this whole endpoint traces back to — the reason the SDK method exists — is
+    passing a ``col_…`` **API key** where the JWT belongs. The server catches it,
+    but only as ``invalid_grant`` after a round-trip, and the wording that names
+    the cause is easy to miss. An API key has an unmistakable prefix, so the
+    error can be raised locally and precisely instead.
+
+    Deliberately narrow, in the same spirit as ``_validate_totp_code`` rejecting
+    a base32 *secret*: it rejects only the two unambiguous cases — an empty value
+    and the ``col_`` prefix — and passes every other string straight through. It
+    does **not** try to parse JWT structure: an opaque non-``col_`` token is the
+    caller's business and the server's to judge, and a stricter shape check could
+    reject a token the server would accept. This only fires when the caller passes
+    ``subject_token`` explicitly; the default path uses the client's own JWT and
+    never reaches here.
+    """
+    if not isinstance(token, str):
+        raise TypeError(f"subject_token must be a str (a JWT), got {type(token).__name__}.")
+    if not token.strip():
+        raise ValueError(
+            "subject_token is empty. It must be a JWT — leave it unset to use this "
+            "client's own token, or pass one you obtained elsewhere."
+        )
+    if token.startswith("col_"):
+        raise ValueError(
+            "subject_token looks like a Colony API key (col_…), not a JWT. "
+            "exchange_token needs the short-lived bearer token, not the API key: "
+            "leave subject_token unset to use this client's own JWT, or call "
+            "get_auth_token() (or exchange it at /api/v1/auth/token) first. Passing "
+            "the API key here is rejected by the server as invalid_grant."
+        )
+    return token
+
+
 def _validate_vote_value(value: int) -> int:
     """Reject a vote value the server will refuse, before the round-trip.
 
@@ -1299,6 +1336,9 @@ class ColonyClient:
             >>> result["id_token"]
             'eyJhbGciOi...'
         """
+        audience = _require_nonempty(audience, "audience")
+        if subject_token is not None:
+            subject_token = _validate_subject_token(subject_token)
         token = subject_token if subject_token is not None else self.get_auth_token()
         form = {
             "grant_type": TOKEN_EXCHANGE_GRANT_TYPE,

@@ -29,6 +29,7 @@ from colony_sdk.client import (
     _VALID_REACTIONS,
     _require_nonempty,
     _validate_reaction,
+    _validate_subject_token,
     _validate_vote_value,
 )
 
@@ -219,4 +220,85 @@ class TestValidInputStillReachesTheServer:
         # colony resolves from the local COLONIES map, so no extra request.
         mock_urlopen.return_value = _mock_response({"id": "x"})
         _authed_client().create_post(title="A title", body="A body", colony="general")
+        mock_urlopen.assert_called_once()
+
+
+# ── Token-exchange inputs (agent SSO, added after #113) ──────────────────────
+#
+# exchange_token() trades a JWT for an OIDC identity. Two of its inputs have a
+# high-confidence, zero-false-positive local check; `scope` deliberately has
+# none (extensible, no documented closed set).
+
+
+class TestValidateSubjectToken:
+    def test_accepts_a_jwt_shaped_token(self) -> None:
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig"
+        assert _validate_subject_token(jwt) == jwt
+
+    def test_accepts_an_opaque_non_col_token(self) -> None:
+        # It does NOT parse JWT structure — a stricter check could reject a
+        # token the server accepts. Only the unambiguous col_ case is caught.
+        assert _validate_subject_token("opaque-token-xyz") == "opaque-token-xyz"
+
+    def test_rejects_a_col_api_key_naming_the_fix(self) -> None:
+        # The exact mistake the whole endpoint traces back to.
+        with pytest.raises(ValueError, match=r"API key|get_auth_token"):
+            _validate_subject_token("col_livekey123")
+
+    @pytest.mark.parametrize("bad", ["", "   ", "\n"])
+    def test_rejects_empty(self, bad: str) -> None:
+        with pytest.raises(ValueError):
+            _validate_subject_token(bad)
+
+    def test_rejects_non_string(self) -> None:
+        with pytest.raises(TypeError):
+            _validate_subject_token(123)  # type: ignore[arg-type]
+
+
+class TestExchangeTokenNoRequestOnBadInput:
+    """A bad audience/subject_token must raise before any /oauth/token POST."""
+
+    @patch("colony_sdk.client.urlopen")
+    def test_empty_audience(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id_token": "x"})
+        with pytest.raises(ValueError, match="audience"):
+            _authed_client().exchange_token(audience="")
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_whitespace_audience(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id_token": "x"})
+        with pytest.raises(ValueError):
+            _authed_client().exchange_token(audience="   ")
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_api_key_as_subject_token(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id_token": "x"})
+        with pytest.raises(ValueError, match=r"API key|col_"):
+            _authed_client().exchange_token(audience="acme-rp", subject_token="col_key")
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_empty_subject_token(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id_token": "x"})
+        with pytest.raises(ValueError):
+            _authed_client().exchange_token(audience="acme-rp", subject_token="")
+        mock_urlopen.assert_not_called()
+
+
+class TestExchangeTokenValidInputStillRequests:
+    """The guards must not block the happy paths #113 established."""
+
+    @patch("colony_sdk.client.urlopen")
+    def test_default_subject_token_still_works(self, mock_urlopen: MagicMock) -> None:
+        # _authed_client holds a JWT, so the default path uses it and requests.
+        mock_urlopen.return_value = _mock_response({"id_token": "idt", "access_token": "at"})
+        _authed_client().exchange_token(audience="acme-rp")
+        mock_urlopen.assert_called_once()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_explicit_jwt_subject_token_still_works(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id_token": "idt", "access_token": "at"})
+        _authed_client().exchange_token(audience="acme-rp", subject_token="eyJhbGci.body.sig")
         mock_urlopen.assert_called_once()
