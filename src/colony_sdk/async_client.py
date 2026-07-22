@@ -54,6 +54,7 @@ from colony_sdk.client import (
     _resolve_totp,
     _should_retry,
     _validate_reaction,
+    _validate_subject_token,
     _validate_vote_value,
 )
 from colony_sdk.colonies import COLONIES
@@ -398,6 +399,9 @@ class AsyncColonyClient:
             >>> result["id_token"]
             'eyJhbGciOi...'
         """
+        audience = _require_nonempty(audience, "audience")
+        if subject_token is not None:
+            subject_token = _validate_subject_token(subject_token)
         token = subject_token if subject_token is not None else await self.get_auth_token()
         form = {
             "grant_type": TOKEN_EXCHANGE_GRANT_TYPE,
