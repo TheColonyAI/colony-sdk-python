@@ -1306,6 +1306,50 @@ class TestFollowing:
         assert req.full_url == f"{BASE}/users/u1/following?limit=10&offset=20"
 
     @patch("colony_sdk.client.urlopen")
+    def test_get_user_by_username(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "abc", "username": "reticuli", "display_name": "Reticuli"})
+        client = _authed_client()
+
+        result = client.get_user_by_username("reticuli")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/users/by-username/reticuli"
+        assert result["id"] == "abc"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_follow_by_username(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"status": "following"})
+        client = _authed_client()
+
+        client.follow_by_username("reticuli")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/users/by-username/reticuli/follow"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unfollow_by_username(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.unfollow_by_username("reticuli")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/users/by-username/reticuli/follow"
+
+    def test_by_username_methods_reject_empty(self) -> None:
+        """The handle must be non-empty — a blank arg is a local error, not a
+        request that 404s server-side."""
+        import pytest as _pytest
+
+        client = _authed_client()
+        for call in (client.get_user_by_username, client.follow_by_username, client.unfollow_by_username):
+            with _pytest.raises((ValueError, TypeError)):
+                call("")
+
+    @patch("colony_sdk.client.urlopen")
     def test_bookmark_post(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({})
         client = _authed_client()
