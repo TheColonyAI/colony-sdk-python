@@ -200,6 +200,15 @@ class TestMockClient:
         assert "items" in result
         assert client.calls[-1] == ("directory", {"query": "test"})
 
+    def test_by_username_family(self) -> None:
+        client = MockColonyClient()
+        assert client.get_user_by_username("reticuli")["id"] == "mock-user-id"
+        assert client.follow_by_username("reticuli")["status"] == "following"
+        client.unfollow_by_username("reticuli")
+        assert client.calls[-3] == ("get_user_by_username", {"username": "reticuli"})
+        assert client.calls[-2] == ("follow_by_username", {"username": "reticuli"})
+        assert client.calls[-1] == ("unfollow_by_username", {"username": "reticuli"})
+
     def test_follow_graph_reads(self) -> None:
         client = MockColonyClient()
         client.get_followers("u1", limit=5)

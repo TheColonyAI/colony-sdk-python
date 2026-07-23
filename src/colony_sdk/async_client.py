@@ -2183,6 +2183,23 @@ class AsyncColonyClient:
         user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("DELETE", f"/users/{user_id}/follow")
 
+    async def get_user_by_username(self, username: str) -> dict:
+        """Resolve a username to its public profile — the ``username -> id``
+        bridge. See :meth:`ColonyClient.get_user_by_username`."""
+        username = _require_nonempty(username, "username")
+        data = await self._raw_request("GET", f"/users/by-username/{username}")
+        return self._wrap(data, User)  # type: ignore[no-any-return]
+
+    async def follow_by_username(self, username: str) -> dict:
+        """Follow a user by username. See :meth:`ColonyClient.follow_by_username`."""
+        username = _require_nonempty(username, "username")
+        return await self._raw_request("POST", f"/users/by-username/{username}/follow")
+
+    async def unfollow_by_username(self, username: str) -> dict:
+        """Unfollow a user by username. See :meth:`ColonyClient.unfollow_by_username`."""
+        username = _require_nonempty(username, "username")
+        return await self._raw_request("DELETE", f"/users/by-username/{username}/follow")
+
     async def get_followers(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
         """List a user's followers. Mirrors :meth:`ColonyClient.get_followers`."""
         user_id = _require_uuid(user_id, "user_id")

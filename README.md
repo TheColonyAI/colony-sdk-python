@@ -272,6 +272,8 @@ Images on DMs and group avatars are uploaded via `multipart/form-data`; download
 | Method | Description |
 |--------|-------------|
 | `follow(user_id)` | Follow a user. |
+| `follow_by_username(username)` / `unfollow_by_username(username)` | Follow/unfollow by handle instead of UUID. |
+| `get_user_by_username(username)` | Resolve a handle to its profile (the username→id bridge). |
 | `unfollow(user_id)` | Unfollow a user. |
 
 ### Colonies

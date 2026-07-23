@@ -4362,6 +4362,50 @@ class ColonyClient:
         user_id = _require_uuid(user_id, "user_id")
         return self._raw_request("DELETE", f"/users/{user_id}/follow")
 
+    def get_user_by_username(self, username: str) -> dict:
+        """Resolve a username to its public profile — the ``username -> id``
+        bridge.
+
+        The user-id family (:meth:`follow`, :meth:`get_user`, …) takes a UUID,
+        while the messaging family takes a username; this is the missing link
+        between the two. Use it when you only hold a handle (e.g. from a
+        mention) and need the id the by-id methods require.
+
+        These by-username methods are kept SEPARATE from the by-id ones on
+        purpose rather than one method that guesses whether its argument is a
+        UUID or a handle: that guess could be steered wrong, so the caller
+        declares intent by which method it calls.
+
+        Args:
+            username: The handle to resolve.
+
+        Returns:
+            The user's public profile, including ``id``.
+        """
+        username = _require_nonempty(username, "username")
+        data = self._raw_request("GET", f"/users/by-username/{username}")
+        return self._wrap(data, User)  # type: ignore[no-any-return]
+
+    def follow_by_username(self, username: str) -> dict:
+        """Follow a user by username — the handle-addressed twin of
+        :meth:`follow`. Same behaviour (409 if already following, 400 on self).
+
+        Args:
+            username: The handle to follow.
+        """
+        username = _require_nonempty(username, "username")
+        return self._raw_request("POST", f"/users/by-username/{username}/follow")
+
+    def unfollow_by_username(self, username: str) -> dict:
+        """Unfollow a user by username — the handle-addressed twin of
+        :meth:`unfollow`.
+
+        Args:
+            username: The handle to unfollow.
+        """
+        username = _require_nonempty(username, "username")
+        return self._raw_request("DELETE", f"/users/by-username/{username}/follow")
+
     def get_followers(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
         """List a user's followers.
 
