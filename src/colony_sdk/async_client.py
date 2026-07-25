@@ -49,10 +49,13 @@ from colony_sdk.client import (
     _compute_retry_delay,
     _oauth_root,
     _raise_for_oauth_error,
+    _require_list_response,
     _require_nonempty,
     _require_uuid,
     _resolve_totp,
     _should_retry,
+    _validate_delegation_scopes,
+    _validate_org_visibility,
     _validate_reaction,
     _validate_subject_token,
     _validate_vote_value,
@@ -2994,7 +2997,7 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.list_my_orgs` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         data = await self._raw_request("GET", "/orgs")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgMembership)
+        return self._wrap_list(_require_list_response(data, "list_my_orgs"), OrgMembership)
 
     async def create_org(self, name: str, slug: str, description: str | None = None) -> dict:
         """Async twin of :meth:`ColonyClient.create_org` — same endpoint,
@@ -3032,7 +3035,7 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.list_my_org_invitations` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         data = await self._raw_request("GET", "/orgs/invitations")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgInvitation)
+        return self._wrap_list(_require_list_response(data, "list_my_org_invitations"), OrgInvitation)
 
     async def accept_org_invitation(self, invitation_id: str) -> dict:
         """Async twin of :meth:`ColonyClient.accept_org_invitation` — same endpoint,
@@ -3062,7 +3065,7 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         data = await self._raw_request("GET", f"/orgs/{slug}/invitations")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgPendingInvite)
+        return self._wrap_list(_require_list_response(data, "list_org_pending_invitations"), OrgPendingInvite)
 
     # ── Organisation members ─────────────────────────────────────────
 
@@ -3071,7 +3074,7 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         data = await self._raw_request("GET", f"/orgs/{slug}/members")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgMember)
+        return self._wrap_list(_require_list_response(data, "list_org_members"), OrgMember)
 
     async def set_org_member_role(self, slug: str, user_id: str, role: str) -> dict:
         """Async twin of :meth:`ColonyClient.set_org_member_role` — same endpoint,
@@ -3115,15 +3118,14 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.set_org_visibility` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        if not isinstance(visible, bool):
-            raise TypeError(f"visible must be a bool, got {type(visible).__name__}.")
+        visible = _validate_org_visibility(visible)
         return await self._raw_request("PUT", f"/orgs/{slug}/visibility", {"visible": visible})
 
     async def list_org_disclosure_recipients(self) -> list:
         """Async twin of :meth:`ColonyClient.list_org_disclosure_recipients` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         data = await self._raw_request("GET", "/orgs/disclosure-recipients")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgDisclosureRecipient)
+        return self._wrap_list(_require_list_response(data, "list_org_disclosure_recipients"), OrgDisclosureRecipient)
 
     # ── Organisation domain verification ─────────────────────────────
 
@@ -3146,7 +3148,7 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         data = await self._raw_request("GET", f"/orgs/{slug}/domain")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgDomainChallenge)
+        return self._wrap_list(_require_list_response(data, "list_org_domain_challenges"), OrgDomainChallenge)
 
     # ── Organisation OAuth resources + delegation ────────────────────
 
@@ -3155,7 +3157,7 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         data = await self._raw_request("GET", f"/orgs/{slug}/resources")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgResource)
+        return self._wrap_list(_require_list_response(data, "list_org_resources"), OrgResource)
 
     async def add_org_resource(self, slug: str, identifier: str, label: str | None = None) -> dict:
         """Async twin of :meth:`ColonyClient.add_org_resource` — same endpoint,
@@ -3179,7 +3181,7 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         data = await self._raw_request("GET", f"/orgs/{slug}/delegation-grants")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgDelegationGrant)
+        return self._wrap_list(_require_list_response(data, "list_org_delegation_grants"), OrgDelegationGrant)
 
     async def add_org_delegation_grant(
         self,
@@ -3193,12 +3195,7 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         resource = _require_nonempty(resource, "resource")
-        if not isinstance(scopes, list) or not scopes:
-            raise ValueError(
-                "scopes must be a non-empty list — a delegation grant with no "
-                "scopes authorises nothing, so an empty list is always a bug "
-                "rather than a deliberately narrow grant."
-            )
+        scopes = _validate_delegation_scopes(scopes)
         body: dict[str, Any] = {"resource": resource, "scopes": scopes}
         if min_role is not None:
             body["min_role"] = min_role

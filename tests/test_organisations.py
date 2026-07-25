@@ -26,6 +26,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -564,13 +565,30 @@ class TestParity:
         mismatched = {n: (str(sync[n]), str(aio[n])) for n in sync if sync[n] != aio[n]}
         assert not mismatched, f"signature drift: {mismatched}"
 
-    def test_mock_client_has_every_org_method(self) -> None:
+    def test_mock_client_has_every_org_method_with_the_same_signature(self) -> None:
         """A mock missing a method fails a user's test suite with
-        AttributeError, which looks like their bug and is ours."""
+        AttributeError, which looks like their bug and is ours.
+
+        Signatures are compared too, not just names. An earlier version of
+        this test computed the signatures and then discarded them, comparing
+        key sets only — so the mock was the one client whose shape nothing
+        checked (colonist-one, PR #117 review).
+        """
         from colony_sdk.testing import MockColonyClient
 
-        missing = set(self._org_methods(ColonyClient)) - set(self._org_methods(MockColonyClient))
+        sync = self._org_methods(ColonyClient)
+        mock = self._org_methods(MockColonyClient)
+        missing = set(sync) - set(mock)
         assert not missing, f"MockColonyClient is missing: {sorted(missing)}"
+        # The mock types its params as `Any`, so compare the parameter NAMES
+        # and arity rather than annotations — that is what a caller binds to.
+        drift = {}
+        for name, sig in sync.items():
+            want = [p.name for p in sig.parameters.values()]
+            got = [p.name for p in mock[name].parameters.values()]
+            if want != got:
+                drift[name] = (want, got)
+        assert not drift, f"mock signature drift: {drift}"
 
     def test_every_org_method_is_documented_in_the_readme(self) -> None:
         readme = (Path(__file__).parent.parent / "README.md").read_text()
@@ -719,3 +737,222 @@ class TestAsyncOrgs:
         with pytest.raises(TypeError, match="visible must be a bool"):
             await aclient.set_org_visibility("acme", "false")  # type: ignore[arg-type]
         assert not called, "validation should reject before any request is sent"
+
+
+# ---------------------------------------------------------------------------
+# The mock must REJECT what the client rejects (colonist-one, PR #117 review)
+# ---------------------------------------------------------------------------
+#
+# Presence parity does not prove behavioural parity. The two guards this PR
+# argues are load-bearing were enforced on the sync and async clients and NOT
+# on the mock — which returned {"status": "ok"}, actively reporting success.
+# The mock is the surface users write their own tests against, so it is the
+# one place the mistake is invited to hide.
+#
+# All three now call the SAME module-level validator, so there is one copy to
+# keep correct. These tests are what stops a fourth implementation, or a
+# well-meaning "simplify the mock", from reopening the gap.
+
+
+class TestMockEnforcesTheSameGuards:
+    @pytest.mark.parametrize(
+        "method,args,exc",
+        [
+            ("set_org_visibility", ("acme", "false"), TypeError),
+            ("set_org_visibility", ("acme", 1), TypeError),
+            ("set_org_visibility", ("acme", None), TypeError),
+            ("add_org_delegation_grant", ("acme", "https://x.example", []), ValueError),
+            ("add_org_delegation_grant", ("acme", "https://x.example", "read"), ValueError),
+            ("add_org_delegation_grant", ("acme", "https://x.example", None), ValueError),
+        ],
+    )
+    def test_client_and_mock_reject_identically(self, method: str, args: tuple, exc: type[Exception]) -> None:
+        """The realistic case is ``visible`` arriving from config/env/CLI as
+        the string ``"false"`` — truthy, so an unguarded path would EXPOSE a
+        membership the caller asked to hide. A green mock-backed suite is how
+        that reaches production."""
+        from colony_sdk.testing import MockColonyClient
+
+        with pytest.raises(exc):
+            getattr(_authed_client(), method)(*args)
+        with pytest.raises(exc):
+            getattr(MockColonyClient(), method)(*args)
+
+    def test_mock_still_accepts_valid_input(self) -> None:
+        """The guard must not be so broad it rejects real calls — the half
+        that is easy to leave out."""
+        from colony_sdk.testing import MockColonyClient
+
+        m = MockColonyClient()
+        assert m.set_org_visibility("acme", False)
+        assert m.add_org_delegation_grant("acme", "https://x.example", ["read"])
+
+    def test_all_three_clients_share_one_validator(self) -> None:
+        """Not cosmetic: three copies of a guard is three places for one to
+        be relaxed. Pin that they are literally the same function object."""
+        import colony_sdk.client as sync_mod
+        import colony_sdk.testing as mock_mod
+        from colony_sdk import async_client as async_mod
+
+        for name in ("_validate_org_visibility", "_validate_delegation_scopes"):
+            assert getattr(async_mod, name) is getattr(sync_mod, name), name
+            assert getattr(mock_mod, name) is getattr(sync_mod, name), name
+
+
+# ---------------------------------------------------------------------------
+# List responses: raise on an unexpected shape, never coerce to []
+# ---------------------------------------------------------------------------
+
+
+class TestListResponseShape:
+    """``data if isinstance(data, list) else []`` made "the server sent a
+    shape I did not expect" indistinguishable from "there is nothing here",
+    and failed toward the reassuring answer (colonist-one, PR #117 review).
+
+    Worst for ``list_org_disclosure_recipients``, whose job is answering
+    "who knows I work for Acme?" — a privacy read-back must not silently
+    return the answer the caller hopes for.
+    """
+
+    ENVELOPE: ClassVar[dict] = {"items": [{"client_id": "rp"}], "next": None}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_envelope_raises_rather_than_reporting_nobody(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyAPIError
+
+        mock_urlopen.return_value = _mock_response(self.ENVELOPE)
+        with pytest.raises(ColonyAPIError, match="expected a JSON array"):
+            _authed_client().list_org_disclosure_recipients()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_the_error_names_the_method_and_the_received_type(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyAPIError
+
+        mock_urlopen.return_value = _mock_response(self.ENVELOPE)
+        with pytest.raises(ColonyAPIError) as ei:
+            _authed_client().list_org_members("acme")
+        assert "list_org_members" in str(ei.value)
+        assert "dict" in str(ei.value)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_every_org_list_method_rejects_a_non_list(self, mock_urlopen: MagicMock) -> None:
+        from colony_sdk import ColonyAPIError
+
+        calls = [
+            ("list_my_orgs", ()),
+            ("list_my_org_invitations", ()),
+            ("list_org_pending_invitations", ("acme",)),
+            ("list_org_members", ("acme",)),
+            ("list_org_disclosure_recipients", ()),
+            ("list_org_domain_challenges", ("acme",)),
+            ("list_org_resources", ("acme",)),
+            ("list_org_delegation_grants", ("acme",)),
+        ]
+        assert len(calls) == 8, "every list-returning org method must be covered"
+        client = _authed_client()
+        mock_urlopen.return_value = _mock_response(self.ENVELOPE)
+        for name, args in calls:
+            with pytest.raises(ColonyAPIError, match="expected a JSON array"):
+                getattr(client, name)(*args)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_bare_list_still_works_and_an_empty_one_is_still_empty(self, mock_urlopen: MagicMock) -> None:
+        """The control. A real empty result must stay an ordinary empty list
+        — the point is to distinguish it from a shape error, not to make
+        emptiness itself suspicious."""
+        client = _authed_client()
+        mock_urlopen.return_value = _mock_response([{"client_id": "rp"}])
+        assert client.list_org_disclosure_recipients() == [{"client_id": "rp"}]
+        mock_urlopen.return_value = _mock_response([])
+        assert client.list_org_disclosure_recipients() == []
+
+    @pytest.mark.asyncio
+    async def test_async_raises_on_the_same_shape(self) -> None:
+        import httpx
+
+        from colony_sdk import ColonyAPIError
+        from colony_sdk.async_client import AsyncColonyClient
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=json.dumps(self.ENVELOPE).encode())
+
+        aclient = AsyncColonyClient("col_test", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        aclient._token = "fake-jwt"
+        aclient._token_expiry = 9_999_999_999
+        with pytest.raises(ColonyAPIError, match="expected a JSON array"):
+            await aclient.list_org_disclosure_recipients()
+
+
+class TestAsyncListMethodsReturnRows:
+    """The bug the coercion was hiding.
+
+    ``AsyncColonyClient._raw_request`` wraps a non-dict JSON body as
+    ``{"data": parsed}``; the sync client returns it as-is. Every org
+    endpoint here returns a bare array, so on the async client the payload
+    arrives as ``{"data": [...]}``.
+
+    With the original ``data if isinstance(data, list) else []`` that meant
+    **all eight async list methods silently returned []** — never a row, no
+    matter what the server sent. Nothing failed: ``TestAsyncOrgs`` compares
+    the REQUESTS the two clients send, and the old assertions only checked
+    that a call didn't raise. An empty list is a perfectly plausible answer,
+    so it read as "you have no orgs".
+
+    These assert on the RESPONSE, which is the only thing that catches it.
+    """
+
+    ROWS: ClassVar[list[dict]] = [
+        {"slug": "acme", "name": "Acme", "role": "owner"},
+        {"slug": "beta", "name": "Beta", "role": "member"},
+    ]
+
+    async def _drive(self, method: str, args: tuple, payload: object) -> object:
+        import httpx
+
+        from colony_sdk.async_client import AsyncColonyClient
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=json.dumps(payload).encode())
+
+        aclient = AsyncColonyClient("col_test", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        aclient._token = "fake-jwt"
+        aclient._token_expiry = 9_999_999_999
+        return await getattr(aclient, method)(*args)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "method,args",
+        [
+            ("list_my_orgs", ()),
+            ("list_my_org_invitations", ()),
+            ("list_org_pending_invitations", ("acme",)),
+            ("list_org_members", ("acme",)),
+            ("list_org_disclosure_recipients", ()),
+            ("list_org_domain_challenges", ("acme",)),
+            ("list_org_resources", ("acme",)),
+            ("list_org_delegation_grants", ("acme",)),
+        ],
+    )
+    async def test_async_list_methods_return_the_rows(self, method: str, args: tuple) -> None:
+        result = await self._drive(method, args, self.ROWS)
+        assert isinstance(result, list)
+        assert len(result) == 2, (
+            f"{method} dropped the rows — this is the {{'data': [...]}} async-transport envelope being discarded"
+        )
+
+    @pytest.mark.asyncio
+    async def test_async_empty_result_is_still_empty(self) -> None:
+        """Control: a genuinely empty response must stay empty, so the fix
+        cannot be 'never return an empty list'."""
+        assert await self._drive("list_my_orgs", (), []) == []
+
+    @pytest.mark.asyncio
+    async def test_sync_and_async_agree_on_the_same_payload(self) -> None:
+        """The two transports differ in how they hand back a bare list. What
+        a CALLER sees must not differ — that is the contract parity that
+        matters, and the one TestAsyncOrgs cannot check."""
+        client = _authed_client()
+        with patch("colony_sdk.client.urlopen") as m:
+            m.return_value = _mock_response(self.ROWS)
+            sync_result = client.list_my_orgs()
+        assert await self._drive("list_my_orgs", (), self.ROWS) == sync_result

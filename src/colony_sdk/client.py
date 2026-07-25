@@ -752,6 +752,90 @@ def _validate_subject_token(token: str) -> str:
     return token
 
 
+def _validate_org_visibility(visible: object) -> bool:
+    """Reject a non-boolean ``visible``, which would widen disclosure silently.
+
+    ``set_org_visibility`` is the member half of the org disclosure double
+    gate. The realistic mistake is a value that arrived from a config file,
+    an env var or a CLI flag, so it is the STRING ``"false"`` — which is
+    truthy, and would therefore turn visibility ON for a caller who asked to
+    turn it off, exposing a membership to relying parties.
+
+    Type-checking an argument is normally the type checker's job and not
+    worth a runtime guard. This one earns it because the failure is silent,
+    is in the direction of more exposure, and the wrong value arrives from
+    outside the program where no annotation is enforced.
+
+    Lives at module level so the sync client, the async client and
+    ``MockColonyClient`` share ONE copy. A guard the mock does not enforce is
+    a guard users can develop against and never meet — which is exactly how
+    ``"false"`` reaches production green.
+    """
+    if not isinstance(visible, bool):
+        raise TypeError(f"visible must be a bool, got {type(visible).__name__}.")
+    return visible
+
+
+def _validate_delegation_scopes(scopes: object) -> list:
+    """Reject empty or non-list ``scopes`` on a delegation grant.
+
+    A delegation grant is the widest permission in the org surface — it lets
+    a member obtain a token that speaks FOR the org at a third party. A grant
+    with no scopes authorises nothing, so an empty list is always a bug (a
+    caller built it from a filter that came back empty) rather than a
+    deliberately narrow grant. Shared by all three clients; see
+    :func:`_validate_org_visibility` for why the mock must enforce it too.
+    """
+    if not isinstance(scopes, list) or not scopes:
+        raise ValueError(
+            "scopes must be a non-empty list — a delegation grant with no "
+            "scopes authorises nothing, so an empty list is always a bug "
+            "rather than a deliberately narrow grant."
+        )
+    return scopes
+
+
+def _require_list_response(data: object, method: str) -> list:
+    """Return ``data`` if it is a JSON array, else raise.
+
+    These endpoints return a bare array today. The tempting fallback --
+    ``data if isinstance(data, list) else []`` -- makes "the server sent a
+    shape I did not expect" indistinguishable from "there is nothing here",
+    and it fails toward the reassuring answer.
+
+    That matters most for ``list_org_disclosure_recipients``, whose whole job
+    is answering "who knows I work for Acme?". If the endpoint ever grows
+    pagination, or a gateway wraps the body in an envelope, a coercing
+    version would report "nobody has been told" and nothing would raise. A
+    privacy read-back must not have a silent failure mode that returns the
+    answer the caller hopes for.
+
+    So: raise, naming what arrived. If an envelope is introduced later,
+    unwrap the known key explicitly here — tolerance should be a decision in
+    the code, not a side effect of an ``else`` branch.
+    """
+    if isinstance(data, list):
+        return data
+    # ONE tolerated envelope, and it is ours, not the server's:
+    # ``AsyncColonyClient._raw_request`` wraps a non-dict JSON body as
+    # ``{"data": parsed}`` (async_client.py) while the sync client returns it
+    # as-is. So the two transports hand a bare-list endpoint back differently,
+    # and a list method that only accepted a bare list would return nothing at
+    # all on the async client. This is unwrapped by an EXPLICIT known key so
+    # the tolerance is a decision here rather than a side effect of a fallback.
+    if isinstance(data, dict) and isinstance(data.get("data"), list):
+        return data["data"]
+    raise ColonyAPIError(
+        f"{method} expected a JSON array from the server but received "
+        f"{type(data).__name__}. This means the endpoint's response shape "
+        "changed (pagination, an envelope, or a proxy rewriting the body). "
+        "Raising rather than returning [] on purpose: an empty list here "
+        "would be indistinguishable from a real 'nothing found'.",
+        status=200,
+        response=data if isinstance(data, dict) else {},
+    )
+
+
 def _validate_vote_value(value: int) -> int:
     """Reject a vote value the server will refuse, before the round-trip.
 
@@ -5628,7 +5712,7 @@ class ColonyClient:
             **your** ``role`` in it (``owner``/``admin``/``member``).
         """
         data = self._raw_request("GET", "/orgs")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgMembership)
+        return self._wrap_list(_require_list_response(data, "list_my_orgs"), OrgMembership)
 
     def create_org(self, name: str, slug: str, description: str | None = None) -> dict:
         """Create an organisation. You become its ``owner``.
@@ -5686,7 +5770,7 @@ class ColonyClient:
     def list_my_org_invitations(self) -> list:
         """List organisation invitations awaiting *your* answer."""
         data = self._raw_request("GET", "/orgs/invitations")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgInvitation)
+        return self._wrap_list(_require_list_response(data, "list_my_org_invitations"), OrgInvitation)
 
     def accept_org_invitation(self, invitation_id: str) -> dict:
         """Accept an invitation, joining the org at the invited role."""
@@ -5726,7 +5810,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         data = self._raw_request("GET", f"/orgs/{slug}/invitations")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgPendingInvite)
+        return self._wrap_list(_require_list_response(data, "list_org_pending_invitations"), OrgPendingInvite)
 
     # ── Organisation members ─────────────────────────────────────────
 
@@ -5739,7 +5823,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         data = self._raw_request("GET", f"/orgs/{slug}/members")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgMember)
+        return self._wrap_list(_require_list_response(data, "list_org_members"), OrgMember)
 
     def set_org_member_role(self, slug: str, user_id: str, role: str) -> dict:
         """Change a member's role. Owner/admin only.
@@ -5815,8 +5899,7 @@ class ColonyClient:
         fully public org.
         """
         slug = _require_nonempty(slug, "slug")
-        if not isinstance(visible, bool):
-            raise TypeError(f"visible must be a bool, got {type(visible).__name__}.")
+        visible = _validate_org_visibility(visible)
         return self._raw_request("PUT", f"/orgs/{slug}/visibility", {"visible": visible})
 
     def list_org_disclosure_recipients(self) -> list:
@@ -5827,7 +5910,7 @@ class ColonyClient:
         genuinely told, which is not the same as parties that *could* be.
         """
         data = self._raw_request("GET", "/orgs/disclosure-recipients")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgDisclosureRecipient)
+        return self._wrap_list(_require_list_response(data, "list_org_disclosure_recipients"), OrgDisclosureRecipient)
 
     # ── Organisation domain verification ─────────────────────────────
 
@@ -5860,7 +5943,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         data = self._raw_request("GET", f"/orgs/{slug}/domain")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgDomainChallenge)
+        return self._wrap_list(_require_list_response(data, "list_org_domain_challenges"), OrgDomainChallenge)
 
     # ── Organisation OAuth resources + delegation ────────────────────
 
@@ -5868,7 +5951,7 @@ class ColonyClient:
         """List the org's OAuth resource indicators (RFC 8707)."""
         slug = _require_nonempty(slug, "slug")
         data = self._raw_request("GET", f"/orgs/{slug}/resources")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgResource)
+        return self._wrap_list(_require_list_response(data, "list_org_resources"), OrgResource)
 
     def add_org_resource(self, slug: str, identifier: str, label: str | None = None) -> dict:
         """Register a resource indicator the org may target. Owner/admin only.
@@ -5896,7 +5979,7 @@ class ColonyClient:
         let a member act AS the org at a given resource."""
         slug = _require_nonempty(slug, "slug")
         data = self._raw_request("GET", f"/orgs/{slug}/delegation-grants")
-        return self._wrap_list(data if isinstance(data, list) else [], OrgDelegationGrant)
+        return self._wrap_list(_require_list_response(data, "list_org_delegation_grants"), OrgDelegationGrant)
 
     def add_org_delegation_grant(
         self,
@@ -5925,12 +6008,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         resource = _require_nonempty(resource, "resource")
-        if not isinstance(scopes, list) or not scopes:
-            raise ValueError(
-                "scopes must be a non-empty list — a delegation grant with no "
-                "scopes authorises nothing, so an empty list is always a bug "
-                "rather than a deliberately narrow grant."
-            )
+        scopes = _validate_delegation_scopes(scopes)
         body: dict[str, Any] = {"resource": resource, "scopes": scopes}
         if min_role is not None:
             body["min_role"] = min_role

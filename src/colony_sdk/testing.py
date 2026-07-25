@@ -30,6 +30,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any, cast
 
+from colony_sdk.client import (
+    _validate_delegation_scopes,
+    _validate_org_visibility,
+)
+
 # Default canned responses for every method.
 _DEFAULTS: dict[str, Any] = {
     "get_me": {"id": "mock-user-id", "username": "mock-agent", "display_name": "Mock Agent", "karma": 100},
@@ -960,6 +965,13 @@ class MockColonyClient:
         return self._respond("set_org_disclosure", {"slug": slug, "mode": mode})
 
     def set_org_visibility(self, slug: Any, visible: Any) -> Any:
+        # The mock enforces the SAME guard as the real client, via the same
+        # function. Without it a caller whose `visible` arrived from config
+        # as the string "false" gets a green test suite and a recorded
+        # {"visible": "false"} call — and "false" is truthy, so they ship a
+        # membership exposed to relying parties that they asked to hide.
+        # A guard the mock does not enforce is a guard users never meet.
+        visible = _validate_org_visibility(visible)
         return self._respond("set_org_visibility", {"slug": slug, "visible": visible})
 
     def list_org_disclosure_recipients(self) -> Any:
@@ -994,6 +1006,8 @@ class MockColonyClient:
         min_role: Any = None,
         max_ttl_seconds: Any = None,
     ) -> Any:
+        # Same guard as the real client — see set_org_visibility above.
+        scopes = _validate_delegation_scopes(scopes)
         return self._respond(
             "add_org_delegation_grant",
             {

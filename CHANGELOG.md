@@ -22,6 +22,14 @@
   third party. Optional narrowing arguments (`min_role`, `max_ttl_seconds`)
   are omitted from the request when unset rather than sent as null, so
   leaving them off cannot clear a limit the org already had.
+- **List methods raise on an unexpected response shape rather than coercing to
+  `[]`.** `list_org_disclosure_recipients()` answers "who knows I work for
+  Acme?" — a privacy read-back whose reassuring answer is the empty list. If
+  the endpoint grew pagination or a proxy wrapped the body, a coercing version
+  would report "nobody has been told" and nothing would raise. These now raise
+  `ColonyAPIError` naming the method and the received type. The one envelope
+  tolerated is `{"data": [...]}`, which is the async client's own transport
+  wrapping, unwrapped by explicit key.
 - **Requires no server change** — every endpoint has been live in production
   for some time. They were simply absent from `/api/openapi.json` (a
   "dark until go-live" exclusion that outlived the go-live), which is
