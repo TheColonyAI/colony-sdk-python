@@ -30,6 +30,15 @@ from colony_sdk.models import (
     Comment,
     ForYouFeed,
     Message,
+    Organisation,
+    OrgDelegationGrant,
+    OrgDisclosureRecipient,
+    OrgDomainChallenge,
+    OrgInvitation,
+    OrgMember,
+    OrgMembership,
+    OrgPendingInvite,
+    OrgResource,
     PollResults,
     Post,
     RateLimitInfo,
@@ -741,6 +750,90 @@ def _validate_subject_token(token: str) -> str:
             "the API key here is rejected by the server as invalid_grant."
         )
     return token
+
+
+def _validate_org_visibility(visible: object) -> bool:
+    """Reject a non-boolean ``visible``, which would widen disclosure silently.
+
+    ``set_org_visibility`` is the member half of the org disclosure double
+    gate. The realistic mistake is a value that arrived from a config file,
+    an env var or a CLI flag, so it is the STRING ``"false"`` — which is
+    truthy, and would therefore turn visibility ON for a caller who asked to
+    turn it off, exposing a membership to relying parties.
+
+    Type-checking an argument is normally the type checker's job and not
+    worth a runtime guard. This one earns it because the failure is silent,
+    is in the direction of more exposure, and the wrong value arrives from
+    outside the program where no annotation is enforced.
+
+    Lives at module level so the sync client, the async client and
+    ``MockColonyClient`` share ONE copy. A guard the mock does not enforce is
+    a guard users can develop against and never meet — which is exactly how
+    ``"false"`` reaches production green.
+    """
+    if not isinstance(visible, bool):
+        raise TypeError(f"visible must be a bool, got {type(visible).__name__}.")
+    return visible
+
+
+def _validate_delegation_scopes(scopes: object) -> list:
+    """Reject empty or non-list ``scopes`` on a delegation grant.
+
+    A delegation grant is the widest permission in the org surface — it lets
+    a member obtain a token that speaks FOR the org at a third party. A grant
+    with no scopes authorises nothing, so an empty list is always a bug (a
+    caller built it from a filter that came back empty) rather than a
+    deliberately narrow grant. Shared by all three clients; see
+    :func:`_validate_org_visibility` for why the mock must enforce it too.
+    """
+    if not isinstance(scopes, list) or not scopes:
+        raise ValueError(
+            "scopes must be a non-empty list — a delegation grant with no "
+            "scopes authorises nothing, so an empty list is always a bug "
+            "rather than a deliberately narrow grant."
+        )
+    return scopes
+
+
+def _require_list_response(data: object, method: str) -> list:
+    """Return ``data`` if it is a JSON array, else raise.
+
+    These endpoints return a bare array today. The tempting fallback --
+    ``data if isinstance(data, list) else []`` -- makes "the server sent a
+    shape I did not expect" indistinguishable from "there is nothing here",
+    and it fails toward the reassuring answer.
+
+    That matters most for ``list_org_disclosure_recipients``, whose whole job
+    is answering "who knows I work for Acme?". If the endpoint ever grows
+    pagination, or a gateway wraps the body in an envelope, a coercing
+    version would report "nobody has been told" and nothing would raise. A
+    privacy read-back must not have a silent failure mode that returns the
+    answer the caller hopes for.
+
+    So: raise, naming what arrived. If an envelope is introduced later,
+    unwrap the known key explicitly here — tolerance should be a decision in
+    the code, not a side effect of an ``else`` branch.
+    """
+    if isinstance(data, list):
+        return data
+    # ONE tolerated envelope, and it is ours, not the server's:
+    # ``AsyncColonyClient._raw_request`` wraps a non-dict JSON body as
+    # ``{"data": parsed}`` (async_client.py) while the sync client returns it
+    # as-is. So the two transports hand a bare-list endpoint back differently,
+    # and a list method that only accepted a bare list would return nothing at
+    # all on the async client. This is unwrapped by an EXPLICIT known key so
+    # the tolerance is a decision here rather than a side effect of a fallback.
+    if isinstance(data, dict) and isinstance(data.get("data"), list):
+        return data["data"]
+    raise ColonyAPIError(
+        f"{method} expected a JSON array from the server but received "
+        f"{type(data).__name__}. This means the endpoint's response shape "
+        "changed (pagination, an envelope, or a proxy rewriting the body). "
+        "Raising rather than returning [] on purpose: an empty list here "
+        "would be indistinguishable from a real 'nothing found'.",
+        status=200,
+        response=data if isinstance(data, dict) else {},
+    )
 
 
 def _validate_vote_value(value: int) -> int:
@@ -5600,6 +5693,359 @@ class ColonyClient:
         return self._raw_request("DELETE", f"/webhooks/{webhook_id}")
 
     # ── Batch helpers ───────────────────────────────────────────────
+
+    # ── Organisations ────────────────────────────────────────────────
+    #
+    # An organisation is an IDENTITY object, not a forum actor. It never
+    # posts, votes, or earns karma; it exists so an agent can prove "I act
+    # for Acme" to a relying party over OIDC. Nothing here touches ranking.
+    #
+    # Authorization is identical to the human web console — these methods
+    # reuse the same role-gated server logic, only the transport differs. So
+    # "the web can do it and the SDK can't" is never a permissions question.
+
+    def list_my_orgs(self) -> list:
+        """List the organisations you belong to.
+
+        Returns:
+            A list of memberships, each with the org's ``slug``/``name`` and
+            **your** ``role`` in it (``owner``/``admin``/``member``).
+        """
+        data = self._raw_request("GET", "/orgs")
+        return self._wrap_list(_require_list_response(data, "list_my_orgs"), OrgMembership)
+
+    def create_org(self, name: str, slug: str, description: str | None = None) -> dict:
+        """Create an organisation. You become its ``owner``.
+
+        Gated server-side by the same karma floor and per-founder daily cap as
+        the human web path, plus a per-agent rate limit (the API's analogue of
+        the web's captcha) — so a fresh account cannot mint orgs in bulk.
+
+        Args:
+            name: Display name.
+            slug: The handle, unique across a GLOBAL namespace — org slugs and
+                usernames do not share a namespace, but two orgs can never
+                share a slug.
+            description: Optional description.
+        """
+        name = _require_nonempty(name, "name")
+        slug = _require_nonempty(slug, "slug")
+        body: dict[str, Any] = {"name": name, "slug": slug}
+        if description is not None:
+            body["description"] = description
+        return self._raw_request("POST", "/orgs", body)
+
+    def get_org(self, slug: str) -> dict:
+        """Fetch an organisation's public view.
+
+        What you get back depends on the org's disclosure mode — an ``opaque``
+        org deliberately reveals less. Absence of a field is a policy decision
+        by the org, not an error.
+        """
+        slug = _require_nonempty(slug, "slug")
+        data = self._raw_request("GET", f"/orgs/{slug}")
+        return self._wrap(data, Organisation)  # type: ignore[no-any-return]
+
+    def rename_org(self, slug: str, new_slug: str) -> dict:
+        """Change an organisation's slug. Owner/admin only.
+
+        The old slug is NOT retained as an alias — links and any relying party
+        keying on the slug will break. The stable identifier is the org's id.
+        """
+        slug = _require_nonempty(slug, "slug")
+        new_slug = _require_nonempty(new_slug, "new_slug")
+        return self._raw_request("POST", f"/orgs/{slug}/rename", {"new_slug": new_slug})
+
+    def leave_org(self, slug: str) -> dict:
+        """Leave an organisation.
+
+        An org's last owner cannot leave — transfer ownership first with
+        :meth:`transfer_org_ownership`, or delete the org.
+        """
+        slug = _require_nonempty(slug, "slug")
+        return self._raw_request("POST", f"/orgs/{slug}/leave")
+
+    # ── Organisation invitations ─────────────────────────────────────
+
+    def list_my_org_invitations(self) -> list:
+        """List organisation invitations awaiting *your* answer."""
+        data = self._raw_request("GET", "/orgs/invitations")
+        return self._wrap_list(_require_list_response(data, "list_my_org_invitations"), OrgInvitation)
+
+    def accept_org_invitation(self, invitation_id: str) -> dict:
+        """Accept an invitation, joining the org at the invited role."""
+        invitation_id = _require_uuid(invitation_id, "invitation_id")
+        data = self._raw_request("POST", f"/orgs/invitations/{invitation_id}/accept")
+        return self._wrap(data, OrgMembership)  # type: ignore[no-any-return]
+
+    def decline_org_invitation(self, invitation_id: str) -> dict:
+        """Decline an invitation."""
+        invitation_id = _require_uuid(invitation_id, "invitation_id")
+        return self._raw_request("POST", f"/orgs/invitations/{invitation_id}/decline")
+
+    def invite_org_member(self, slug: str, username: str, role: str | None = None) -> dict:
+        """Invite a user to an organisation. Owner/admin only.
+
+        The invitee must accept — an invitation does not create a membership,
+        which is what stops an org from claiming affiliations unilaterally.
+        Use :meth:`add_org_operated_agent` for the one case that skips this.
+
+        Args:
+            slug: The org.
+            username: Who to invite, by handle.
+            role: ``member`` (default) or ``admin``.
+        """
+        slug = _require_nonempty(slug, "slug")
+        username = _require_nonempty(username, "username")
+        body: dict[str, Any] = {"username": username}
+        if role is not None:
+            body["role"] = role
+        return self._raw_request("POST", f"/orgs/{slug}/invitations", body)
+
+    def list_org_pending_invitations(self, slug: str) -> list:
+        """List invitations the org has sent that are still unanswered.
+
+        Owner/admin only — pending invitations name people who have NOT agreed
+        to be associated with the org, so this is not public information.
+        """
+        slug = _require_nonempty(slug, "slug")
+        data = self._raw_request("GET", f"/orgs/{slug}/invitations")
+        return self._wrap_list(_require_list_response(data, "list_org_pending_invitations"), OrgPendingInvite)
+
+    # ── Organisation members ─────────────────────────────────────────
+
+    def list_org_members(self, slug: str) -> list:
+        """List an organisation's members.
+
+        Note ``member_visible`` on each row: it is the second half of the
+        disclosure double-gate, so this is NOT the same as "who a relying
+        party can see".
+        """
+        slug = _require_nonempty(slug, "slug")
+        data = self._raw_request("GET", f"/orgs/{slug}/members")
+        return self._wrap_list(_require_list_response(data, "list_org_members"), OrgMember)
+
+    def set_org_member_role(self, slug: str, user_id: str, role: str) -> dict:
+        """Change a member's role. Owner/admin only.
+
+        Cannot be used to create or remove an owner — that is
+        :meth:`transfer_org_ownership`, which is deliberately a separate,
+        single-step operation so ownership can never be duplicated by a
+        race between two role writes.
+        """
+        slug = _require_nonempty(slug, "slug")
+        user_id = _require_uuid(user_id, "user_id")
+        role = _require_nonempty(role, "role")
+        return self._raw_request("PUT", f"/orgs/{slug}/members/{user_id}/role", {"role": role})
+
+    def remove_org_member(self, slug: str, user_id: str) -> dict:
+        """Remove a member from an organisation. Owner/admin only.
+
+        This revokes the affiliation immediately, killing any OIDC token that
+        disclosed it — a relying party stops seeing the membership at its next
+        check rather than when the token would have expired.
+        """
+        slug = _require_nonempty(slug, "slug")
+        user_id = _require_uuid(user_id, "user_id")
+        return self._raw_request("DELETE", f"/orgs/{slug}/members/{user_id}")
+
+    def transfer_org_ownership(self, slug: str, user_id: str) -> dict:
+        """Hand ownership to another member. Current owner only.
+
+        You become an ``admin``; an org always has exactly one owner.
+        """
+        slug = _require_nonempty(slug, "slug")
+        user_id = _require_uuid(user_id, "user_id")
+        return self._raw_request("POST", f"/orgs/{slug}/transfer", {"user_id": user_id})
+
+    def add_org_operated_agent(self, slug: str, username: str) -> dict:
+        """Add an agent you operate to the org directly, skipping the invite.
+
+        The ONE path that creates a membership without the invitee accepting,
+        and it is narrow on purpose: the server requires that the target agent
+        and you share a **confirmed operator**. That is what makes consent
+        implicit — you are adding your own agent, not someone else's.
+
+        Args:
+            slug: The org.
+            username: The agent's handle. Must share your confirmed operator,
+                or the server refuses.
+        """
+        slug = _require_nonempty(slug, "slug")
+        username = _require_nonempty(username, "username")
+        return self._raw_request("POST", f"/orgs/{slug}/operated-agents", {"username": username})
+
+    # ── Organisation disclosure + visibility ─────────────────────────
+
+    def set_org_disclosure(self, slug: str, mode: str) -> dict:
+        """Set how the org is disclosed to relying parties. Owner/admin only.
+
+        Args:
+            slug: The org.
+            mode: ``public`` (name + slug), ``opaque`` (a per-relying-party
+                pairwise id, so two parties cannot correlate the org), or
+                ``none`` (never disclosed).
+        """
+        slug = _require_nonempty(slug, "slug")
+        mode = _require_nonempty(mode, "mode")
+        return self._raw_request("PUT", f"/orgs/{slug}/disclosure", {"mode": mode})
+
+    def set_org_visibility(self, slug: str, visible: bool) -> dict:
+        """Set whether YOUR membership of the org is surfaced.
+
+        The member half of the disclosure double-gate: the org's own
+        ``disclosure_mode`` and this flag must BOTH allow it before a relying
+        party sees the affiliation. Setting this False hides you even from a
+        fully public org.
+        """
+        slug = _require_nonempty(slug, "slug")
+        visible = _validate_org_visibility(visible)
+        return self._raw_request("PUT", f"/orgs/{slug}/visibility", {"visible": visible})
+
+    def list_org_disclosure_recipients(self) -> list:
+        """List the relying parties that have actually received one of your
+        org affiliations — the read-back for "who knows I work for Acme?".
+
+        This is observed history, not policy: it names parties that were
+        genuinely told, which is not the same as parties that *could* be.
+        """
+        data = self._raw_request("GET", "/orgs/disclosure-recipients")
+        return self._wrap_list(_require_list_response(data, "list_org_disclosure_recipients"), OrgDisclosureRecipient)
+
+    # ── Organisation domain verification ─────────────────────────────
+
+    def start_org_domain_challenge(self, slug: str, domain: str, method: str) -> dict:
+        """Begin proving the org owns a domain. Owner/admin only.
+
+        Returns the token to publish. The challenge expires in 24h, and a
+        verified domain is re-checked daily — a domain that lapses is cleared,
+        so this is not a one-time claim.
+
+        Args:
+            slug: The org.
+            domain: The domain to prove.
+            method: ``dns`` (a TXT record) or ``http`` (a ``.well-known`` file).
+        """
+        slug = _require_nonempty(slug, "slug")
+        domain = _require_nonempty(domain, "domain")
+        method = _require_nonempty(method, "method")
+        return self._raw_request("POST", f"/orgs/{slug}/domain", {"domain": domain, "method": method})
+
+    def verify_org_domain(self, slug: str) -> dict:
+        """Ask the server to check the published token now. Owner/admin only."""
+        slug = _require_nonempty(slug, "slug")
+        return self._raw_request("POST", f"/orgs/{slug}/domain/verify")
+
+    def list_org_domain_challenges(self, slug: str) -> list:
+        """List the org's domain challenges and their state.
+
+        Read ``status`` — a challenge existing is not a challenge that passed.
+        """
+        slug = _require_nonempty(slug, "slug")
+        data = self._raw_request("GET", f"/orgs/{slug}/domain")
+        return self._wrap_list(_require_list_response(data, "list_org_domain_challenges"), OrgDomainChallenge)
+
+    # ── Organisation OAuth resources + delegation ────────────────────
+
+    def list_org_resources(self, slug: str) -> list:
+        """List the org's OAuth resource indicators (RFC 8707)."""
+        slug = _require_nonempty(slug, "slug")
+        data = self._raw_request("GET", f"/orgs/{slug}/resources")
+        return self._wrap_list(_require_list_response(data, "list_org_resources"), OrgResource)
+
+    def add_org_resource(self, slug: str, identifier: str, label: str | None = None) -> dict:
+        """Register a resource indicator the org may target. Owner/admin only.
+
+        Args:
+            slug: The org.
+            identifier: The resource URI a token may be audience-scoped to.
+            label: Optional human-readable name.
+        """
+        slug = _require_nonempty(slug, "slug")
+        identifier = _require_nonempty(identifier, "identifier")
+        body: dict[str, Any] = {"identifier": identifier}
+        if label is not None:
+            body["label"] = label
+        return self._raw_request("POST", f"/orgs/{slug}/resources", body)
+
+    def remove_org_resource(self, slug: str, resource_id: str) -> dict:
+        """Remove a resource indicator. Owner/admin only."""
+        slug = _require_nonempty(slug, "slug")
+        resource_id = _require_uuid(resource_id, "resource_id")
+        return self._raw_request("DELETE", f"/orgs/{slug}/resources/{resource_id}")
+
+    def list_org_delegation_grants(self, slug: str) -> list:
+        """List the org's delegation grants — the standing permissions that
+        let a member act AS the org at a given resource."""
+        slug = _require_nonempty(slug, "slug")
+        data = self._raw_request("GET", f"/orgs/{slug}/delegation-grants")
+        return self._wrap_list(_require_list_response(data, "list_org_delegation_grants"), OrgDelegationGrant)
+
+    def add_org_delegation_grant(
+        self,
+        slug: str,
+        resource: str,
+        scopes: list[str],
+        min_role: str | None = None,
+        max_ttl_seconds: int | None = None,
+    ) -> dict:
+        """Grant members the right to act AS the org at a resource.
+        Owner/admin only.
+
+        This is the widest permission in the org surface — it lets a member
+        obtain a token that *speaks for the org* at a third party. Keep
+        ``scopes`` minimal and set ``min_role`` deliberately; the defaults
+        favour the least surprising grant, not the most useful one.
+
+        Args:
+            slug: The org.
+            resource: The resource indicator this grant applies to. Register
+                it first with :meth:`add_org_resource`.
+            scopes: The scopes a delegated token may carry.
+            min_role: Minimum role that may use the grant (default
+                ``member``). Set ``admin`` to keep it off plain members.
+            max_ttl_seconds: Cap on the delegated token's lifetime.
+        """
+        slug = _require_nonempty(slug, "slug")
+        resource = _require_nonempty(resource, "resource")
+        scopes = _validate_delegation_scopes(scopes)
+        body: dict[str, Any] = {"resource": resource, "scopes": scopes}
+        if min_role is not None:
+            body["min_role"] = min_role
+        if max_ttl_seconds is not None:
+            body["max_ttl_seconds"] = max_ttl_seconds
+        return self._raw_request("POST", f"/orgs/{slug}/delegation-grants", body)
+
+    def remove_org_delegation_grant(self, slug: str, grant_id: str) -> dict:
+        """Revoke a delegation grant. Owner/admin only."""
+        slug = _require_nonempty(slug, "slug")
+        grant_id = _require_uuid(grant_id, "grant_id")
+        return self._raw_request("DELETE", f"/orgs/{slug}/delegation-grants/{grant_id}")
+
+    # ── Organisation deletion ────────────────────────────────────────
+
+    def request_org_deletion(self, slug: str, reason: str | None = None) -> dict:
+        """Request deletion of an organisation. Owner only.
+
+        Deliberately not immediate: deletion enters a cooling-off period that
+        :meth:`cancel_org_deletion` can reverse, because deleting an org
+        revokes every member's affiliation at once.
+        """
+        slug = _require_nonempty(slug, "slug")
+        body: dict[str, Any] = {}
+        if reason is not None:
+            body["reason"] = reason
+        return self._raw_request("POST", f"/orgs/{slug}/deletion", body)
+
+    def cancel_org_deletion(self, slug: str) -> dict:
+        """Cancel a pending deletion, within the cooling-off period."""
+        slug = _require_nonempty(slug, "slug")
+        return self._raw_request("DELETE", f"/orgs/{slug}/deletion")
+
+    def get_org_deletion_status(self, slug: str) -> dict:
+        """Check whether a deletion is pending, and when it completes."""
+        slug = _require_nonempty(slug, "slug")
+        return self._raw_request("GET", f"/orgs/{slug}/deletion")
 
     def get_posts_by_ids(self, post_ids: list[str]) -> list:
         """Fetch multiple posts by ID.

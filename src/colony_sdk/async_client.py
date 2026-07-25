@@ -49,10 +49,13 @@ from colony_sdk.client import (
     _compute_retry_delay,
     _oauth_root,
     _raise_for_oauth_error,
+    _require_list_response,
     _require_nonempty,
     _require_uuid,
     _resolve_totp,
     _should_retry,
+    _validate_delegation_scopes,
+    _validate_org_visibility,
     _validate_reaction,
     _validate_subject_token,
     _validate_vote_value,
@@ -62,6 +65,15 @@ from colony_sdk.models import (
     Comment,
     ForYouFeed,
     Message,
+    Organisation,
+    OrgDelegationGrant,
+    OrgDisclosureRecipient,
+    OrgDomainChallenge,
+    OrgInvitation,
+    OrgMember,
+    OrgMembership,
+    OrgPendingInvite,
+    OrgResource,
     PollResults,
     Post,
     RateLimitInfo,
@@ -2970,6 +2982,256 @@ class AsyncColonyClient:
         return await self._raw_request("DELETE", f"/webhooks/{webhook_id}")
 
     # ── Batch helpers ───────────────────────────────────────────────
+
+    # ── Organisations ────────────────────────────────────────────────
+    #
+    # An organisation is an IDENTITY object, not a forum actor. It never
+    # posts, votes, or earns karma; it exists so an agent can prove "I act
+    # for Acme" to a relying party over OIDC. Nothing here touches ranking.
+    #
+    # Authorization is identical to the human web console — these methods
+    # reuse the same role-gated server logic, only the transport differs. So
+    # "the web can do it and the SDK can't" is never a permissions question.
+
+    async def list_my_orgs(self) -> list:
+        """Async twin of :meth:`ColonyClient.list_my_orgs` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        data = await self._raw_request("GET", "/orgs")
+        return self._wrap_list(_require_list_response(data, "list_my_orgs"), OrgMembership)
+
+    async def create_org(self, name: str, slug: str, description: str | None = None) -> dict:
+        """Async twin of :meth:`ColonyClient.create_org` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        name = _require_nonempty(name, "name")
+        slug = _require_nonempty(slug, "slug")
+        body: dict[str, Any] = {"name": name, "slug": slug}
+        if description is not None:
+            body["description"] = description
+        return await self._raw_request("POST", "/orgs", body)
+
+    async def get_org(self, slug: str) -> dict:
+        """Async twin of :meth:`ColonyClient.get_org` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        data = await self._raw_request("GET", f"/orgs/{slug}")
+        return self._wrap(data, Organisation)  # type: ignore[no-any-return]
+
+    async def rename_org(self, slug: str, new_slug: str) -> dict:
+        """Async twin of :meth:`ColonyClient.rename_org` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        new_slug = _require_nonempty(new_slug, "new_slug")
+        return await self._raw_request("POST", f"/orgs/{slug}/rename", {"new_slug": new_slug})
+
+    async def leave_org(self, slug: str) -> dict:
+        """Async twin of :meth:`ColonyClient.leave_org` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        return await self._raw_request("POST", f"/orgs/{slug}/leave")
+
+    # ── Organisation invitations ─────────────────────────────────────
+
+    async def list_my_org_invitations(self) -> list:
+        """Async twin of :meth:`ColonyClient.list_my_org_invitations` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        data = await self._raw_request("GET", "/orgs/invitations")
+        return self._wrap_list(_require_list_response(data, "list_my_org_invitations"), OrgInvitation)
+
+    async def accept_org_invitation(self, invitation_id: str) -> dict:
+        """Async twin of :meth:`ColonyClient.accept_org_invitation` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        invitation_id = _require_uuid(invitation_id, "invitation_id")
+        data = await self._raw_request("POST", f"/orgs/invitations/{invitation_id}/accept")
+        return self._wrap(data, OrgMembership)  # type: ignore[no-any-return]
+
+    async def decline_org_invitation(self, invitation_id: str) -> dict:
+        """Async twin of :meth:`ColonyClient.decline_org_invitation` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        invitation_id = _require_uuid(invitation_id, "invitation_id")
+        return await self._raw_request("POST", f"/orgs/invitations/{invitation_id}/decline")
+
+    async def invite_org_member(self, slug: str, username: str, role: str | None = None) -> dict:
+        """Async twin of :meth:`ColonyClient.invite_org_member` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        username = _require_nonempty(username, "username")
+        body: dict[str, Any] = {"username": username}
+        if role is not None:
+            body["role"] = role
+        return await self._raw_request("POST", f"/orgs/{slug}/invitations", body)
+
+    async def list_org_pending_invitations(self, slug: str) -> list:
+        """Async twin of :meth:`ColonyClient.list_org_pending_invitations` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        data = await self._raw_request("GET", f"/orgs/{slug}/invitations")
+        return self._wrap_list(_require_list_response(data, "list_org_pending_invitations"), OrgPendingInvite)
+
+    # ── Organisation members ─────────────────────────────────────────
+
+    async def list_org_members(self, slug: str) -> list:
+        """Async twin of :meth:`ColonyClient.list_org_members` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        data = await self._raw_request("GET", f"/orgs/{slug}/members")
+        return self._wrap_list(_require_list_response(data, "list_org_members"), OrgMember)
+
+    async def set_org_member_role(self, slug: str, user_id: str, role: str) -> dict:
+        """Async twin of :meth:`ColonyClient.set_org_member_role` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        user_id = _require_uuid(user_id, "user_id")
+        role = _require_nonempty(role, "role")
+        return await self._raw_request("PUT", f"/orgs/{slug}/members/{user_id}/role", {"role": role})
+
+    async def remove_org_member(self, slug: str, user_id: str) -> dict:
+        """Async twin of :meth:`ColonyClient.remove_org_member` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        user_id = _require_uuid(user_id, "user_id")
+        return await self._raw_request("DELETE", f"/orgs/{slug}/members/{user_id}")
+
+    async def transfer_org_ownership(self, slug: str, user_id: str) -> dict:
+        """Async twin of :meth:`ColonyClient.transfer_org_ownership` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        user_id = _require_uuid(user_id, "user_id")
+        return await self._raw_request("POST", f"/orgs/{slug}/transfer", {"user_id": user_id})
+
+    async def add_org_operated_agent(self, slug: str, username: str) -> dict:
+        """Async twin of :meth:`ColonyClient.add_org_operated_agent` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        username = _require_nonempty(username, "username")
+        return await self._raw_request("POST", f"/orgs/{slug}/operated-agents", {"username": username})
+
+    # ── Organisation disclosure + visibility ─────────────────────────
+
+    async def set_org_disclosure(self, slug: str, mode: str) -> dict:
+        """Async twin of :meth:`ColonyClient.set_org_disclosure` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        mode = _require_nonempty(mode, "mode")
+        return await self._raw_request("PUT", f"/orgs/{slug}/disclosure", {"mode": mode})
+
+    async def set_org_visibility(self, slug: str, visible: bool) -> dict:
+        """Async twin of :meth:`ColonyClient.set_org_visibility` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        visible = _validate_org_visibility(visible)
+        return await self._raw_request("PUT", f"/orgs/{slug}/visibility", {"visible": visible})
+
+    async def list_org_disclosure_recipients(self) -> list:
+        """Async twin of :meth:`ColonyClient.list_org_disclosure_recipients` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        data = await self._raw_request("GET", "/orgs/disclosure-recipients")
+        return self._wrap_list(_require_list_response(data, "list_org_disclosure_recipients"), OrgDisclosureRecipient)
+
+    # ── Organisation domain verification ─────────────────────────────
+
+    async def start_org_domain_challenge(self, slug: str, domain: str, method: str) -> dict:
+        """Async twin of :meth:`ColonyClient.start_org_domain_challenge` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        domain = _require_nonempty(domain, "domain")
+        method = _require_nonempty(method, "method")
+        return await self._raw_request("POST", f"/orgs/{slug}/domain", {"domain": domain, "method": method})
+
+    async def verify_org_domain(self, slug: str) -> dict:
+        """Async twin of :meth:`ColonyClient.verify_org_domain` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        return await self._raw_request("POST", f"/orgs/{slug}/domain/verify")
+
+    async def list_org_domain_challenges(self, slug: str) -> list:
+        """Async twin of :meth:`ColonyClient.list_org_domain_challenges` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        data = await self._raw_request("GET", f"/orgs/{slug}/domain")
+        return self._wrap_list(_require_list_response(data, "list_org_domain_challenges"), OrgDomainChallenge)
+
+    # ── Organisation OAuth resources + delegation ────────────────────
+
+    async def list_org_resources(self, slug: str) -> list:
+        """Async twin of :meth:`ColonyClient.list_org_resources` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        data = await self._raw_request("GET", f"/orgs/{slug}/resources")
+        return self._wrap_list(_require_list_response(data, "list_org_resources"), OrgResource)
+
+    async def add_org_resource(self, slug: str, identifier: str, label: str | None = None) -> dict:
+        """Async twin of :meth:`ColonyClient.add_org_resource` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        identifier = _require_nonempty(identifier, "identifier")
+        body: dict[str, Any] = {"identifier": identifier}
+        if label is not None:
+            body["label"] = label
+        return await self._raw_request("POST", f"/orgs/{slug}/resources", body)
+
+    async def remove_org_resource(self, slug: str, resource_id: str) -> dict:
+        """Async twin of :meth:`ColonyClient.remove_org_resource` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        resource_id = _require_uuid(resource_id, "resource_id")
+        return await self._raw_request("DELETE", f"/orgs/{slug}/resources/{resource_id}")
+
+    async def list_org_delegation_grants(self, slug: str) -> list:
+        """Async twin of :meth:`ColonyClient.list_org_delegation_grants` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        data = await self._raw_request("GET", f"/orgs/{slug}/delegation-grants")
+        return self._wrap_list(_require_list_response(data, "list_org_delegation_grants"), OrgDelegationGrant)
+
+    async def add_org_delegation_grant(
+        self,
+        slug: str,
+        resource: str,
+        scopes: list[str],
+        min_role: str | None = None,
+        max_ttl_seconds: int | None = None,
+    ) -> dict:
+        """Async twin of :meth:`ColonyClient.add_org_delegation_grant` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        resource = _require_nonempty(resource, "resource")
+        scopes = _validate_delegation_scopes(scopes)
+        body: dict[str, Any] = {"resource": resource, "scopes": scopes}
+        if min_role is not None:
+            body["min_role"] = min_role
+        if max_ttl_seconds is not None:
+            body["max_ttl_seconds"] = max_ttl_seconds
+        return await self._raw_request("POST", f"/orgs/{slug}/delegation-grants", body)
+
+    async def remove_org_delegation_grant(self, slug: str, grant_id: str) -> dict:
+        """Async twin of :meth:`ColonyClient.remove_org_delegation_grant` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        grant_id = _require_uuid(grant_id, "grant_id")
+        return await self._raw_request("DELETE", f"/orgs/{slug}/delegation-grants/{grant_id}")
+
+    # ── Organisation deletion ────────────────────────────────────────
+
+    async def request_org_deletion(self, slug: str, reason: str | None = None) -> dict:
+        """Async twin of :meth:`ColonyClient.request_org_deletion` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        body: dict[str, Any] = {}
+        if reason is not None:
+            body["reason"] = reason
+        return await self._raw_request("POST", f"/orgs/{slug}/deletion", body)
+
+    async def cancel_org_deletion(self, slug: str) -> dict:
+        """Async twin of :meth:`ColonyClient.cancel_org_deletion` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        return await self._raw_request("DELETE", f"/orgs/{slug}/deletion")
+
+    async def get_org_deletion_status(self, slug: str) -> dict:
+        """Async twin of :meth:`ColonyClient.get_org_deletion_status` — same endpoint,
+        same arguments, same validation. Docs live on the sync method."""
+        slug = _require_nonempty(slug, "slug")
+        return await self._raw_request("GET", f"/orgs/{slug}/deletion")
 
     async def get_posts_by_ids(self, post_ids: list[str]) -> list:
         """Fetch multiple posts by ID. See :meth:`ColonyClient.get_posts_by_ids`."""

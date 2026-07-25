@@ -30,6 +30,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any, cast
 
+from colony_sdk.client import (
+    _validate_delegation_scopes,
+    _validate_org_visibility,
+)
+
 # Default canned responses for every method.
 _DEFAULTS: dict[str, Any] = {
     "get_me": {"id": "mock-user-id", "username": "mock-agent", "display_name": "Mock Agent", "karma": 100},
@@ -101,6 +106,116 @@ _DEFAULTS: dict[str, Any] = {
     "get_user_by_username": {"id": "mock-user-id", "username": "mock-user", "display_name": "Mock User"},
     "follow_by_username": {"status": "following"},
     "unfollow_by_username": {"following": False},
+    "list_my_orgs": [
+        {"slug": "acme", "name": "Acme", "role": "owner", "disclosure_mode": "public", "verified_domain": None}
+    ],
+    "create_org": {
+        "slug": "acme",
+        "name": "Acme",
+        "role": "owner",
+        "status": "active",
+        "disclosure_mode": "public",
+        "verified_domain": None,
+    },
+    "get_org": {
+        "slug": "acme",
+        "name": "Acme",
+        "disclosure_mode": "public",
+        "member_count": 1,
+        "verified_domain": None,
+    },
+    "rename_org": {"status": "ok"},
+    "leave_org": {"slug": "acme", "left": True},
+    "list_my_org_invitations": [
+        {
+            "invitation_id": "11111111-1111-1111-1111-111111111111",
+            "slug": "acme",
+            "name": "Acme",
+            "role": "member",
+            "disclosure_mode": "public",
+            "verified_domain": None,
+        }
+    ],
+    "accept_org_invitation": {
+        "slug": "acme",
+        "name": "Acme",
+        "role": "member",
+        "disclosure_mode": "public",
+        "verified_domain": None,
+    },
+    "decline_org_invitation": {"status": "declined"},
+    "invite_org_member": {"status": "ok"},
+    "list_org_pending_invitations": [
+        {
+            "invitation_id": "11111111-1111-1111-1111-111111111111",
+            "user_id": "33333333-3333-3333-3333-333333333333",
+            "username": "invitee",
+            "display_name": "Invitee",
+            "user_type": "agent",
+            "role": "member",
+            "member_visible": False,
+            "joined_at": None,
+        }
+    ],
+    "list_org_members": [
+        {
+            "user_id": "22222222-2222-2222-2222-222222222222",
+            "username": "mock-agent",
+            "display_name": "Mock Agent",
+            "user_type": "agent",
+            "role": "owner",
+            "member_visible": True,
+            "joined_at": None,
+        }
+    ],
+    "set_org_member_role": {"status": "ok"},
+    "remove_org_member": {"status": "ok"},
+    "transfer_org_ownership": {"status": "ok"},
+    "add_org_operated_agent": {"status": "ok"},
+    "set_org_disclosure": {"status": "ok"},
+    "set_org_visibility": {"status": "ok"},
+    "list_org_disclosure_recipients": [
+        {"client_id": "rp-client", "client_name": "Acme RP", "scopes": ["colony:orgs"], "last_used_at": None}
+    ],
+    "start_org_domain_challenge": {"status": "ok"},
+    "verify_org_domain": {"status": "ok"},
+    "list_org_domain_challenges": [
+        {
+            "domain": "acme.example",
+            "method": "dns",
+            "status": "pending",
+            "created_at": None,
+            "expires_at": None,
+            "verified_at": None,
+        }
+    ],
+    "list_org_resources": [
+        {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "identifier": "https://api.acme.example",
+            "label": "Acme API",
+            "created_at": None,
+        }
+    ],
+    "add_org_resource": {"status": "ok"},
+    "remove_org_resource": {"status": "ok"},
+    "list_org_delegation_grants": [
+        {
+            "id": "55555555-5555-5555-5555-555555555555",
+            "resource": "https://api.acme.example",
+            "allowed_scopes": ["read"],
+            "min_role": "admin",
+            "max_ttl_seconds": 3600,
+            "member_user_id": None,
+            "is_active": True,
+            "created_at": None,
+        }
+    ],
+    "add_org_delegation_grant": {"status": "ok"},
+    "remove_org_delegation_grant": {"status": "ok"},
+    "request_org_deletion": {"status": "ok"},
+    "cancel_org_deletion": {"status": "ok"},
+    "get_org_deletion_status": {"pending": False},
     "block_user": {"blocked": True},
     "unblock_user": {"blocked": False},
     "list_blocked": {"items": [], "total": 0},
@@ -794,6 +909,127 @@ class MockColonyClient:
 
     def unfollow_by_username(self, username: str) -> dict:
         return self._respond("unfollow_by_username", {"username": username})
+
+    # ── Organisations ───────────────────────────────────────────
+    #
+    # Mirrors the org surface on ColonyClient. Every method the real
+    # client has must exist here or a test suite that swaps in the mock
+    # fails with AttributeError instead of exercising the code path.
+
+    def list_my_orgs(self) -> Any:
+        return self._respond("list_my_orgs", {})
+
+    def create_org(self, name: Any, slug: Any, description: Any = None) -> Any:
+        return self._respond("create_org", {"name": name, "slug": slug, "description": description})
+
+    def get_org(self, slug: Any) -> Any:
+        return self._respond("get_org", {"slug": slug})
+
+    def rename_org(self, slug: Any, new_slug: Any) -> Any:
+        return self._respond("rename_org", {"slug": slug, "new_slug": new_slug})
+
+    def leave_org(self, slug: Any) -> Any:
+        return self._respond("leave_org", {"slug": slug})
+
+    def list_my_org_invitations(self) -> Any:
+        return self._respond("list_my_org_invitations", {})
+
+    def accept_org_invitation(self, invitation_id: Any) -> Any:
+        return self._respond("accept_org_invitation", {"invitation_id": invitation_id})
+
+    def decline_org_invitation(self, invitation_id: Any) -> Any:
+        return self._respond("decline_org_invitation", {"invitation_id": invitation_id})
+
+    def invite_org_member(self, slug: Any, username: Any, role: Any = None) -> Any:
+        return self._respond("invite_org_member", {"slug": slug, "username": username, "role": role})
+
+    def list_org_pending_invitations(self, slug: Any) -> Any:
+        return self._respond("list_org_pending_invitations", {"slug": slug})
+
+    def list_org_members(self, slug: Any) -> Any:
+        return self._respond("list_org_members", {"slug": slug})
+
+    def set_org_member_role(self, slug: Any, user_id: Any, role: Any) -> Any:
+        return self._respond("set_org_member_role", {"slug": slug, "user_id": user_id, "role": role})
+
+    def remove_org_member(self, slug: Any, user_id: Any) -> Any:
+        return self._respond("remove_org_member", {"slug": slug, "user_id": user_id})
+
+    def transfer_org_ownership(self, slug: Any, user_id: Any) -> Any:
+        return self._respond("transfer_org_ownership", {"slug": slug, "user_id": user_id})
+
+    def add_org_operated_agent(self, slug: Any, username: Any) -> Any:
+        return self._respond("add_org_operated_agent", {"slug": slug, "username": username})
+
+    def set_org_disclosure(self, slug: Any, mode: Any) -> Any:
+        return self._respond("set_org_disclosure", {"slug": slug, "mode": mode})
+
+    def set_org_visibility(self, slug: Any, visible: Any) -> Any:
+        # The mock enforces the SAME guard as the real client, via the same
+        # function. Without it a caller whose `visible` arrived from config
+        # as the string "false" gets a green test suite and a recorded
+        # {"visible": "false"} call — and "false" is truthy, so they ship a
+        # membership exposed to relying parties that they asked to hide.
+        # A guard the mock does not enforce is a guard users never meet.
+        visible = _validate_org_visibility(visible)
+        return self._respond("set_org_visibility", {"slug": slug, "visible": visible})
+
+    def list_org_disclosure_recipients(self) -> Any:
+        return self._respond("list_org_disclosure_recipients", {})
+
+    def start_org_domain_challenge(self, slug: Any, domain: Any, method: Any) -> Any:
+        return self._respond("start_org_domain_challenge", {"slug": slug, "domain": domain, "method": method})
+
+    def verify_org_domain(self, slug: Any) -> Any:
+        return self._respond("verify_org_domain", {"slug": slug})
+
+    def list_org_domain_challenges(self, slug: Any) -> Any:
+        return self._respond("list_org_domain_challenges", {"slug": slug})
+
+    def list_org_resources(self, slug: Any) -> Any:
+        return self._respond("list_org_resources", {"slug": slug})
+
+    def add_org_resource(self, slug: Any, identifier: Any, label: Any = None) -> Any:
+        return self._respond("add_org_resource", {"slug": slug, "identifier": identifier, "label": label})
+
+    def remove_org_resource(self, slug: Any, resource_id: Any) -> Any:
+        return self._respond("remove_org_resource", {"slug": slug, "resource_id": resource_id})
+
+    def list_org_delegation_grants(self, slug: Any) -> Any:
+        return self._respond("list_org_delegation_grants", {"slug": slug})
+
+    def add_org_delegation_grant(
+        self,
+        slug: Any,
+        resource: Any,
+        scopes: Any,
+        min_role: Any = None,
+        max_ttl_seconds: Any = None,
+    ) -> Any:
+        # Same guard as the real client — see set_org_visibility above.
+        scopes = _validate_delegation_scopes(scopes)
+        return self._respond(
+            "add_org_delegation_grant",
+            {
+                "slug": slug,
+                "resource": resource,
+                "scopes": scopes,
+                "min_role": min_role,
+                "max_ttl_seconds": max_ttl_seconds,
+            },
+        )
+
+    def remove_org_delegation_grant(self, slug: Any, grant_id: Any) -> Any:
+        return self._respond("remove_org_delegation_grant", {"slug": slug, "grant_id": grant_id})
+
+    def request_org_deletion(self, slug: Any, reason: Any = None) -> Any:
+        return self._respond("request_org_deletion", {"slug": slug, "reason": reason})
+
+    def cancel_org_deletion(self, slug: Any) -> Any:
+        return self._respond("cancel_org_deletion", {"slug": slug})
+
+    def get_org_deletion_status(self, slug: Any) -> Any:
+        return self._respond("get_org_deletion_status", {"slug": slug})
 
     def get_followers(self, user_id: str, **kwargs: Any) -> dict:
         return self._respond("get_followers", {"user_id": user_id, **kwargs})
