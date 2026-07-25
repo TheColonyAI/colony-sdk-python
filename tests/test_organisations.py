@@ -98,7 +98,9 @@ class TestOrgLifecycle:
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/orgs"
         assert _last_body(mock_urlopen) == {
-            "name": "Acme", "slug": "acme", "description": "We make things",
+            "name": "Acme",
+            "slug": "acme",
+            "description": "We make things",
         }
 
     @patch("colony_sdk.client.urlopen")
@@ -141,9 +143,7 @@ class TestOrgInvitations:
         assert _last_request(mock_urlopen).full_url == f"{BASE}/orgs/invitations"
 
     @patch("colony_sdk.client.urlopen")
-    def test_accept_and_decline_target_the_invitation_not_the_org(
-        self, mock_urlopen: MagicMock
-    ) -> None:
+    def test_accept_and_decline_target_the_invitation_not_the_org(self, mock_urlopen: MagicMock) -> None:
         """Both address an invitation id. Keying on the slug instead would be
         ambiguous — you can hold more than one invitation to an org over
         time, and accepting 'the acme invitation' would not say which."""
@@ -295,7 +295,8 @@ class TestOrgResourcesAndDelegation:
         mock_urlopen.return_value = _mock_response({"id": UUID_A})
         client.add_org_resource("acme", "https://api.acme.example", label="Acme API")
         assert _last_body(mock_urlopen) == {
-            "identifier": "https://api.acme.example", "label": "Acme API",
+            "identifier": "https://api.acme.example",
+            "label": "Acme API",
         }
         client.add_org_resource("acme", "https://api.acme.example")
         assert "label" not in _last_body(mock_urlopen)
@@ -309,8 +310,11 @@ class TestOrgResourcesAndDelegation:
     def test_add_org_delegation_grant_full_body(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"id": UUID_A})
         _authed_client().add_org_delegation_grant(
-            "acme", "https://api.acme.example", ["read", "write"],
-            min_role="admin", max_ttl_seconds=900,
+            "acme",
+            "https://api.acme.example",
+            ["read", "write"],
+            min_role="admin",
+            max_ttl_seconds=900,
         )
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
@@ -341,7 +345,9 @@ class TestOrgResourcesAndDelegation:
         back empty, not someone deliberately granting nothing."""
         with pytest.raises(ValueError, match="non-empty list"):
             _authed_client().add_org_delegation_grant(
-                "acme", "https://api.acme.example", bad,  # type: ignore[arg-type]
+                "acme",
+                "https://api.acme.example",
+                bad,  # type: ignore[arg-type]
             )
 
     @patch("colony_sdk.client.urlopen")
@@ -359,9 +365,7 @@ class TestOrgResourcesAndDelegation:
 
 class TestOrgDeletion:
     @patch("colony_sdk.client.urlopen")
-    def test_request_cancel_and_status_share_one_path_by_verb(
-        self, mock_urlopen: MagicMock
-    ) -> None:
+    def test_request_cancel_and_status_share_one_path_by_verb(self, mock_urlopen: MagicMock) -> None:
         """All three are ``/deletion``, distinguished only by verb — so a
         verb mix-up would CANCEL a deletion when asked to check it, or the
         reverse. Worth pinning together rather than apart."""
@@ -439,31 +443,85 @@ class TestTypedModels:
 
     def test_models_round_trip(self) -> None:
         cases = [
-            (Organisation, {"slug": "acme", "name": "Acme", "disclosure_mode": "public",
-                            "member_count": 3, "verified_domain": "acme.example"}),
-            (OrgMembership, {"slug": "acme", "name": "Acme", "role": "owner",
-                             "disclosure_mode": "opaque", "verified_domain": None}),
-            (OrgMember, {"user_id": UUID_B, "username": "a", "display_name": "A",
-                         "user_type": "agent", "role": "admin", "member_visible": True,
-                         "joined_at": "2026-07-25T00:00:00Z"}),
-            (OrgInvitation, {"invitation_id": UUID_A, "slug": "acme", "name": "Acme",
-                             "role": "member", "disclosure_mode": "public",
-                             "verified_domain": None}),
-            (OrgPendingInvite, {"invitation_id": UUID_A, "user_id": UUID_B,
-                                "username": "a", "display_name": "A", "user_type": "agent",
-                                "role": "member", "member_visible": False,
-                                "joined_at": None}),
-            (OrgResource, {"id": UUID_A, "identifier": "https://x.example",
-                           "label": "X", "created_at": None}),
-            (OrgDelegationGrant, {"id": UUID_A, "resource": "https://x.example",
-                                  "allowed_scopes": ["read"], "min_role": "admin",
-                                  "max_ttl_seconds": 60, "member_user_id": None,
-                                  "is_active": True, "created_at": None}),
-            (OrgDomainChallenge, {"domain": "acme.example", "method": "dns",
-                                  "status": "pending", "created_at": None,
-                                  "expires_at": None, "verified_at": None}),
-            (OrgDisclosureRecipient, {"client_id": "rp", "client_name": "RP",
-                                      "scopes": ["colony:orgs"], "last_used_at": None}),
+            (
+                Organisation,
+                {
+                    "slug": "acme",
+                    "name": "Acme",
+                    "disclosure_mode": "public",
+                    "member_count": 3,
+                    "verified_domain": "acme.example",
+                },
+            ),
+            (
+                OrgMembership,
+                {"slug": "acme", "name": "Acme", "role": "owner", "disclosure_mode": "opaque", "verified_domain": None},
+            ),
+            (
+                OrgMember,
+                {
+                    "user_id": UUID_B,
+                    "username": "a",
+                    "display_name": "A",
+                    "user_type": "agent",
+                    "role": "admin",
+                    "member_visible": True,
+                    "joined_at": "2026-07-25T00:00:00Z",
+                },
+            ),
+            (
+                OrgInvitation,
+                {
+                    "invitation_id": UUID_A,
+                    "slug": "acme",
+                    "name": "Acme",
+                    "role": "member",
+                    "disclosure_mode": "public",
+                    "verified_domain": None,
+                },
+            ),
+            (
+                OrgPendingInvite,
+                {
+                    "invitation_id": UUID_A,
+                    "user_id": UUID_B,
+                    "username": "a",
+                    "display_name": "A",
+                    "user_type": "agent",
+                    "role": "member",
+                    "member_visible": False,
+                    "joined_at": None,
+                },
+            ),
+            (OrgResource, {"id": UUID_A, "identifier": "https://x.example", "label": "X", "created_at": None}),
+            (
+                OrgDelegationGrant,
+                {
+                    "id": UUID_A,
+                    "resource": "https://x.example",
+                    "allowed_scopes": ["read"],
+                    "min_role": "admin",
+                    "max_ttl_seconds": 60,
+                    "member_user_id": None,
+                    "is_active": True,
+                    "created_at": None,
+                },
+            ),
+            (
+                OrgDomainChallenge,
+                {
+                    "domain": "acme.example",
+                    "method": "dns",
+                    "status": "pending",
+                    "created_at": None,
+                    "expires_at": None,
+                    "verified_at": None,
+                },
+            ),
+            (
+                OrgDisclosureRecipient,
+                {"client_id": "rp", "client_name": "RP", "scopes": ["colony:orgs"], "last_used_at": None},
+            ),
         ]
         for model, payload in cases:
             assert model.from_dict(payload).to_dict() == payload, model.__name__
@@ -473,8 +531,7 @@ class TestTypedModels:
         let a later mutation of the response dict silently rewrite a grant's
         scopes — the one field where being wrong widens a permission."""
         scopes = ["read"]
-        grant = OrgDelegationGrant.from_dict({"id": UUID_A, "resource": "r",
-                                              "allowed_scopes": scopes})
+        grant = OrgDelegationGrant.from_dict({"id": UUID_A, "resource": "r", "allowed_scopes": scopes})
         scopes.append("write")
         assert grant.allowed_scopes == ["read"]
 
@@ -502,8 +559,7 @@ class TestParity:
         aio = self._org_methods(AsyncColonyClient)
         assert len(sync) == 30, f"expected 30 org methods, found {len(sync)}"
         assert set(sync) == set(aio), (
-            f"only on sync: {sorted(set(sync) - set(aio))}; "
-            f"only on async: {sorted(set(aio) - set(sync))}"
+            f"only on sync: {sorted(set(sync) - set(aio))}; only on async: {sorted(set(aio) - set(sync))}"
         )
         mismatched = {n: (str(sync[n]), str(aio[n])) for n in sync if sync[n] != aio[n]}
         assert not mismatched, f"signature drift: {mismatched}"
@@ -586,8 +642,11 @@ class TestAsyncOrgs:
             ("add_org_resource", ("acme", "https://x.example"), {"label": "X"}),
             ("remove_org_resource", ("acme", UUID_A), {}),
             ("list_org_delegation_grants", ("acme",), {}),
-            ("add_org_delegation_grant", ("acme", "https://x.example", ["read"]),
-             {"min_role": "admin", "max_ttl_seconds": 60}),
+            (
+                "add_org_delegation_grant",
+                ("acme", "https://x.example", ["read"]),
+                {"min_role": "admin", "max_ttl_seconds": 60},
+            ),
             ("remove_org_delegation_grant", ("acme", UUID_A), {}),
             ("request_org_deletion", ("acme",), {"reason": "r"}),
             ("cancel_org_deletion", ("acme",), {}),
@@ -598,11 +657,13 @@ class TestAsyncOrgs:
         seen: list[tuple[str, str, str]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
-            seen.append((
-                request.method,
-                str(request.url),
-                request.content.decode() if request.content else "",
-            ))
+            seen.append(
+                (
+                    request.method,
+                    str(request.url),
+                    request.content.decode() if request.content else "",
+                )
+            )
             return httpx.Response(200, content=b"[]")
 
         transport = httpx.MockTransport(handler)
@@ -621,11 +682,13 @@ class TestAsyncOrgs:
             for name, args, kwargs in calls:
                 getattr(client, name)(*args, **kwargs)
                 req = _last_request(m)
-                sync_seen.append((
-                    req.get_method(),
-                    req.full_url,
-                    req.data.decode() if req.data else "",
-                ))
+                sync_seen.append(
+                    (
+                        req.get_method(),
+                        req.full_url,
+                        req.data.decode() if req.data else "",
+                    )
+                )
 
         for (name, _, _), a, s in zip(calls, seen, sync_seen, strict=True):
             assert a[0] == s[0], f"{name}: async verb {a[0]} != sync {s[0]}"
@@ -647,9 +710,7 @@ class TestAsyncOrgs:
             called = True
             return httpx.Response(200, content=b"{}")
 
-        aclient = AsyncColonyClient(
-            "col_test", client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        )
+        aclient = AsyncColonyClient("col_test", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
         aclient._token = "fake-jwt"
         aclient._token_expiry = 9_999_999_999
 

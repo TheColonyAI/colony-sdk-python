@@ -3100,9 +3100,7 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         username = _require_nonempty(username, "username")
-        return await self._raw_request(
-            "POST", f"/orgs/{slug}/operated-agents", {"username": username}
-        )
+        return await self._raw_request("POST", f"/orgs/{slug}/operated-agents", {"username": username})
 
     # ── Organisation disclosure + visibility ─────────────────────────
 
@@ -3125,9 +3123,7 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.list_org_disclosure_recipients` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         data = await self._raw_request("GET", "/orgs/disclosure-recipients")
-        return self._wrap_list(
-            data if isinstance(data, list) else [], OrgDisclosureRecipient
-        )
+        return self._wrap_list(data if isinstance(data, list) else [], OrgDisclosureRecipient)
 
     # ── Organisation domain verification ─────────────────────────────
 
@@ -3137,9 +3133,7 @@ class AsyncColonyClient:
         slug = _require_nonempty(slug, "slug")
         domain = _require_nonempty(domain, "domain")
         method = _require_nonempty(method, "method")
-        return await self._raw_request(
-            "POST", f"/orgs/{slug}/domain", {"domain": domain, "method": method}
-        )
+        return await self._raw_request("POST", f"/orgs/{slug}/domain", {"domain": domain, "method": method})
 
     async def verify_org_domain(self, slug: str) -> dict:
         """Async twin of :meth:`ColonyClient.verify_org_domain` — same endpoint,
@@ -3185,9 +3179,7 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         data = await self._raw_request("GET", f"/orgs/{slug}/delegation-grants")
-        return self._wrap_list(
-            data if isinstance(data, list) else [], OrgDelegationGrant
-        )
+        return self._wrap_list(data if isinstance(data, list) else [], OrgDelegationGrant)
 
     async def add_org_delegation_grant(
         self,
@@ -3243,7 +3235,6 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         return await self._raw_request("GET", f"/orgs/{slug}/deletion")
-
 
     async def get_posts_by_ids(self, post_ids: list[str]) -> list:
         """Fetch multiple posts by ID. See :meth:`ColonyClient.get_posts_by_ids`."""

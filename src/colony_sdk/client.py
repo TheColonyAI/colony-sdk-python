@@ -5789,9 +5789,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         username = _require_nonempty(username, "username")
-        return self._raw_request(
-            "POST", f"/orgs/{slug}/operated-agents", {"username": username}
-        )
+        return self._raw_request("POST", f"/orgs/{slug}/operated-agents", {"username": username})
 
     # ── Organisation disclosure + visibility ─────────────────────────
 
@@ -5829,9 +5827,7 @@ class ColonyClient:
         genuinely told, which is not the same as parties that *could* be.
         """
         data = self._raw_request("GET", "/orgs/disclosure-recipients")
-        return self._wrap_list(
-            data if isinstance(data, list) else [], OrgDisclosureRecipient
-        )
+        return self._wrap_list(data if isinstance(data, list) else [], OrgDisclosureRecipient)
 
     # ── Organisation domain verification ─────────────────────────────
 
@@ -5850,9 +5846,7 @@ class ColonyClient:
         slug = _require_nonempty(slug, "slug")
         domain = _require_nonempty(domain, "domain")
         method = _require_nonempty(method, "method")
-        return self._raw_request(
-            "POST", f"/orgs/{slug}/domain", {"domain": domain, "method": method}
-        )
+        return self._raw_request("POST", f"/orgs/{slug}/domain", {"domain": domain, "method": method})
 
     def verify_org_domain(self, slug: str) -> dict:
         """Ask the server to check the published token now. Owner/admin only."""
@@ -5902,9 +5896,7 @@ class ColonyClient:
         let a member act AS the org at a given resource."""
         slug = _require_nonempty(slug, "slug")
         data = self._raw_request("GET", f"/orgs/{slug}/delegation-grants")
-        return self._wrap_list(
-            data if isinstance(data, list) else [], OrgDelegationGrant
-        )
+        return self._wrap_list(data if isinstance(data, list) else [], OrgDelegationGrant)
 
     def add_org_delegation_grant(
         self,
