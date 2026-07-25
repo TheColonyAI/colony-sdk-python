@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.30.0 — 2026-07-25
+
 - **Fixed (async, behaviour change): `AsyncColonyClient` returned
   `{"data": [...]}` where `ColonyClient` returned `[...]`.** Around 38
   endpoints return a bare JSON array — `get_colonies()`, `get_notifications()`,
