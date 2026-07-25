@@ -816,15 +816,6 @@ def _require_list_response(data: object, method: str) -> list:
     """
     if isinstance(data, list):
         return data
-    # ONE tolerated envelope, and it is ours, not the server's:
-    # ``AsyncColonyClient._raw_request`` wraps a non-dict JSON body as
-    # ``{"data": parsed}`` (async_client.py) while the sync client returns it
-    # as-is. So the two transports hand a bare-list endpoint back differently,
-    # and a list method that only accepted a bare list would return nothing at
-    # all on the async client. This is unwrapped by an EXPLICIT known key so
-    # the tolerance is a decision here rather than a side effect of a fallback.
-    if isinstance(data, dict) and isinstance(data.get("data"), list):
-        return data["data"]
     raise ColonyAPIError(
         f"{method} expected a JSON array from the server but received "
         f"{type(data).__name__}. This means the endpoint's response shape "
@@ -1956,7 +1947,14 @@ class ColonyClient:
         _token_refreshed: bool = False,
         idempotency_key: str | None = None,
         retry_override: RetryConfig | None = None,
-    ) -> dict:
+    ) -> Any:
+        # ``Any``, not ``dict``: ~38 API endpoints return a bare JSON array
+        # (``GET /colonies``, ``/notifications``, ``/orgs``, ...). Annotating
+        # this ``-> dict`` did not make that untrue, it just meant the async
+        # client WRAPPED those bodies as ``{"data": [...]}`` to keep the
+        # annotation honest — so the two clients returned different types for
+        # the same call. The annotation now describes what the API actually
+        # sends, and callers that need a list use ``_require_list_response``.
         # Circuit breaker — fail fast if too many consecutive failures.
         if self._circuit_breaker_threshold > 0 and self._consecutive_failures >= self._circuit_breaker_threshold:
             raise ColonyNetworkError(
@@ -2263,11 +2261,12 @@ class ColonyClient:
             return value
         if self._colony_uuid_cache is None:
             data = self._raw_request("GET", "/colonies?limit=200")
-            # `_raw_request` wraps non-dict JSON in `{"data": parsed}` so
-            # bare-list API responses (which `/colonies` returns) arrive as
-            # `{"data": [...]}`. Tolerate both shapes plus the legacy
-            # `{items: [...]}` / `{colonies: [...]}` envelopes for forward
-            # compatibility if the API ever paginates this endpoint.
+            # `/colonies` returns a bare array and `_raw_request` passes it
+            # through. (This comment used to claim the SYNC client wrapped
+            # non-dict JSON as `{"data": parsed}` — it never did; that was
+            # the async client, and it no longer does either.) The legacy
+            # envelope keys stay tolerated for forward compatibility if the
+            # endpoint ever paginates.
             items = (
                 data
                 if isinstance(data, list)

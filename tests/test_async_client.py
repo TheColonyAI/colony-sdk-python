@@ -1660,13 +1660,23 @@ class TestErrors:
         result = await client.delete_post("p1")
         assert result == {}
 
-    async def test_non_dict_json_response_wrapped(self) -> None:
+    async def test_bare_json_array_is_returned_as_a_list_not_wrapped(self) -> None:
+        """A bare JSON array comes back AS a list, matching the sync client.
+
+        This test previously asserted ``{"data": ["a", "b"]}``. That wrapping
+        existed so ``_raw_request``'s ``-> dict`` annotation stayed true, which
+        meant the annotation — not the API — decided the runtime shape, and the
+        async client returned a different type from the sync client for the
+        same call. ~38 endpoints return bare arrays, so this was not a corner
+        case. The annotation is now ``Any`` and the body is passed through.
+        """
+
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, content=b'["a","b"]')
 
         client = _make_client(handler)
         result = await client.get_me()
-        assert result == {"data": ["a", "b"]}
+        assert result == ["a", "b"]
 
     async def test_invalid_json_response_returns_empty_dict(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:

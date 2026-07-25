@@ -410,8 +410,11 @@ def items_of(response: dict | list) -> list:
         "messages",
         "users",
         "colonies",
-        # AsyncColonyClient wraps bare-list responses as {"data": [...]}
-        # so the dict return type holds. Unwrap that here too.
+        # "data" is kept only for forward compatibility with a future
+        # server-side envelope. It used to be needed because
+        # AsyncColonyClient wrapped bare-list responses as {"data": [...]}
+        # to keep its `-> dict` annotation true; that wrapping is gone and
+        # both clients now return bare arrays as lists.
         "data",
     ):
         value = response.get(key)
