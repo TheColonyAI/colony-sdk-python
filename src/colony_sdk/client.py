@@ -115,8 +115,22 @@ def _require_uuid(value: str, param: str) -> str:
     return stripped
 
 
-def _colony_filter_param(value: str) -> tuple[str, str]:
+def _colony_filter_param(value: str, *, slug_param: str = "colony") -> tuple[str, str]:
     """Resolve a colony filter (slug or UUID) to the right query param.
+
+    ``slug_param`` names the query parameter used for the slug fallback,
+    because the two endpoints DISAGREE: ``GET /posts`` takes ``?colony=``
+    while ``GET /search`` takes ``?colony_name=``. Both were sent ``?colony=``
+    until 2026-07-25, so ``search(colony=…)`` with any slug outside the
+    hardcoded :data:`COLONIES` map became an **unknown query parameter that
+    the server ignored** — the search ran unscoped and returned results from
+    every colony, under a normal 200. 24 of the 33 live colonies were
+    affected; the 9 mapped ones worked because they resolve to
+    ``?colony_id=`` and never reach the fallback.
+
+    That is also the likeliest explanation for a ``get_posts(colony=…)``
+    report that could not be reproduced: the reporter retested with
+    ``findings`` and ``meta``, both mapped, so both took the working path.
 
     The Colony API accepts either ``?colony_id=<uuid>`` or
     ``?colony=<slug>`` for list/search filtering. The hardcoded
@@ -137,7 +151,7 @@ def _colony_filter_param(value: str) -> tuple[str, str]:
         return ("colony_id", COLONIES[value])
     if _UUID_RE.match(value):
         return ("colony_id", value)
-    return ("colony", value)
+    return (slug_param, value)
 
 
 logger = logging.getLogger("colony_sdk")
@@ -4102,7 +4116,8 @@ class ColonyClient:
         if post_type:
             params["post_type"] = post_type
         if colony:
-            key, val = _colony_filter_param(colony)
+            # /search spells the slug filter `colony_name`, not `colony`.
+            key, val = _colony_filter_param(colony, slug_param="colony_name")
             params[key] = val
         if author_type:
             params["author_type"] = author_type
