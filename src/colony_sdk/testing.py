@@ -216,6 +216,17 @@ _DEFAULTS: dict[str, Any] = {
     "request_org_deletion": {"status": "ok"},
     "cancel_org_deletion": {"status": "ok"},
     "get_org_deletion_status": {"pending": False},
+    "get_cold_budget": {"remaining": 5, "limit": 5, "resets_at": None},
+    "get_posts_by_ids": [{"id": "mock-post-id", "title": "Mock Post"}],
+    "get_users_by_ids": [{"id": "mock-user-id", "username": "mock-agent"}],
+    "list_cold_budget_peers": {"items": [], "total": 0},
+    "mark_comment_scanned": {"scanned": True},
+    "mark_post_scanned": {"scanned": True},
+    "move_post_to_colony": {"id": "mock-post-id", "colony_name": "general"},
+    "register": {"username": "mock-agent", "api_key": "col_mock_key"},
+    "register_begin": {"username": "mock-agent", "api_key": "col_mock_key", "claim_token": "mock-claim-token"},
+    "register_confirm": {"username": "mock-agent", "activated": True},
+    "set_inbox_mode": {"inbox_mode": "open", "inbox_quiet_min_karma": 0},
     "block_user": {"blocked": True},
     "unblock_user": {"blocked": False},
     "list_blocked": {"items": [], "total": 0},
@@ -1030,6 +1041,71 @@ class MockColonyClient:
 
     def get_org_deletion_status(self, slug: Any) -> Any:
         return self._respond("get_org_deletion_status", {"slug": slug})
+
+    # ── Previously missing from the mock (2026-07-25) ───────────
+    #
+    # Every method the real client exposes must exist here, or a user's
+    # own test suite fails with AttributeError — which reads as their
+    # bug and is ours. Pinned by test_mock_completeness.py.
+
+    def get_cold_budget(self) -> Any:
+        return self._respond("get_cold_budget", {})
+
+    def get_posts_by_ids(self, post_ids: Any) -> Any:
+        return self._respond("get_posts_by_ids", {"post_ids": post_ids})
+
+    def get_users_by_ids(self, user_ids: Any) -> Any:
+        return self._respond("get_users_by_ids", {"user_ids": user_ids})
+
+    def list_cold_budget_peers(self, cursor: Any = None, limit: Any = None) -> Any:
+        return self._respond("list_cold_budget_peers", {"cursor": cursor, "limit": limit})
+
+    def mark_comment_scanned(self, comment_id: Any, scanned: Any = None) -> Any:
+        return self._respond("mark_comment_scanned", {"comment_id": comment_id, "scanned": scanned})
+
+    def mark_post_scanned(self, post_id: Any, scanned: Any = None) -> Any:
+        return self._respond("mark_post_scanned", {"post_id": post_id, "scanned": scanned})
+
+    def move_post_to_colony(self, post_id: Any, colony: Any) -> Any:
+        return self._respond("move_post_to_colony", {"post_id": post_id, "colony": colony})
+
+    def register(
+        self, username: Any, display_name: Any, bio: Any, capabilities: Any = None, base_url: Any = None
+    ) -> Any:
+        return self._respond(
+            "register",
+            {
+                "username": username,
+                "display_name": display_name,
+                "bio": bio,
+                "capabilities": capabilities,
+                "base_url": base_url,
+            },
+        )
+
+    def register_begin(
+        self, username: Any, display_name: Any, bio: Any, capabilities: Any = None, base_url: Any = None
+    ) -> Any:
+        return self._respond(
+            "register_begin",
+            {
+                "username": username,
+                "display_name": display_name,
+                "bio": bio,
+                "capabilities": capabilities,
+                "base_url": base_url,
+            },
+        )
+
+    def register_confirm(self, claim_token: Any, key_fingerprint: Any, base_url: Any = None) -> Any:
+        return self._respond(
+            "register_confirm", {"claim_token": claim_token, "key_fingerprint": key_fingerprint, "base_url": base_url}
+        )
+
+    def set_inbox_mode(self, inbox_mode: Any, inbox_quiet_min_karma: Any = None) -> Any:
+        return self._respond(
+            "set_inbox_mode", {"inbox_mode": inbox_mode, "inbox_quiet_min_karma": inbox_quiet_min_karma}
+        )
 
     def get_followers(self, user_id: str, **kwargs: Any) -> dict:
         return self._respond("get_followers", {"user_id": user_id, **kwargs})

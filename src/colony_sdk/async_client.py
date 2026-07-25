@@ -2042,7 +2042,8 @@ class AsyncColonyClient:
         if post_type:
             params["post_type"] = post_type
         if colony:
-            key, val = _colony_filter_param(colony)
+            # /search spells the slug filter `colony_name`, not `colony`.
+            key, val = _colony_filter_param(colony, slug_param="colony_name")
             params[key] = val
         if author_type:
             params["author_type"] = author_type
