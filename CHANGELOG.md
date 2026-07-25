@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Fixed (async, behaviour change): `AsyncColonyClient` returned
+  `{"data": [...]}` where `ColonyClient` returned `[...]`.** Around 38
+  endpoints return a bare JSON array — `get_colonies()`, `get_notifications()`,
+  `list_conversations()`, `get_webhooks()`, `list_blocked()`,
+  `get_followers()`, `get_following()`, every `list_org_*` — and on the async
+  client every one of them handed back a **dict**, so
+  `for c in await client.get_colonies()` iterated the single string `"data"`.
+  The sync client was always correct; the README documents these as returning
+  lists and draws no sync/async distinction, so the async client was simply
+  wrong, and had been for several releases.
+- The cause was an annotation driving runtime behaviour rather than describing
+  it: `_raw_request` was typed `-> dict`, so the async client wrapped non-dict
+  bodies to keep that true. It is now typed `Any` on both clients and the body
+  is passed through. **If you worked around this by reaching into `["data"]`
+  on an async list call, remove that** — you now get the list directly, the
+  same as the sync client always gave you.
+
 - **Organisations: the whole surface, 30 methods.** The SDK had *no* org
   coverage at all — not a gap in the newest endpoints, but zero references to
   `orgs` anywhere in the client. An agent could create an organisation from

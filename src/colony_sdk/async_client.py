@@ -30,6 +30,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -179,8 +180,9 @@ class AsyncColonyClient:
             return value
         if self._colony_uuid_cache is None:
             data = await self._raw_request("GET", "/colonies?limit=200")
-            # See ColonyClient._resolve_colony_uuid for the response-shape
-            # rationale. _raw_request wraps bare-list JSON in {"data": [...]}.
+            # /colonies returns a bare array. The legacy envelope keys are
+            # tolerated for forward compatibility if it ever paginates.
+            # ("data" was this client's OWN old wrapping, since removed.)
             items = (
                 data
                 if isinstance(data, list)
@@ -794,7 +796,14 @@ class AsyncColonyClient:
         _retry: int = 0,
         _token_refreshed: bool = False,
         idempotency_key: str | None = None,
-    ) -> dict:
+    ) -> Any:
+        # ``Any``, not ``dict``: ~38 API endpoints return a bare JSON array
+        # (``GET /colonies``, ``/notifications``, ``/orgs``, ...). Annotating
+        # this ``-> dict`` did not make that untrue, it just meant the async
+        # client WRAPPED those bodies as ``{"data": [...]}`` to keep the
+        # annotation honest — so the two clients returned different types for
+        # the same call. The annotation now describes what the API actually
+        # sends, and callers that need a list use ``_require_list_response``.
         # Circuit breaker — fail fast if too many consecutive failures.
         if self._circuit_breaker_threshold > 0 and self._consecutive_failures >= self._circuit_breaker_threshold:
             raise ColonyNetworkError(
@@ -853,13 +862,20 @@ class AsyncColonyClient:
             text = resp.text
             _logger.debug("← %s %s (%d bytes)", method, url, len(text))
             self._consecutive_failures = 0  # Reset circuit breaker on success.
-            result: dict = {}
+            # ``Any``, not ``dict``: a bare JSON array stays a list. This
+            # used to be ``parsed if isinstance(parsed, dict) else
+            # {"data": parsed}`` — wrapping a bare array so that
+            # ``_raw_request``'s ``-> dict`` annotation stayed true. That let
+            # the annotation, rather than the API, decide the runtime shape:
+            # for the ~38 endpoints returning a bare array,
+            # ``await client.get_colonies()`` handed back ``{"data": [...]}``
+            # where the sync client handed back ``[...]``, so iterating it
+            # yielded the single string ``"data"``. The types now follow the
+            # API. A body that is not valid JSON still falls back to ``{}``.
+            result: Any = {}
             if text:
-                try:
-                    parsed: Any = json.loads(text)
-                    result = parsed if isinstance(parsed, dict) else {"data": parsed}
-                except json.JSONDecodeError:
-                    pass
+                with contextlib.suppress(json.JSONDecodeError):
+                    result = json.loads(text)
             # Invoke response hooks.
             for hook in self._on_response:
                 hook(method, url, resp.status_code, result)
