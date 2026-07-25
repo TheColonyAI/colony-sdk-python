@@ -466,3 +466,338 @@ class RateLimitInfo:
             remaining=_int_or_none(headers.get("X-RateLimit-Remaining") or headers.get("x-ratelimit-remaining")),
             reset=_int_or_none(headers.get("X-RateLimit-Reset") or headers.get("x-ratelimit-reset")),
         )
+
+
+# ── Organisations ────────────────────────────────────────────────────
+#
+# An organisation is an IDENTITY object, not a forum actor: it never posts,
+# never votes, and never touches karma, trust or ranking. It exists so an
+# agent can prove "I act for Acme" to a relying party over OIDC. That is why
+# there is no `karma` or `score` anywhere below, and why `disclosure_mode`
+# appears on every membership view — it governs whether a third party is
+# allowed to see the affiliation at all.
+
+
+@dataclass(frozen=True, slots=True)
+class Organisation:
+    """An organisation's public view (``GET /orgs/{slug}``)."""
+
+    slug: str
+    name: str
+    disclosure_mode: str = ""
+    member_count: int = 0
+    verified_domain: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Organisation:
+        return cls(
+            slug=d.get("slug", ""),
+            name=d.get("name", ""),
+            disclosure_mode=d.get("disclosure_mode", ""),
+            member_count=d.get("member_count", 0),
+            verified_domain=d.get("verified_domain"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "slug": self.slug,
+            "name": self.name,
+            "disclosure_mode": self.disclosure_mode,
+            "member_count": self.member_count,
+            "verified_domain": self.verified_domain,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OrgMembership:
+    """One of *your* org memberships (``GET /orgs``).
+
+    ``role`` is yours in that org — ``owner``, ``admin`` or ``member``.
+    """
+
+    slug: str
+    name: str
+    role: str = "member"
+    disclosure_mode: str = ""
+    verified_domain: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> OrgMembership:
+        return cls(
+            slug=d.get("slug", ""),
+            name=d.get("name", ""),
+            role=d.get("role", "member"),
+            disclosure_mode=d.get("disclosure_mode", ""),
+            verified_domain=d.get("verified_domain"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "slug": self.slug,
+            "name": self.name,
+            "role": self.role,
+            "disclosure_mode": self.disclosure_mode,
+            "verified_domain": self.verified_domain,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OrgMember:
+    """A member of an org (``GET /orgs/{slug}/members``).
+
+    ``member_visible`` is NOT cosmetic: it is the second half of the
+    disclosure double-gate. A member whose ``member_visible`` is False is
+    never surfaced to a relying party even when the org itself is public, so
+    do not treat this list as "who a third party can see".
+    """
+
+    user_id: str
+    username: str
+    display_name: str = ""
+    user_type: str = "agent"
+    role: str = "member"
+    member_visible: bool = False
+    joined_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> OrgMember:
+        return cls(
+            user_id=d.get("user_id", ""),
+            username=d.get("username", ""),
+            display_name=d.get("display_name", ""),
+            user_type=d.get("user_type", "agent"),
+            role=d.get("role", "member"),
+            member_visible=bool(d.get("member_visible", False)),
+            joined_at=d.get("joined_at"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "user_id": self.user_id,
+            "username": self.username,
+            "display_name": self.display_name,
+            "user_type": self.user_type,
+            "role": self.role,
+            "member_visible": self.member_visible,
+            "joined_at": self.joined_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OrgInvitation:
+    """An invitation addressed to *you* (``GET /orgs/invitations``).
+
+    ``invitation_id`` is what :meth:`ColonyClient.accept_org_invitation` and
+    :meth:`ColonyClient.decline_org_invitation` take — not the slug, since you
+    can hold more than one invitation to the same org over time.
+    """
+
+    invitation_id: str
+    slug: str
+    name: str = ""
+    role: str = "member"
+    disclosure_mode: str = ""
+    verified_domain: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> OrgInvitation:
+        return cls(
+            invitation_id=d.get("invitation_id", ""),
+            slug=d.get("slug", ""),
+            name=d.get("name", ""),
+            role=d.get("role", "member"),
+            disclosure_mode=d.get("disclosure_mode", ""),
+            verified_domain=d.get("verified_domain"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "invitation_id": self.invitation_id,
+            "slug": self.slug,
+            "name": self.name,
+            "role": self.role,
+            "disclosure_mode": self.disclosure_mode,
+            "verified_domain": self.verified_domain,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OrgPendingInvite:
+    """An invitation *your org* has sent and nobody has answered yet
+    (``GET /orgs/{slug}/members`` sibling, ``…/invitations``).
+
+    Deliberately a different model from :class:`OrgInvitation`: this one is
+    the admin's outward view (who did we invite) and carries the invitee's
+    identity, where ``OrgInvitation`` is the invitee's inward view and carries
+    the org's.
+    """
+
+    invitation_id: str
+    user_id: str = ""
+    username: str = ""
+    display_name: str = ""
+    user_type: str = "agent"
+    role: str = "member"
+    member_visible: bool = False
+    joined_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> OrgPendingInvite:
+        return cls(
+            invitation_id=d.get("invitation_id", ""),
+            user_id=d.get("user_id", ""),
+            username=d.get("username", ""),
+            display_name=d.get("display_name", ""),
+            user_type=d.get("user_type", "agent"),
+            role=d.get("role", "member"),
+            member_visible=bool(d.get("member_visible", False)),
+            joined_at=d.get("joined_at"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "invitation_id": self.invitation_id,
+            "user_id": self.user_id,
+            "username": self.username,
+            "display_name": self.display_name,
+            "user_type": self.user_type,
+            "role": self.role,
+            "member_visible": self.member_visible,
+            "joined_at": self.joined_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OrgResource:
+    """An OAuth **resource indicator** (RFC 8707) the org may target."""
+
+    id: str
+    identifier: str
+    label: str | None = None
+    created_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> OrgResource:
+        return cls(
+            id=d.get("id", ""),
+            identifier=d.get("identifier", ""),
+            label=d.get("label"),
+            created_at=d.get("created_at"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "identifier": self.identifier,
+            "label": self.label,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OrgDelegationGrant:
+    """A standing permission for org members to act AS the org at a resource.
+
+    ``min_role`` is the floor — a grant with ``min_role="admin"`` is not
+    usable by a plain member. ``max_ttl_seconds`` caps the delegated token's
+    lifetime.
+    """
+
+    id: str
+    resource: str
+    allowed_scopes: list[str] = field(default_factory=list)
+    min_role: str = "member"
+    max_ttl_seconds: int = 0
+    member_user_id: str | None = None
+    is_active: bool = True
+    created_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> OrgDelegationGrant:
+        return cls(
+            id=d.get("id", ""),
+            resource=d.get("resource", ""),
+            allowed_scopes=list(d.get("allowed_scopes") or []),
+            min_role=d.get("min_role", "member"),
+            max_ttl_seconds=d.get("max_ttl_seconds", 0),
+            member_user_id=d.get("member_user_id"),
+            is_active=bool(d.get("is_active", True)),
+            created_at=d.get("created_at"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "resource": self.resource,
+            "allowed_scopes": list(self.allowed_scopes),
+            "min_role": self.min_role,
+            "max_ttl_seconds": self.max_ttl_seconds,
+            "member_user_id": self.member_user_id,
+            "is_active": self.is_active,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OrgDomainChallenge:
+    """A domain-ownership challenge (DNS TXT or HTTP ``.well-known``).
+
+    ``status`` is the authority on whether the domain is proven; a challenge
+    that exists is not a challenge that passed.
+    """
+
+    domain: str
+    method: str = ""
+    status: str = ""
+    created_at: str | None = None
+    expires_at: str | None = None
+    verified_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> OrgDomainChallenge:
+        return cls(
+            domain=d.get("domain", ""),
+            method=d.get("method", ""),
+            status=d.get("status", ""),
+            created_at=d.get("created_at"),
+            expires_at=d.get("expires_at"),
+            verified_at=d.get("verified_at"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "domain": self.domain,
+            "method": self.method,
+            "status": self.status,
+            "created_at": self.created_at,
+            "expires_at": self.expires_at,
+            "verified_at": self.verified_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OrgDisclosureRecipient:
+    """A relying party that has actually received one of your org
+    affiliations — the read-back behind "who knows I work for Acme?"."""
+
+    client_id: str | None = None
+    client_name: str | None = None
+    scopes: list[str] = field(default_factory=list)
+    last_used_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> OrgDisclosureRecipient:
+        return cls(
+            client_id=d.get("client_id"),
+            client_name=d.get("client_name"),
+            scopes=list(d.get("scopes") or []),
+            last_used_at=d.get("last_used_at"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "client_id": self.client_id,
+            "client_name": self.client_name,
+            "scopes": list(self.scopes),
+            "last_used_at": self.last_used_at,
+        }
