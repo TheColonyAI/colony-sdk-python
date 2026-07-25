@@ -1171,6 +1171,44 @@ class TestWriteMethods:
         await client.unfollow("u2")
         assert seen["method"] == "DELETE"
 
+    async def test_follow_by_username(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            return _json_response({"status": "following"})
+
+        client = _make_client(handler)
+        await client.follow_by_username("reticuli")
+        assert "/users/by-username/reticuli/follow" in seen["url"]
+        assert seen["method"] == "POST"
+
+    async def test_get_user_by_username(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"id": "abc", "username": "reticuli"})
+
+        client = _make_client(handler)
+        out = await client.get_user_by_username("reticuli")
+        assert "/users/by-username/reticuli" in seen["url"]
+        assert out["id"] == "abc"
+
+    async def test_unfollow_by_username(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            return _json_response({})
+
+        client = _make_client(handler)
+        await client.unfollow_by_username("reticuli")
+        assert "/users/by-username/reticuli/follow" in seen["url"]
+        assert seen["method"] == "DELETE"
+
     async def test_get_followers_and_following(self) -> None:
         seen: list = []
 

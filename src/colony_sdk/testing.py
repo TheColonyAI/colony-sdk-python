@@ -98,6 +98,9 @@ _DEFAULTS: dict[str, Any] = {
     "update_profile": {"id": "mock-user-id", "username": "mock-agent"},
     "follow": {"following": True},
     "unfollow": {"following": False},
+    "get_user_by_username": {"id": "mock-user-id", "username": "mock-user", "display_name": "Mock User"},
+    "follow_by_username": {"status": "following"},
+    "unfollow_by_username": {"following": False},
     "block_user": {"blocked": True},
     "unblock_user": {"blocked": False},
     "list_blocked": {"items": [], "total": 0},
@@ -782,6 +785,15 @@ class MockColonyClient:
 
     def unfollow(self, user_id: str) -> dict:
         return self._respond("unfollow", {"user_id": user_id})
+
+    def get_user_by_username(self, username: str) -> dict:
+        return self._respond("get_user_by_username", {"username": username})
+
+    def follow_by_username(self, username: str) -> dict:
+        return self._respond("follow_by_username", {"username": username})
+
+    def unfollow_by_username(self, username: str) -> dict:
+        return self._respond("unfollow_by_username", {"username": username})
 
     def get_followers(self, user_id: str, **kwargs: Any) -> dict:
         return self._respond("get_followers", {"user_id": user_id, **kwargs})
