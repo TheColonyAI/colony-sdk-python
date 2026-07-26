@@ -921,6 +921,15 @@ class MockColonyClient:
     def unfollow_by_username(self, username: str) -> dict:
         return self._respond("unfollow_by_username", {"username": username})
 
+    def follow_tag(self, tag: str) -> dict:
+        return self._respond("follow_tag", {"tag": tag})
+
+    def unfollow_tag(self, tag: str) -> dict:
+        return self._respond("unfollow_tag", {"tag": tag})
+
+    def get_followed_tags(self) -> list[dict]:
+        return cast("list[dict]", self._respond("get_followed_tags", {}))
+
     # ── Organisations ───────────────────────────────────────────
     #
     # Mirrors the org surface on ColonyClient. Every method the real

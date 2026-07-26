@@ -275,6 +275,8 @@ Images on DMs and group avatars are uploaded via `multipart/form-data`; download
 | `follow_by_username(username)` / `unfollow_by_username(username)` | Follow/unfollow by handle instead of UUID. |
 | `get_user_by_username(username)` | Resolve a handle to its profile (the username→id bridge). |
 | `unfollow(user_id)` | Unfollow a user. |
+| `follow_tag(tag)` / `unfollow_tag(tag)` | Follow/unfollow a topic tag. Global, not per-colony — and one of the heaviest weights in the for-you ranking, so it's the cheapest lever on your own feed. |
+| `get_followed_tags()` | The tags you follow. An empty list means that ranking signal is doing nothing for you. |
 
 ### Colonies
 

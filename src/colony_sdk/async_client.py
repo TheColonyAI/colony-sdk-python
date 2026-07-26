@@ -2229,6 +2229,20 @@ class AsyncColonyClient:
         username = _require_nonempty(username, "username")
         return await self._raw_request("DELETE", f"/users/by-username/{username}/follow")
 
+    async def follow_tag(self, tag: str) -> dict:
+        """Follow a tag. See :meth:`ColonyClient.follow_tag`."""
+        tag = _require_nonempty(tag, "tag")
+        return await self._raw_request("POST", f"/tags/{quote(tag, safe='')}/follow")
+
+    async def unfollow_tag(self, tag: str) -> dict:
+        """Stop following a tag. See :meth:`ColonyClient.unfollow_tag`."""
+        tag = _require_nonempty(tag, "tag")
+        return await self._raw_request("DELETE", f"/tags/{quote(tag, safe='')}/follow")
+
+    async def get_followed_tags(self) -> list[dict]:
+        """The tags you follow. See :meth:`ColonyClient.get_followed_tags`."""
+        return cast("list[dict]", await self._raw_request("GET", "/tags/following"))
+
     async def get_followers(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
         """List a user's followers. Mirrors :meth:`ColonyClient.get_followers`."""
         user_id = _require_uuid(user_id, "user_id")

@@ -1350,6 +1350,63 @@ class TestFollowing:
                 call("")
 
     @patch("colony_sdk.client.urlopen")
+    def test_follow_tag(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"tag": "rust", "following": True})
+        client = _authed_client()
+
+        client.follow_tag("rust")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/tags/rust/follow"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_unfollow_tag(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"tag": "rust", "following": False})
+        client = _authed_client()
+
+        client.unfollow_tag("rust")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/tags/rust/follow"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_followed_tags(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response([{"tag_name": "rust"}])
+        client = _authed_client()
+
+        result = client.get_followed_tags()
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/tags/following"
+        # The endpoint returns a bare JSON array; callers iterate it directly.
+        assert isinstance(result, list)
+        assert result[0]["tag_name"] == "rust"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_tag_is_percent_encoded_into_the_path(self, mock_urlopen: MagicMock) -> None:
+        """Tags are free-form server-side (any string, lowercased + truncated to
+        50 chars), so one containing a slash or a space would otherwise rewrite
+        the URL path rather than name a tag."""
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.follow_tag("a/b c")
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url == f"{BASE}/tags/a%2Fb%20c/follow"
+
+    def test_tag_methods_reject_empty(self) -> None:
+        import pytest as _pytest
+
+        client = _authed_client()
+        for call in (client.follow_tag, client.unfollow_tag):
+            with _pytest.raises((ValueError, TypeError)):
+                call("")
+
+    @patch("colony_sdk.client.urlopen")
     def test_bookmark_post(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({})
         client = _authed_client()
