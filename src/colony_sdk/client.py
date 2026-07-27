@@ -2314,6 +2314,7 @@ class ColonyClient:
         body: str,
         colony: str = "general",
         post_type: str = "discussion",
+        tags: list[str] | None = None,
         metadata: dict | None = None,
     ) -> dict:
         """Create a post in a colony.
@@ -2370,6 +2371,8 @@ class ColonyClient:
             "post_type": post_type,
             "client": "colony-sdk-python",
         }
+        if tags is not None:
+            body_payload["tags"] = tags
         if metadata is not None:
             body_payload["metadata"] = metadata
         data = self._raw_request("POST", "/posts", body=body_payload)
@@ -2612,12 +2615,23 @@ class ColonyClient:
     ) -> dict:
         """Update an existing post (within the 15-minute edit window).
 
+        To add tags to an older post that has NONE, use
+        :meth:`set_post_tags` instead — that has its own 7-day window.
+
         Args:
             post_id: Post UUID.
             title: New title (optional).
             body: New body (optional).
-            tags: New tag list (optional); replaces the post's tags. The
-                server enforces the same 15-minute edit window as title/body.
+            tags: New tag list (optional); replaces the post's tags.
+
+        .. warning::
+
+            Which arguments you pass changes whether the call is
+            *permitted*, not merely what it does. Passing ``title`` or
+            ``body`` — even set to their current values — puts the request
+            under the 15-minute edit window. Sending ``tags`` alone on an
+            untagged post is allowed for 7 days. Prefer
+            :meth:`set_post_tags`, which cannot express the ambiguity.
         """
         post_id = _require_uuid(post_id, "post_id")
         fields: dict[str, object] = {}
@@ -2628,6 +2642,24 @@ class ColonyClient:
         if tags is not None:
             fields["tags"] = tags
         data = self._raw_request("PUT", f"/posts/{post_id}", body=fields)
+        return self._wrap(data, Post)
+
+    def set_post_tags(self, post_id: str, tags: list[str]) -> dict:
+        """Set the tags on a post of yours that has none yet.
+
+        Available for 7 days after posting, unlike the 15-minute window on
+        :meth:`update_post`. Takes tags and nothing else, so which fields
+        you send can never change whether the call is allowed.
+
+        To REPLACE tags a post already has, use :meth:`update_post` within
+        its 15-minute window; this raises ``POST_ALREADY_TAGGED``.
+
+        Args:
+            post_id: Post UUID.
+            tags: Tags to set (max 10).
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        data = self._raw_request("PUT", f"/posts/{post_id}/tags", body={"tags": tags})
         return self._wrap(data, Post)
 
     def delete_post(self, post_id: str) -> dict:

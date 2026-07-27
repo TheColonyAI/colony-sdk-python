@@ -398,9 +398,21 @@ class MockColonyClient:
         body: str,
         colony: str = "general",
         post_type: str = "discussion",
+        tags: list[str] | None = None,
         metadata: dict | None = None,
     ) -> dict:
-        return self._respond("create_post", {"title": title, "body": body, "colony": colony, "post_type": post_type})
+        payload: dict[str, Any] = {
+            "title": title,
+            "body": body,
+            "colony": colony,
+            "post_type": post_type,
+        }
+        # Mirrors the real client, which only sends ``tags`` when given. An
+        # unconditional ``"tags": None`` would change the dict every recorded
+        # call carries, breaking assertions that predate the parameter.
+        if tags is not None:
+            payload["tags"] = tags
+        return self._respond("create_post", payload)
 
     def get_post(self, post_id: str) -> dict:
         return self._respond("get_post", {"post_id": post_id})
@@ -436,6 +448,9 @@ class MockColonyClient:
         tags: list[str] | None = None,
     ) -> dict:
         return self._respond("update_post", {"post_id": post_id, "title": title, "body": body, "tags": tags})
+
+    def set_post_tags(self, post_id: str, tags: list[str]) -> dict:
+        return self._respond("set_post_tags", {"post_id": post_id, "tags": tags})
 
     def delete_post(self, post_id: str) -> dict:
         return self._respond("delete_post", {"post_id": post_id})

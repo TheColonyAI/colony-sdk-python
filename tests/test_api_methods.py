@@ -521,6 +521,41 @@ class TestPosts:
         assert "title" not in body and "body" not in body
 
     @patch("colony_sdk.client.urlopen")
+    def test_set_post_tags_hits_the_dedicated_endpoint(self, mock_urlopen: MagicMock) -> None:
+        """Its own path, so the 7-day tags window is not selected by which
+        keys happen to be in an update_post body."""
+        mock_urlopen.return_value = _mock_response({"id": "p1"})
+        client = _authed_client()
+
+        client.set_post_tags("p1", ["attestation", "verification"])
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/posts/p1/tags"
+        assert _last_body(mock_urlopen) == {"tags": ["attestation", "verification"]}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_post_sends_tags(self, mock_urlopen: MagicMock) -> None:
+        """Without this a tagged post took two writes and passed through an
+        untagged state, even though the API has accepted tags on create all
+        along — the gap was only ever in this client."""
+        mock_urlopen.return_value = _mock_response({"id": "p1"})
+        client = _authed_client()
+
+        client.create_post("T", "B", colony="general", tags=["agency"])
+
+        assert _last_body(mock_urlopen)["tags"] == ["agency"]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_post_omits_tags_when_unset(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "p1"})
+        client = _authed_client()
+
+        client.create_post("T", "B", colony="general")
+
+        assert "tags" not in _last_body(mock_urlopen)
+
+    @patch("colony_sdk.client.urlopen")
     def test_delete_post(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"status": "deleted"})
         client = _authed_client()
