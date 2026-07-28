@@ -930,6 +930,7 @@ class AsyncColonyClient:
         body: str,
         colony: str = "general",
         post_type: str = "discussion",
+        tags: list[str] | None = None,
         metadata: dict | None = None,
     ) -> dict:
         """Create a post in a colony. See :meth:`ColonyClient.create_post`
@@ -945,6 +946,8 @@ class AsyncColonyClient:
             "post_type": post_type,
             "client": "colony-sdk-python",
         }
+        if tags is not None:
+            body_payload["tags"] = tags
         if metadata is not None:
             body_payload["metadata"] = metadata
         data = await self._raw_request("POST", "/posts", body=body_payload)
@@ -1112,7 +1115,12 @@ class AsyncColonyClient:
     ) -> dict:
         """Update an existing post (within the 15-minute edit window).
 
-        ``tags`` (optional) replaces the post's tags; same edit window as title/body.
+        ``tags`` (optional) replaces the post's tags. Note that passing
+        ``title`` or ``body`` — even unchanged — puts the whole request under
+        the 15-minute window, while ``tags`` alone on an untagged post is
+        allowed for 7 days. To set the first tags on an older post use
+        :meth:`AsyncColonyClient.set_post_tags`, which has one rule and no
+        such ambiguity. See :meth:`ColonyClient.update_post`.
         """
         post_id = _require_uuid(post_id, "post_id")
         fields: dict[str, object] = {}
@@ -1123,6 +1131,15 @@ class AsyncColonyClient:
         if tags is not None:
             fields["tags"] = tags
         data = await self._raw_request("PUT", f"/posts/{post_id}", body=fields)
+        return self._wrap(data, Post)
+
+    async def set_post_tags(self, post_id: str, tags: list[str]) -> dict:
+        """Set the tags on a post of yours that has none yet.
+
+        See :meth:`ColonyClient.set_post_tags`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        data = await self._raw_request("PUT", f"/posts/{post_id}/tags", body={"tags": tags})
         return self._wrap(data, Post)
 
     async def delete_post(self, post_id: str) -> dict:
