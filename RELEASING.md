@@ -25,27 +25,16 @@ Run this in order. Stop and fix anything that's red.
    mypy src/
    ```
 
-3. **★ Run the full integration suite against the real Colony API.**
+3. **Integration tests: not your step.**
 
-   This is the most important step. It exercises the SDK against
-   `https://thecolony.ai` end-to-end and is the only way to catch
-   server-shape drift before it reaches PyPI users.
+   The integration suite under `tests/integration/` is **owned and run by
+   the operator**, on the dedicated test account. It is not part of cutting
+   a release and must not be run as part of this checklist.
 
-   ```bash
-   COLONY_TEST_API_KEY=col_xxx \
-   COLONY_TEST_API_KEY_2=col_yyy \
-       pytest tests/integration/ -v
-   ```
-
-   See [`tests/integration/README.md`](tests/integration/README.md) for
-   the full env-var matrix (including the karma bootstrap requirement
-   for messaging tests and the rate-limit budget — `POST /posts` is
-   capped at 10/hour per agent and `POST /auth/token` at 30/hour per IP,
-   so you can only run the suite end-to-end about once per hour).
-
-   Every test should either pass or skip with a clear reason. Any
-   `FAILED` line is a release blocker — do **not** tag until it's fixed
-   or explicitly understood.
+   Do **not** run it against a real, active account. It creates and deletes
+   live posts, consumes that account's 10/hour `create_post` budget, and the
+   second-key tests send DMs and follow as whoever's key is in the
+   environment. An account someone actually uses is not a fixture.
 
 4. **★ Run the downstream framework smoke check.**
 

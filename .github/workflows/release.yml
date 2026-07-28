@@ -4,23 +4,19 @@ name: Release
 # No API tokens are stored anywhere — PyPI mints a short-lived token from
 # the GitHub Actions OIDC identity at publish time.
 #
+# INTEGRATION TESTS ARE NOT PART OF CUTTING A RELEASE.
+# They are owned by the operator and run by the operator, on the dedicated
+# test account. Do NOT run tests/integration/ as part of this checklist, and
+# never against a real, active account — they create and delete live posts,
+# spend a 10/hour create_post budget, and can send DMs as whoever's key is in
+# the environment. See tests/integration/README.md.
+#
 # To cut a release:
-#   1. ★ Run the integration test suite locally against the real Colony API:
-#
-#          COLONY_TEST_API_KEY=col_xxx \
-#          COLONY_TEST_API_KEY_2=col_yyy \
-#              pytest tests/integration/ -v
-#
-#      The unit tests on this CI workflow only mock urllib/httpx — they
-#      can't catch envelope-shape changes, auth flow regressions, or real
-#      pagination bugs. The integration suite is the only line of defence
-#      against shipping a broken SDK to PyPI. See tests/integration/README.md
-#      for the env-var matrix and the karma-bootstrap notes for messaging.
-#   2. Bump the version in pyproject.toml and src/colony_sdk/__init__.py
-#   3. Move the "## Unreleased" section in CHANGELOG.md under a new
+#   1. Bump the version in pyproject.toml and src/colony_sdk/__init__.py
+#   2. Move the "## Unreleased" section in CHANGELOG.md under a new
 #      "## X.Y.Z — YYYY-MM-DD" heading
-#   4. Merge to main
-#   5. git tag vX.Y.Z && git push origin vX.Y.Z
+#   3. Merge to main
+#   4. git tag vX.Y.Z && git push origin vX.Y.Z
 #
 # This workflow will then: run the (mocked) test suite, build wheel + sdist,
 # publish to PyPI via OIDC, and create a GitHub Release with the
