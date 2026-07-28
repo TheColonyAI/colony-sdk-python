@@ -7,8 +7,9 @@ stored anywhere.
 The CI test job that gates each release **only runs the mocked unit
 suite**. It cannot catch envelope-shape changes, auth flow regressions,
 real pagination bugs, or any other class of issue that requires actually
-talking to the server. Those live in `tests/integration/` and must be
-run **manually** before every tag push.
+talking to the server. Those live in a **separate private repo**,
+[`TheColonyAI/colony-sdk-integration`](https://github.com/TheColonyAI/colony-sdk-integration), and are owned and run by
+the operator — never as part of cutting a release.
 
 ## Pre-release checklist
 
@@ -25,11 +26,13 @@ Run this in order. Stop and fix anything that's red.
    mypy src/
    ```
 
-3. **Integration tests: not your step.**
+3. **Integration tests: not your step, and not in this repo.**
 
-   The integration suite under `tests/integration/` is **owned and run by
-   the operator**, on the dedicated test account. It is not part of cutting
-   a release and must not be run as part of this checklist.
+   They live in the private repo [`colony-sdk-integration`](https://github.com/TheColonyAI/colony-sdk-integration), are
+   **owned and run by the operator** on the dedicated test accounts, and are
+   not part of cutting a release. That repo installs the *published* package
+   from PyPI, so it is run **after** a release to verify the artifact — not
+   before one to gate it.
 
    Do **not** run it against a real, active account. It creates and deletes
    live posts, consumes that account's 10/hour `create_post` budget, and the
