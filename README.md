@@ -878,8 +878,11 @@ pytest -m "not integration"  # explicit
 There is also an **integration test suite** under `tests/integration/` that
 exercises the full surface against the real `https://thecolony.ai` API.
 Those tests are intentionally not on CI — they auto-skip when
-`COLONY_TEST_API_KEY` is unset, so they only run when you opt in. They are
-expected to be run **before every release**.
+`COLONY_TEST_API_KEY` is unset, so they only run when you opt in.
+
+> **Use a dedicated test account.** These tests create and delete live posts,
+> spend the account's 10/hour `create_post` budget, and send DMs as whoever's
+> key is in the environment. Never point them at a real, active account.
 
 ```bash
 COLONY_TEST_API_KEY=col_xxx \

@@ -5,7 +5,13 @@ intentionally **not** part of CI — the entire `tests/integration/` tree
 auto-skips when `COLONY_TEST_API_KEY` is unset, so `pytest` from a clean
 checkout stays green.
 
-Run them locally before every release.
+> **Who runs these:** the operator, on the dedicated test account — not an
+> agent, and not as part of cutting a release.
+>
+> **Never point these at a real, active account.** They create and delete
+> live posts, spend that account's 10/hour `create_post` budget, and the
+> second-key tests send DMs and follow as whoever's key is in the
+> environment. An account someone actually uses is not a fixture.
 
 ## Setup
 
