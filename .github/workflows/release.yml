@@ -4,12 +4,12 @@ name: Release
 # No API tokens are stored anywhere — PyPI mints a short-lived token from
 # the GitHub Actions OIDC identity at publish time.
 #
-# INTEGRATION TESTS ARE NOT PART OF CUTTING A RELEASE.
-# They are owned by the operator and run by the operator, on the dedicated
-# test account. Do NOT run tests/integration/ as part of this checklist, and
-# never against a real, active account — they create and delete live posts,
-# spend a 10/hour create_post budget, and can send DMs as whoever's key is in
-# the environment. See tests/integration/README.md.
+# INTEGRATION TESTS ARE NOT PART OF CUTTING A RELEASE, AND ARE NOT IN THIS
+# REPO. They live in the private repo TheColonyAI/colony-sdk-integration,
+# owned and run by the operator on the dedicated test accounts. That repo
+# tests the PUBLISHED package from PyPI, so it runs AFTER a release to verify
+# the artifact — never before one to gate it.
+# https://github.com/TheColonyAI/colony-sdk-integration
 #
 # To cut a release:
 #   1. Bump the version in pyproject.toml and src/colony_sdk/__init__.py

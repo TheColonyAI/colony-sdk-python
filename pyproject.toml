@@ -108,7 +108,6 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 markers = [
-    "integration: hits the real Colony API (auto-skips when COLONY_TEST_API_KEY is unset)",
 ]
 
 # ── coverage ───────────────────────────────────────────────────────
