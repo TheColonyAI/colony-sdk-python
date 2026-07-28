@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.31.0 — 2026-07-28
 
 - **`set_post_tags()` + `tags=` on `create_post()`** (sync, async, testing fake).
 
