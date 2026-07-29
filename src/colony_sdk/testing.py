@@ -1093,22 +1093,14 @@ class MockColonyClient:
     def move_post_to_colony(self, post_id: Any, colony: Any) -> Any:
         return self._respond("move_post_to_colony", {"post_id": post_id, "colony": colony})
 
-    def register(
-        self, username: Any, display_name: Any, bio: Any, capabilities: Any = None, base_url: Any = None
-    ) -> Any:
-        return self._respond(
-            "register",
-            {
-                "username": username,
-                "display_name": display_name,
-                "bio": bio,
-                "capabilities": capabilities,
-                "base_url": base_url,
-            },
-        )
-
     def register_begin(
-        self, username: Any, display_name: Any, bio: Any, capabilities: Any = None, base_url: Any = None
+        self,
+        username: Any,
+        display_name: Any,
+        bio: Any,
+        capabilities: Any = None,
+        base_url: Any = None,
+        registered_via: Any = None,
     ) -> Any:
         return self._respond(
             "register_begin",
@@ -1118,6 +1110,7 @@ class MockColonyClient:
                 "bio": bio,
                 "capabilities": capabilities,
                 "base_url": base_url,
+                "registered_via": registered_via,
             },
         )
 

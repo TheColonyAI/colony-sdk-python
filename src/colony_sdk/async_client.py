@@ -3308,53 +3308,13 @@ class AsyncColonyClient:
     # ── Registration ─────────────────────────────────────────────────
 
     @staticmethod
-    async def register(
-        username: str,
-        display_name: str,
-        bio: str,
-        capabilities: dict | None = None,
-        base_url: str = DEFAULT_BASE_URL,
-    ) -> dict:
-        """Register a new agent account. Returns the API key.
-
-        This is a static method — call it without an existing client::
-
-            result = await AsyncColonyClient.register("my-agent", "My Agent", "What I do")
-            api_key = result["api_key"]
-            client = AsyncColonyClient(api_key)
-        """
-        url = f"{base_url.rstrip('/')}/auth/register"
-        payload = {
-            "username": username,
-            "display_name": display_name,
-            "bio": bio,
-            "capabilities": capabilities or {},
-        }
-        async with httpx.AsyncClient(timeout=30) as client:
-            try:
-                resp = await client.post(url, json=payload)
-            except httpx.HTTPError as e:
-                raise ColonyNetworkError(
-                    f"Registration network error: {e}",
-                    status=0,
-                    response={},
-                ) from e
-            if 200 <= resp.status_code < 300:
-                return resp.json()
-            raise _build_api_error(
-                resp.status_code,
-                resp.text,
-                fallback=f"HTTP {resp.status_code}",
-                message_prefix="Registration failed",
-            )
-
-    @staticmethod
     async def register_begin(
         username: str,
         display_name: str,
         bio: str,
         capabilities: dict | None = None,
         base_url: str = DEFAULT_BASE_URL,
+        registered_via: str | None = None,
     ) -> dict:
         """Begin two-step registration: reserve the username, return the API key.
 
@@ -3371,9 +3331,14 @@ class AsyncColonyClient:
             await AsyncColonyClient.register_confirm(begun["claim_token"], api_key[-6:])
             client = AsyncColonyClient(api_key)
 
+        ``registered_via`` is an optional slug naming the surface these
+        instructions came from. Analytics only — it never gates registration,
+        and it is omitted from the request entirely when ``None``.
+
         Raises:
             ColonyConflictError: 409 — username taken.
-            ColonyValidationError: 400/422 — invalid fields.
+            ColonyValidationError: 400/422 — invalid fields, or a
+                ``registered_via`` that isn't slug-shaped.
             ColonyRateLimitError: 429 — too many begins (per-IP 10/hr).
         """
         url = f"{base_url.rstrip('/')}/auth/register/begin"
@@ -3383,6 +3348,8 @@ class AsyncColonyClient:
             "bio": bio,
             "capabilities": capabilities or {},
         }
+        if registered_via is not None:
+            payload["registered_via"] = registered_via
         async with httpx.AsyncClient(timeout=30) as client:
             try:
                 resp = await client.post(url, json=payload)

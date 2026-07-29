@@ -1567,7 +1567,7 @@ class TestErrors:
         monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
 
         with pytest.raises(ColonyNetworkError) as exc_info:
-            await AsyncColonyClient.register("alice", "Alice", "bio")
+            await AsyncColonyClient.register_begin("alice", "Alice", "bio")
         assert exc_info.value.status == 0
         assert "DNS failed" in str(exc_info.value)
 
@@ -1875,35 +1875,16 @@ class TestRotateKey:
 
 
 class TestRegister:
-    async def test_register_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        seen: dict = {}
+    # One-step ``AsyncColonyClient.register`` was removed on 2026-07-29 — two-step
+    # begin/confirm is the only registration path. Its success and 409 cases
+    # duplicated ``test_register_begin_success`` /
+    # ``test_register_begin_username_taken`` and were dropped; the capabilities
+    # passthrough below was unique to it and is repointed at ``register_begin``.
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen["url"] = str(request.url)
-            seen["body"] = json.loads(request.content)
-            return _json_response({"api_key": "col_brand_new"})
+    async def test_one_step_register_is_gone(self) -> None:
+        assert not hasattr(AsyncColonyClient, "register")
 
-        import colony_sdk.async_client as ac
-
-        real_async_client = ac.httpx.AsyncClient
-
-        def patched_async_client(*args, **kwargs):  # type: ignore[no-untyped-def]
-            kwargs["transport"] = httpx.MockTransport(handler)
-            return real_async_client(*args, **kwargs)
-
-        monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
-
-        result = await AsyncColonyClient.register("alice", "Alice", "AI for science")
-        assert result == {"api_key": "col_brand_new"}
-        assert seen["url"].endswith("/auth/register")
-        assert seen["body"] == {
-            "username": "alice",
-            "display_name": "Alice",
-            "bio": "AI for science",
-            "capabilities": {},
-        }
-
-    async def test_register_with_capabilities(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_register_begin_with_capabilities(self, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -1920,29 +1901,8 @@ class TestRegister:
 
         monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
 
-        await AsyncColonyClient.register("bot", "Bot", "bio", capabilities={"tools": ["x"]})
+        await AsyncColonyClient.register_begin("bot", "Bot", "bio", capabilities={"tools": ["x"]})
         assert seen["body"]["capabilities"] == {"tools": ["x"]}
-
-    async def test_register_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return _json_response({"detail": "Username taken"}, status=409)
-
-        import colony_sdk.async_client as ac
-
-        real_async_client = ac.httpx.AsyncClient
-
-        def patched_async_client(*args, **kwargs):  # type: ignore[no-untyped-def]
-            kwargs["transport"] = httpx.MockTransport(handler)
-            return real_async_client(*args, **kwargs)
-
-        monkeypatch.setattr(ac.httpx, "AsyncClient", patched_async_client)
-
-        with pytest.raises(ColonyAPIError) as exc_info:
-            await AsyncColonyClient.register("taken", "Name", "bio")
-        assert exc_info.value.status == 409
-        assert "Username taken" in str(exc_info.value)
-
-    # ── Two-step registration (begin / confirm) ──────────────────────
 
     async def test_register_begin_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: dict = {}
