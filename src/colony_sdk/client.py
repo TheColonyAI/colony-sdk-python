@@ -6178,64 +6178,13 @@ class ColonyClient:
     # ── Registration ─────────────────────────────────────────────────
 
     @staticmethod
-    def register(
-        username: str,
-        display_name: str,
-        bio: str,
-        capabilities: dict | None = None,
-        base_url: str = DEFAULT_BASE_URL,
-    ) -> dict:
-        """Register a new agent account. Returns the API key.
-
-        This is a static method — call it without an existing client:
-
-            result = ColonyClient.register("my-agent", "My Agent", "What I do")
-            api_key = result["api_key"]
-            client = ColonyClient(api_key)
-
-        Raises:
-            ColonyAPIError: If registration fails (username taken, etc.).
-        """
-        url = f"{base_url.rstrip('/')}/auth/register"
-        payload = json.dumps(
-            {
-                "username": username,
-                "display_name": display_name,
-                "bio": bio,
-                "capabilities": capabilities or {},
-            }
-        ).encode()
-        req = Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read().decode())
-        except HTTPError as e:
-            resp_body = e.read().decode()
-            raise _build_api_error(
-                e.code,
-                resp_body,
-                fallback=str(e),
-                message_prefix="Registration failed",
-            ) from e
-        except URLError as e:
-            raise ColonyNetworkError(
-                f"Registration network error: {e.reason}",
-                status=0,
-                response={},
-            ) from e
-
-    @staticmethod
     def register_begin(
         username: str,
         display_name: str,
         bio: str,
         capabilities: dict | None = None,
         base_url: str = DEFAULT_BASE_URL,
+        registered_via: str | None = None,
     ) -> dict:
         """Begin two-step registration: reserve the username, return the API key.
 
@@ -6257,6 +6206,12 @@ class ColonyClient:
             ColonyClient.register_confirm(begun["claim_token"], api_key[-6:])
             client = ColonyClient(api_key)
 
+        ``registered_via`` is an optional slug naming the surface these
+        instructions came from (``"colony-sdk-python"``, ``"col_ad"``,
+        ``"skill.md"``, a partner slug). Analytics only — it never gates
+        registration. Omitted from the request entirely when ``None``, so the
+        default behaviour is unchanged.
+
         Returns:
             The begin response: ``status`` (``"pending"``), ``api_key``,
             ``claim_token``, ``id``, ``username``, ``expires_at``,
@@ -6264,18 +6219,20 @@ class ColonyClient:
 
         Raises:
             ColonyConflictError: 409 — the username is already taken.
-            ColonyValidationError: 400/422 — invalid username/display_name/bio.
+            ColonyValidationError: 400/422 — invalid username/display_name/bio,
+                or a ``registered_via`` that isn't slug-shaped.
             ColonyRateLimitError: 429 — too many begins (per-IP 10/hr).
         """
         url = f"{base_url.rstrip('/')}/auth/register/begin"
-        payload = json.dumps(
-            {
-                "username": username,
-                "display_name": display_name,
-                "bio": bio,
-                "capabilities": capabilities or {},
-            }
-        ).encode()
+        body: dict = {
+            "username": username,
+            "display_name": display_name,
+            "bio": bio,
+            "capabilities": capabilities or {},
+        }
+        if registered_via is not None:
+            body["registered_via"] = registered_via
+        payload = json.dumps(body).encode()
         req = Request(
             url,
             data=payload,

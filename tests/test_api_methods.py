@@ -1849,54 +1849,34 @@ class TestWebhooks:
 
 
 class TestRegister:
-    @patch("colony_sdk.client.urlopen")
-    def test_register_success(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"api_key": "col_new123"})
-
-        result = ColonyClient.register("my-agent", "My Agent", "I do things")
-
-        assert result == {"api_key": "col_new123"}
-        req = _last_request(mock_urlopen)
-        assert req.get_method() == "POST"
-        assert req.full_url == f"{BASE}/auth/register"
-        body = json.loads(req.data.decode())
-        assert body == {
-            "username": "my-agent",
-            "display_name": "My Agent",
-            "bio": "I do things",
-            "capabilities": {},
-        }
+    # The one-step ``ColonyClient.register`` was removed on 2026-07-29 — two-step
+    # begin/confirm is the only registration path. The error-shape tests below
+    # were written against it and now run against ``register_begin``: they
+    # cover ``_build_api_error``'s branches (non-JSON body, structured detail
+    # dict) and the base_url join, none of which are specific to which
+    # registration endpoint is being called.
 
     @patch("colony_sdk.client.urlopen")
-    def test_register_with_capabilities(self, mock_urlopen: MagicMock) -> None:
+    def test_register_begin_with_capabilities(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"api_key": "col_new"})
 
         caps = {"tools": ["search", "code"]}
-        ColonyClient.register("bot", "Bot", "bio", capabilities=caps)
+        ColonyClient.register_begin("bot", "Bot", "bio", capabilities=caps)
 
         body = json.loads(_last_request(mock_urlopen).data.decode())
         assert body["capabilities"] == {"tools": ["search", "code"]}
 
     @patch("colony_sdk.client.urlopen")
-    def test_register_failure(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.side_effect = _make_http_error(409, {"detail": "Username taken"})
-
-        with pytest.raises(ColonyAPIError) as exc_info:
-            ColonyClient.register("taken-name", "Name", "bio")
-        assert exc_info.value.status == 409
-        assert "Username taken" in str(exc_info.value)
-
-    @patch("colony_sdk.client.urlopen")
-    def test_register_custom_base_url(self, mock_urlopen: MagicMock) -> None:
+    def test_register_begin_custom_base_url(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"api_key": "col_x"})
 
-        ColonyClient.register("bot", "Bot", "bio", base_url="https://custom.example.com/api/v1/")
+        ColonyClient.register_begin("bot", "Bot", "bio", base_url="https://custom.example.com/api/v1/")
 
         req = _last_request(mock_urlopen)
-        assert req.full_url == "https://custom.example.com/api/v1/auth/register"
+        assert req.full_url == "https://custom.example.com/api/v1/auth/register/begin"
 
     @patch("colony_sdk.client.urlopen")
-    def test_register_failure_non_json_body(self, mock_urlopen: MagicMock) -> None:
+    def test_register_begin_failure_non_json_body(self, mock_urlopen: MagicMock) -> None:
         from urllib.error import HTTPError
 
         err = HTTPError(
@@ -1909,34 +1889,26 @@ class TestRegister:
         mock_urlopen.side_effect = err
 
         with pytest.raises(ColonyAPIError) as exc_info:
-            ColonyClient.register("bot", "Bot", "bio")
+            ColonyClient.register_begin("bot", "Bot", "bio")
         assert exc_info.value.status == 500
 
     @patch("colony_sdk.client.urlopen")
-    def test_register_failure_detail_dict(self, mock_urlopen: MagicMock) -> None:
+    def test_register_begin_failure_detail_dict(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.side_effect = _make_http_error(
             422,
             {"detail": {"message": "Username must be lowercase", "code": "INVALID_USERNAME"}},
         )
 
         with pytest.raises(ColonyAPIError) as exc_info:
-            ColonyClient.register("BadName", "Name", "bio")
+            ColonyClient.register_begin("BadName", "Name", "bio")
         assert exc_info.value.status == 422
         assert exc_info.value.code == "INVALID_USERNAME"
         assert "Username must be lowercase" in str(exc_info.value)
 
-    @patch("colony_sdk.client.urlopen")
-    def test_register_network_error(self, mock_urlopen: MagicMock) -> None:
-        from urllib.error import URLError
-
-        from colony_sdk import ColonyNetworkError
-
-        mock_urlopen.side_effect = URLError("connection refused")
-
-        with pytest.raises(ColonyNetworkError) as exc_info:
-            ColonyClient.register("bot", "Bot", "bio")
-        assert exc_info.value.status == 0
-        assert "connection refused" in str(exc_info.value)
+    def test_one_step_register_is_gone(self) -> None:
+        """Removed 2026-07-29. Pinned so it cannot return by copy-paste, and so
+        the removal is visible to anyone reading this file for the API."""
+        assert not hasattr(ColonyClient, "register")
 
     # ── Two-step registration (begin / confirm) ──────────────────────
 
