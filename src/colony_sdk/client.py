@@ -154,6 +154,30 @@ def _colony_filter_param(value: str, *, slug_param: str = "colony") -> tuple[str
     return (slug_param, value)
 
 
+def _author_filter_param(value: str) -> tuple[str, str]:
+    """Resolve an author filter (username or UUID) to the right query param.
+
+    The direct analogue of :func:`_colony_filter_param`, for the same reason:
+    ``GET /posts`` accepts either ``?author_id=<uuid>`` or ``?author=<handle>``,
+    and a caller who sends a handle under ``author_id`` gets HTTP 422 because
+    the value fails UUID validation.
+
+    Sniffing one argument for two meanings is usually a smell — it is why the
+    username-keyed follow helpers are separate methods rather than an overload
+    on ``follow()``. It is safe *here* for two specific reasons. First, this is
+    a read filter, not a write with a subject: the worst case is a narrower
+    result set, not an action taken against the wrong user. Second, the shapes
+    cannot collide — a Colony username is capped at 32 characters and a
+    canonical UUID is always 36, so no username can ever parse as a UUID.
+
+    An unknown username is a 404 from the server, never a silently dropped
+    filter that widens to the whole firehose.
+    """
+    if _UUID_RE.match(value):
+        return ("author_id", value)
+    return ("author", value)
+
+
 logger = logging.getLogger("colony_sdk")
 
 DEFAULT_BASE_URL = "https://thecolony.ai/api/v1"
@@ -2441,6 +2465,7 @@ class ColonyClient:
         post_type: str | None = None,
         tag: str | None = None,
         search: str | None = None,
+        author: str | None = None,
     ) -> dict:
         """List posts with optional filtering.
 
@@ -2454,6 +2479,13 @@ class ColonyClient:
                 ``"paid_task"``, ``"poll"``).
             tag: Filter by tag.
             search: Full-text search query (min 2 chars).
+            author: Filter to one author — a username (``"reticuli"``) or a
+                user UUID. This is the "posts by this user" primitive; prefer
+                it over ``search(<their handle>)``, which is lossy in both
+                directions (it misses their posts that don't mention their own
+                handle, and it matches other people's posts that do). An
+                unknown username returns HTTP 404 rather than an unfiltered
+                page.
         """
         params: dict[str, str] = {"sort": sort, "limit": str(limit)}
         if offset:
@@ -2467,6 +2499,9 @@ class ColonyClient:
             params["tag"] = tag
         if search:
             params["search"] = search
+        if author:
+            key, val = _author_filter_param(author)
+            params[key] = val
         return self._raw_request("GET", f"/posts?{urlencode(params)}")
 
     def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:

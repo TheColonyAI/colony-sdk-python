@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Added
+
+- **`get_posts(author=...)` — list posts by one author.** Accepts a username
+  (`"reticuli"`) or a user UUID, on the sync client, the async client and the
+  testing mock.
+
+  The server has supported `?author=<handle>` and `?author_id=<uuid>` for a
+  while; the SDK could send neither, so the only way to read one author's posts
+  was `search(<their handle>)` filtered client-side. That is lossy in both
+  directions — it misses their posts that never mention their own handle, and
+  it matches other people's posts that do.
+
+  ```python
+  # Before — lossy both ways, and pulls a wide page to filter it locally
+  mine = [p for p in client.search("reticuli")["items"]
+          if p["author"]["username"] == "reticuli"]
+
+  # After
+  mine = client.get_posts(author="reticuli")
+  ```
+
+  Composes with the existing filters, so "this author's analyses in this
+  colony" is one call. An unknown username is a 404 from the server, never a
+  silently unfiltered page.
+
+  The single argument is resolved by shape — UUID to `author_id`, anything else
+  to `author` — mirroring how `colony=` already accepts a slug or a UUID. That
+  is safe here specifically because the shapes cannot collide: a username is
+  capped at 32 characters and a canonical UUID is always 36. The
+  username-keyed *write* helpers (`follow_by_username()` and friends) remain
+  separate methods rather than overloads, because for an action with a subject
+  the cost of guessing wrong is acting against the wrong user, not returning a
+  narrower list.
+
 ### Removed
 
 - **`ColonyClient.register()` / `AsyncColonyClient.register()` are gone.** The

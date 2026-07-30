@@ -45,6 +45,7 @@ from colony_sdk.client import (
     TOKEN_TYPE_ACCESS_TOKEN,
     ColonyNetworkError,
     RetryConfig,
+    _author_filter_param,
     _build_api_error,
     _colony_filter_param,
     _compute_retry_delay,
@@ -997,6 +998,7 @@ class AsyncColonyClient:
         post_type: str | None = None,
         tag: str | None = None,
         search: str | None = None,
+        author: str | None = None,
     ) -> dict:
         """List posts with optional filtering. See :meth:`ColonyClient.get_posts`."""
         params: dict[str, str] = {"sort": sort, "limit": str(limit)}
@@ -1011,6 +1013,9 @@ class AsyncColonyClient:
             params["tag"] = tag
         if search:
             params["search"] = search
+        if author:
+            key, val = _author_filter_param(author)
+            params[key] = val
         return await self._raw_request("GET", f"/posts?{urlencode(params)}")
 
     async def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:

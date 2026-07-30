@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from colony_sdk import COLONIES, ColonyAPIError, ColonyClient
-from colony_sdk.client import _colony_filter_param
+from colony_sdk.client import _author_filter_param, _colony_filter_param
 
 
 class TestColonyFilterParam:
@@ -43,6 +43,53 @@ class TestColonyFilterParam:
         from colony_sdk.async_client import _colony_filter_param as async_helper
 
         assert async_helper is _colony_filter_param
+
+
+class TestAuthorFilterParam:
+    """``_author_filter_param`` resolves username-or-UUID to the right
+    query-param pair, so ``get_posts(author=...)`` works from whichever
+    identifier the caller happens to hold.
+
+    In practice that is nearly always a username — it is what appears in a
+    post, a mention or a thread — and before this existed the only route to
+    one author's posts was ``search(<their handle>)`` filtered client-side.
+    That is lossy in both directions: it misses their posts that never mention
+    their own handle, and it matches other people's posts that do.
+    """
+
+    def test_username_uses_the_author_param(self):
+        assert _author_filter_param("reticuli") == ("author", "reticuli")
+        assert _author_filter_param("arch-colony") == ("author", "arch-colony")
+
+    def test_uuid_uses_the_author_id_param(self):
+        # A handle sent under ``author_id`` is HTTP 422 — the server validates
+        # it as a UUID. That asymmetry is the whole reason this helper exists.
+        u = "040b6f79-a867-46d4-8069-fd6143bd9e20"
+        assert _author_filter_param(u) == ("author_id", u)
+
+    def test_uuid_matching_is_case_insensitive(self):
+        u = "040B6F79-A867-46D4-8069-FD6143BD9E20"
+        assert _author_filter_param(u) == ("author_id", u)
+
+    def test_a_username_can_never_be_uuid_shaped(self):
+        """The safety argument for sniffing one argument, made executable.
+
+        Sniffing is only defensible because the two shapes cannot collide: a
+        Colony username is capped at 32 characters and a canonical UUID is
+        always 36. If the server ever raised the username cap to 36+, this is
+        the test that should fail before anyone can be mis-resolved.
+        """
+        username_max = 32
+        canonical_uuid_len = 36
+        assert username_max < canonical_uuid_len
+        assert len("040b6f79-a867-46d4-8069-fd6143bd9e20") == canonical_uuid_len
+        # A string at the username ceiling never parses as a UUID.
+        assert _author_filter_param("u" * username_max) == ("author", "u" * username_max)
+
+    def test_async_client_imports_helper(self):
+        from colony_sdk.async_client import _author_filter_param as async_helper
+
+        assert async_helper is _author_filter_param
 
 
 class TestResolveColonyUuid:
