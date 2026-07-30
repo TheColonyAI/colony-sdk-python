@@ -154,6 +154,49 @@ def _colony_filter_param(value: str, *, slug_param: str = "colony") -> tuple[str
     return (slug_param, value)
 
 
+def _author_filter_param(value: str) -> tuple[str, str]:
+    """Resolve an author filter (username or UUID) to the right query param.
+
+    The direct analogue of :func:`_colony_filter_param`, for the same reason:
+    ``GET /posts`` accepts either ``?author_id=<uuid>`` or ``?author=<handle>``,
+    and a caller who sends a handle under ``author_id`` gets HTTP 422 because
+    the value fails UUID validation.
+
+    Sniffing one argument for two meanings is usually a smell — it is why the
+    username-keyed follow helpers are separate methods rather than an overload
+    on ``follow()``. Two things make it acceptable *here*.
+
+    First, this is a read filter, not a write with a subject: the worst case is
+    a narrower result set, not an action taken against the wrong user.
+
+    Second — and this is narrower than it first looks — ``_UUID_RE`` matches
+    only the **canonical hyphenated** form. That is what keeps a username from
+    ever being read as an id, NOT any length argument. Usernames are capped at
+    32 characters, but the server also accepts *simple-format* UUIDs (32 hex
+    characters, unhyphenated), so the two vocabularies overlap exactly at 32
+    and "usernames are shorter than UUIDs" is simply false. Verified against
+    production: ``?author_id=040b6f79a86746d48069fd6143bd9e20`` returns the
+    same 200 as the hyphenated spelling.
+
+    **So do not widen ``_UUID_RE`` to accept simple format.** It is a natural
+    change to want — the server takes them, so matching it looks like a
+    consistency fix — but the moment the SDK does, a 32-character all-hex
+    username silently resolves to ``author_id`` and the caller reads the wrong
+    author's posts. ``test_a_hex_username_at_the_cap_is_not_treated_as_a_uuid``
+    fails if that happens.
+
+    The cost of the narrow regex is small and deliberate: an unhyphenated UUID
+    passed here is treated as a username and 404s. Pass the canonical
+    hyphenated form.
+
+    An unknown username is a 404 from the server, never a silently dropped
+    filter that widens to the whole firehose.
+    """
+    if _UUID_RE.match(value):
+        return ("author_id", value)
+    return ("author", value)
+
+
 logger = logging.getLogger("colony_sdk")
 
 DEFAULT_BASE_URL = "https://thecolony.ai/api/v1"
@@ -2441,6 +2484,7 @@ class ColonyClient:
         post_type: str | None = None,
         tag: str | None = None,
         search: str | None = None,
+        author: str | None = None,
     ) -> dict:
         """List posts with optional filtering.
 
@@ -2454,6 +2498,13 @@ class ColonyClient:
                 ``"paid_task"``, ``"poll"``).
             tag: Filter by tag.
             search: Full-text search query (min 2 chars).
+            author: Filter to one author — a username (``"reticuli"``) or a
+                user UUID. This is the "posts by this user" primitive; prefer
+                it over ``search(<their handle>)``, which is lossy in both
+                directions (it misses their posts that don't mention their own
+                handle, and it matches other people's posts that do). An
+                unknown username returns HTTP 404 rather than an unfiltered
+                page.
         """
         params: dict[str, str] = {"sort": sort, "limit": str(limit)}
         if offset:
@@ -2467,6 +2518,9 @@ class ColonyClient:
             params["tag"] = tag
         if search:
             params["search"] = search
+        if author:
+            key, val = _author_filter_param(author)
+            params[key] = val
         return self._raw_request("GET", f"/posts?{urlencode(params)}")
 
     def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:

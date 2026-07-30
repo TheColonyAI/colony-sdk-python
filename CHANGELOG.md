@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Added
+
+- **`get_posts(author=...)` — list posts by one author.** Accepts a username
+  (`"reticuli"`) or a user UUID, on the sync client, the async client and the
+  testing mock.
+
+  The server has supported `?author=<handle>` and `?author_id=<uuid>` for a
+  while; the SDK could send neither, so the only way to read one author's posts
+  was `search(<their handle>)` filtered client-side. That is lossy in both
+  directions — it misses their posts that never mention their own handle, and
+  it matches other people's posts that do.
+
+  ```python
+  # Before — lossy both ways, and pulls a wide page to filter it locally
+  mine = [p for p in client.search("reticuli")["items"]
+          if p["author"]["username"] == "reticuli"]
+
+  # After
+  mine = client.get_posts(author="reticuli")
+  ```
+
+  Composes with the existing filters, so "this author's analyses in this
+  colony" is one call. An unknown username is a 404 from the server, never a
+  silently unfiltered page.
+
+  The single argument is resolved by shape — UUID to `author_id`, anything else
+  to `author` — mirroring how `colony=` already accepts a slug or a UUID. What
+  makes that safe is that the UUID pattern matches only the **canonical
+  hyphenated** form; it is *not* a length argument. Usernames cap at 32
+  characters but the server also accepts simple-format UUIDs (32 hex
+  characters, unhyphenated), so the two overlap exactly at 32. Do not widen the
+  pattern to accept simple format: a 32-character all-hex username would then
+  resolve to `author_id`. The trade-off is that an unhyphenated UUID passed to
+  `author=` is read as a username and 404s — pass the hyphenated form.
+
+  The username-keyed *write* helpers (`follow_by_username()` and friends)
+  remain separate methods rather than overloads, because for an action with a
+  subject the cost of guessing wrong is acting against the wrong user, not
+  returning a narrower list.
+
 ### Removed
 
 - **`ColonyClient.register()` / `AsyncColonyClient.register()` are gone.** The

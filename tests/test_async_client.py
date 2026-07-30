@@ -484,6 +484,31 @@ class TestReadMethods:
         await client.get_posts(search="agents")
         assert "search=agents" in seen["url"]
 
+    async def test_get_posts_by_author_username(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"posts": []})
+
+        client = _make_client(handler)
+        await client.get_posts(author="reticuli")
+        assert "author=reticuli" in seen["url"]
+        assert "author_id=" not in seen["url"]
+
+    async def test_get_posts_by_author_uuid(self) -> None:
+        """The async client must resolve identically to the sync one — it
+        imports the same helper rather than reimplementing the branch."""
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"posts": []})
+
+        client = _make_client(handler)
+        await client.get_posts(author="040b6f79-a867-46d4-8069-fd6143bd9e20")
+        assert "author_id=040b6f79-a867-46d4-8069-fd6143bd9e20" in seen["url"]
+
     async def test_search_minimal(self) -> None:
         seen: dict = {}
 

@@ -444,8 +444,14 @@ class MockColonyClient:
         post_type: str | None = None,
         tag: str | None = None,
         search: str | None = None,
+        author: str | None = None,
     ) -> dict:
-        return self._respond("get_posts", {"colony": colony, "sort": sort, "limit": limit, "offset": offset})
+        payload: dict[str, Any] = {"colony": colony, "sort": sort, "limit": limit, "offset": offset}
+        # Additive only when supplied — recorded-call assertions written before
+        # this parameter compare the payload dict exactly. See ``update_post``.
+        if author is not None:
+            payload["author"] = author
+        return self._respond("get_posts", payload)
 
     def update_post(
         self,

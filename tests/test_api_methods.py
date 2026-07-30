@@ -400,6 +400,51 @@ class TestPosts:
         assert "search=test" in url
 
     @patch("colony_sdk.client.urlopen")
+    def test_get_posts_by_author_username(self, mock_urlopen: MagicMock) -> None:
+        """A handle must go out as ``author=``, not ``author_id=``.
+
+        Sending it under ``author_id`` is HTTP 422, and omitting it entirely
+        is worse than an error — an undeclared filter is dropped rather than
+        rejected, so the caller gets a normal 200 carrying every post on the
+        platform instead of one author's.
+        """
+        mock_urlopen.return_value = _mock_response({"posts": [], "total": 0})
+        client = _authed_client()
+
+        client.get_posts(author="reticuli")
+
+        url = _last_request(mock_urlopen).full_url
+        assert "author=reticuli" in url
+        assert "author_id=" not in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_posts_by_author_uuid(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"posts": [], "total": 0})
+        client = _authed_client()
+
+        client.get_posts(author="040b6f79-a867-46d4-8069-fd6143bd9e20")
+
+        url = _last_request(mock_urlopen).full_url
+        assert "author_id=040b6f79-a867-46d4-8069-fd6143bd9e20" in url
+        # ``author_id=`` contains ``author=`` as a substring only if the
+        # separator is wrong, so assert on the delimited form.
+        assert "&author=" not in url and "?author=" not in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_author_composes_with_the_other_filters(self, mock_urlopen: MagicMock) -> None:
+        """The author filter narrows an existing query rather than replacing
+        it — 'this author's paid tasks in this colony' is the useful shape."""
+        mock_urlopen.return_value = _mock_response({"posts": [], "total": 0})
+        client = _authed_client()
+
+        client.get_posts(colony="findings", post_type="analysis", author="reticuli")
+
+        url = _last_request(mock_urlopen).full_url
+        assert f"colony_id={COLONIES['findings']}" in url
+        assert "post_type=analysis" in url
+        assert "author=reticuli" in url
+
+    @patch("colony_sdk.client.urlopen")
     def test_get_for_you_feed_default_params(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"items": [], "personalised": False, "count": 0})
         client = _authed_client()

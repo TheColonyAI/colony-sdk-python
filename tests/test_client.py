@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from colony_sdk import COLONIES, ColonyAPIError, ColonyClient
-from colony_sdk.client import _colony_filter_param
+from colony_sdk.client import _author_filter_param, _colony_filter_param
 
 
 class TestColonyFilterParam:
@@ -43,6 +43,74 @@ class TestColonyFilterParam:
         from colony_sdk.async_client import _colony_filter_param as async_helper
 
         assert async_helper is _colony_filter_param
+
+
+class TestAuthorFilterParam:
+    """``_author_filter_param`` resolves username-or-UUID to the right
+    query-param pair, so ``get_posts(author=...)`` works from whichever
+    identifier the caller happens to hold.
+
+    In practice that is nearly always a username — it is what appears in a
+    post, a mention or a thread — and before this existed the only route to
+    one author's posts was ``search(<their handle>)`` filtered client-side.
+    That is lossy in both directions: it misses their posts that never mention
+    their own handle, and it matches other people's posts that do.
+    """
+
+    def test_username_uses_the_author_param(self):
+        assert _author_filter_param("reticuli") == ("author", "reticuli")
+        assert _author_filter_param("arch-colony") == ("author", "arch-colony")
+
+    def test_uuid_uses_the_author_id_param(self):
+        # A handle sent under ``author_id`` is HTTP 422 — the server validates
+        # it as a UUID. That asymmetry is the whole reason this helper exists.
+        u = "040b6f79-a867-46d4-8069-fd6143bd9e20"
+        assert _author_filter_param(u) == ("author_id", u)
+
+    def test_uuid_matching_is_case_insensitive(self):
+        u = "040B6F79-A867-46D4-8069-FD6143BD9E20"
+        assert _author_filter_param(u) == ("author_id", u)
+
+    def test_a_hex_username_at_the_cap_is_not_treated_as_a_uuid(self):
+        """``_UUID_RE`` must keep declining simple-format UUIDs.
+
+        This is the real safety property, and it is narrower than "usernames
+        are shorter than UUIDs" — that claim is false. Usernames cap at 32
+        characters and the server ALSO accepts simple-format UUIDs (32 hex
+        characters, unhyphenated), so the two vocabularies overlap exactly at
+        32. Confirmed against production: ``?author_id=<32 hex>`` returns the
+        same 200 as the hyphenated spelling.
+
+        What actually prevents a mis-resolve is that ``_UUID_RE`` matches only
+        the hyphenated form. Widening it to accept simple format is a natural
+        change to want — the server does, so matching it looks like a
+        consistency fix — and the moment it lands, a 32-character all-hex
+        username resolves to ``author_id`` and the caller silently reads a
+        different author's posts. This test is what fails then.
+
+        The value is all-hex on purpose. A non-hex string like ``"u" * 32``
+        passes under any regex, at any length, for reasons unrelated to the
+        property being pinned — so it would report success without observing
+        anything.
+        """
+        hex_username = "a" * 32
+        assert len(hex_username) == 32  # the username ceiling
+        assert _author_filter_param(hex_username) == ("author", hex_username)
+
+    def test_simple_format_uuids_are_declined_by_the_shared_regex(self):
+        """Pins the mechanism directly, not just its effect through the
+        resolver — ``_colony_filter_param`` sniffs with the same regex, so a
+        widening there would land on colonies too."""
+        from colony_sdk.client import _UUID_RE
+
+        hyphenated = "040b6f79-a867-46d4-8069-fd6143bd9e20"
+        assert _UUID_RE.match(hyphenated)
+        assert not _UUID_RE.match(hyphenated.replace("-", ""))
+
+    def test_async_client_imports_helper(self):
+        from colony_sdk.async_client import _author_filter_param as async_helper
+
+        assert async_helper is _author_filter_param
 
 
 class TestResolveColonyUuid:
