@@ -453,8 +453,14 @@ class MockColonyClient:
         title: str | None = None,
         body: str | None = None,
         tags: list[str] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
-        return self._respond("update_post", {"post_id": post_id, "title": title, "body": body, "tags": tags})
+        payload: dict[str, Any] = {"post_id": post_id, "title": title, "body": body, "tags": tags}
+        # Additive only when supplied — recorded-call assertions written before
+        # this parameter compare the payload dict exactly. See ``create_post``.
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+        return self._respond("update_post", payload)
 
     def set_post_tags(self, post_id: str, tags: list[str]) -> dict:
         return self._respond("set_post_tags", {"post_id": post_id, "tags": tags})
@@ -601,17 +607,37 @@ class MockColonyClient:
 
     # ── Voting & Reactions ──
 
-    def vote_post(self, post_id: str, value: int = 1) -> dict:
-        return self._respond("vote_post", {"post_id": post_id, "value": value})
+    def vote_post(self, post_id: str, value: int = 1, idempotency_key: str | None = None) -> dict:
+        payload: dict[str, Any] = {"post_id": post_id, "value": value}
+        # Additive only when supplied — recorded-call assertions written before
+        # this parameter compare the payload dict exactly. See ``create_post``.
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+        return self._respond("vote_post", payload)
 
-    def vote_comment(self, comment_id: str, value: int = 1) -> dict:
-        return self._respond("vote_comment", {"comment_id": comment_id, "value": value})
+    def vote_comment(self, comment_id: str, value: int = 1, idempotency_key: str | None = None) -> dict:
+        payload: dict[str, Any] = {"comment_id": comment_id, "value": value}
+        # Additive only when supplied — recorded-call assertions written before
+        # this parameter compare the payload dict exactly. See ``create_post``.
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+        return self._respond("vote_comment", payload)
 
-    def react_post(self, post_id: str, emoji: str) -> dict:
-        return self._respond("react_post", {"post_id": post_id, "emoji": emoji})
+    def react_post(self, post_id: str, emoji: str, idempotency_key: str | None = None) -> dict:
+        payload: dict[str, Any] = {"post_id": post_id, "emoji": emoji}
+        # Additive only when supplied — recorded-call assertions written before
+        # this parameter compare the payload dict exactly. See ``create_post``.
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+        return self._respond("react_post", payload)
 
-    def react_comment(self, comment_id: str, emoji: str) -> dict:
-        return self._respond("react_comment", {"comment_id": comment_id, "emoji": emoji})
+    def react_comment(self, comment_id: str, emoji: str, idempotency_key: str | None = None) -> dict:
+        payload: dict[str, Any] = {"comment_id": comment_id, "emoji": emoji}
+        # Additive only when supplied — recorded-call assertions written before
+        # this parameter compare the payload dict exactly. See ``create_post``.
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+        return self._respond("react_comment", payload)
 
     # ── Polls ──
 
@@ -1534,8 +1560,13 @@ class MockColonyClient:
 
     # ── Webhooks ──
 
-    def create_webhook(self, url: str, events: list[str], secret: str) -> dict:
-        return self._respond("create_webhook", {"url": url, "events": events, "secret": secret})
+    def create_webhook(self, url: str, events: list[str], secret: str, idempotency_key: str | None = None) -> dict:
+        payload: dict[str, Any] = {"url": url, "events": events, "secret": secret}
+        # Additive only when supplied — recorded-call assertions written before
+        # this parameter compare the payload dict exactly. See ``create_post``.
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+        return self._respond("create_webhook", payload)
 
     def get_webhooks(self) -> dict:
         return self._respond("get_webhooks", {})

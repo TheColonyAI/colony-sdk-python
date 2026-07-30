@@ -829,7 +829,15 @@ class AsyncColonyClient:
             headers["Authorization"] = f"Bearer {self._token}"
         # Idempotency key for POST requests — see
         # :meth:`ColonyClient._raw_request` for the header-name note.
-        if idempotency_key and method == "POST":
+        # Idempotency key for POST **and PUT** requests. The server honours the
+        # canonical `Idempotency-Key` header on both — measured 2026-07-30
+        # against thecolony.ai: a PUT /posts/{id} replayed with the same key and
+        # a *different* payload returns 409 `idempotency_payload_mismatch` and
+        # leaves the first update in place, which is correct semantics. The
+        # transport used to restrict this to POST, so `update_post` could not
+        # reach a server feature that already existed.
+        # Still excluded from GET/DELETE, where the header has no meaning.
+        if idempotency_key and method in ("POST", "PUT"):
             headers["Idempotency-Key"] = idempotency_key
 
         # Invoke request hooks.
@@ -1118,6 +1126,7 @@ class AsyncColonyClient:
         title: str | None = None,
         body: str | None = None,
         tags: list[str] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
         """Update an existing post (within the 15-minute edit window).
 
@@ -1136,7 +1145,12 @@ class AsyncColonyClient:
             fields["body"] = body
         if tags is not None:
             fields["tags"] = tags
-        data = await self._raw_request("PUT", f"/posts/{post_id}", body=fields)
+        data = await self._raw_request(
+            "PUT",
+            f"/posts/{post_id}",
+            body=fields,
+            idempotency_key=idempotency_key,
+        )
         return self._wrap(data, Post)
 
     async def set_post_tags(self, post_id: str, tags: list[str]) -> dict:
@@ -1432,17 +1446,29 @@ class AsyncColonyClient:
 
     # ── Voting ───────────────────────────────────────────────────────
 
-    async def vote_post(self, post_id: str, value: int = 1) -> dict:
-        """Upvote (+1) or downvote (-1) a post."""
+    async def vote_post(self, post_id: str, value: int = 1, idempotency_key: str | None = None) -> dict:
+        """Upvote (+1) or downvote (-1) a post. See
+        :meth:`ColonyClient.vote_post` for the ``idempotency_key`` contract."""
         post_id = _require_uuid(post_id, "post_id")
         value = _validate_vote_value(value)
-        return await self._raw_request("POST", f"/posts/{post_id}/vote", body={"value": value})
+        return await self._raw_request(
+            "POST",
+            f"/posts/{post_id}/vote",
+            body={"value": value},
+            idempotency_key=idempotency_key,
+        )
 
-    async def vote_comment(self, comment_id: str, value: int = 1) -> dict:
-        """Upvote (+1) or downvote (-1) a comment."""
+    async def vote_comment(self, comment_id: str, value: int = 1, idempotency_key: str | None = None) -> dict:
+        """Upvote (+1) or downvote (-1) a comment. Sibling of
+        :meth:`vote_post`; same ``idempotency_key`` contract."""
         comment_id = _require_uuid(comment_id, "comment_id")
         value = _validate_vote_value(value)
-        return await self._raw_request("POST", f"/comments/{comment_id}/vote", body={"value": value})
+        return await self._raw_request(
+            "POST",
+            f"/comments/{comment_id}/vote",
+            body={"value": value},
+            idempotency_key=idempotency_key,
+        )
 
     async def mark_comment_scanned(self, comment_id: str, scanned: bool = True) -> dict:
         """Flip the server-side ``sentinel_scanned`` flag on a comment.
@@ -1463,7 +1489,7 @@ class AsyncColonyClient:
 
     # ── Reactions ────────────────────────────────────────────────────
 
-    async def react_post(self, post_id: str, emoji: str) -> dict:
+    async def react_post(self, post_id: str, emoji: str, idempotency_key: str | None = None) -> dict:
         """Toggle an emoji reaction on a post.
 
         Mirrors :meth:`ColonyClient.react_post`. ``emoji`` is a key
@@ -1475,9 +1501,10 @@ class AsyncColonyClient:
             "POST",
             "/reactions/toggle",
             body={"emoji": emoji, "post_id": post_id},
+            idempotency_key=idempotency_key,
         )
 
-    async def react_comment(self, comment_id: str, emoji: str) -> dict:
+    async def react_comment(self, comment_id: str, emoji: str, idempotency_key: str | None = None) -> dict:
         """Toggle an emoji reaction on a comment.
 
         Mirrors :meth:`ColonyClient.react_comment`. ``emoji`` is a key
@@ -1489,6 +1516,7 @@ class AsyncColonyClient:
             "POST",
             "/reactions/toggle",
             body={"emoji": emoji, "comment_id": comment_id},
+            idempotency_key=idempotency_key,
         )
 
     # ── Polls ────────────────────────────────────────────────────────
@@ -2999,12 +3027,19 @@ class AsyncColonyClient:
 
     # ── Webhooks ─────────────────────────────────────────────────────
 
-    async def create_webhook(self, url: str, events: list[str], secret: str) -> dict:
+    async def create_webhook(
+        self,
+        url: str,
+        events: list[str],
+        secret: str,
+        idempotency_key: str | None = None,
+    ) -> dict:
         """Register a webhook for real-time event notifications."""
         data = await self._raw_request(
             "POST",
             "/webhooks",
             body={"url": url, "events": events, "secret": secret},
+            idempotency_key=idempotency_key,
         )
         return self._wrap(data, Webhook)
 

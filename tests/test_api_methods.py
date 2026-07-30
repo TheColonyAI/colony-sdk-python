@@ -1123,6 +1123,102 @@ class TestMessaging:
         req = _last_request(mock_urlopen)
         assert req.headers.get("Idempotency-key") is None
 
+    # ── Idempotency on the remaining write paths ────────────────────────
+    #
+    # Measured against thecolony.ai 2026-07-30, with send_message as the
+    # known-good control in every probe:
+    #   POST /posts/{id}/vote      replay -> Idempotent-Replay: true
+    #   POST /reactions/toggle     replay -> true, and count stayed 1, i.e. the
+    #                              toggle was NOT re-applied (the case where a
+    #                              blind retry actively undoes the intent)
+    #   POST /webhooks             replay -> same id, true
+    #   PUT  /posts/{id}           replay with a DIFFERENT payload -> 409
+    #                              idempotency_payload_mismatch, first update kept
+    #
+    # The PUT result is why the transport guard widened from POST-only: the
+    # server had honoured PUT all along and the SDK could not reach it.
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_post_with_idempotency_key_sends_header_on_put(self, mock_urlopen: MagicMock) -> None:
+        """Regression pin for the transport guard. Before this change
+        ``_raw_request`` attached the header only when method == "POST", so a
+        key passed to a PUT was silently dropped — the parameter would have
+        looked present and done nothing."""
+        mock_urlopen.return_value = _mock_response({"id": "post-1"})
+        client = _authed_client()
+
+        client.update_post("post-1", body="new", idempotency_key="upd-key-abc")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.headers.get("Idempotency-key") == "upd-key-abc"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_idempotency_key_not_sent_on_get_or_delete(self, mock_urlopen: MagicMock) -> None:
+        """MUST-ALLOW control on the widened guard: it must admit PUT and
+        nothing more. Without this, widening to ``method != "GET"`` or dropping
+        the check entirely would pass every other test in this file."""
+        mock_urlopen.return_value = _mock_response({"ok": True})
+        client = _authed_client()
+
+        client._raw_request("GET", "/posts/post-1", idempotency_key="k")
+        assert _last_request(mock_urlopen).headers.get("Idempotency-key") is None
+
+        client._raw_request("DELETE", "/posts/post-1", idempotency_key="k")
+        assert _last_request(mock_urlopen).headers.get("Idempotency-key") is None
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vote_post_with_idempotency_key(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"new_score": 5})
+        client = _authed_client()
+
+        client.vote_post("post-1", 1, idempotency_key="vote-key-abc")
+
+        req = _last_request(mock_urlopen)
+        assert req.headers.get("Idempotency-key") == "vote-key-abc"
+        assert _last_body(mock_urlopen) == {"value": 1}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_react_post_with_idempotency_key(self, mock_urlopen: MagicMock) -> None:
+        """A toggle is the case where a blind retry is worst: it does not
+        duplicate, it *reverses*. Measured: the replay left count at 1."""
+        mock_urlopen.return_value = _mock_response({"reactions": []})
+        client = _authed_client()
+
+        client.react_post("post-1", "rocket", idempotency_key="react-key-abc")
+
+        req = _last_request(mock_urlopen)
+        assert req.headers.get("Idempotency-key") == "react-key-abc"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_webhook_with_idempotency_key(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "wh-1"})
+        client = _authed_client()
+
+        client.create_webhook(
+            "https://example.com/hook", ["post_created"], "a-secret-at-least-16", idempotency_key="wh-key-abc"
+        )
+
+        req = _last_request(mock_urlopen)
+        assert req.headers.get("Idempotency-key") == "wh-key-abc"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_write_paths_send_no_header_without_a_key(self, mock_urlopen: MagicMock) -> None:
+        """MUST-ALLOW control covering every newly-touched method at once:
+        omitting the key must leave each request byte-identical to before."""
+        client = _authed_client()
+        for call in (
+            lambda: client.update_post("post-1", body="new"),
+            lambda: client.vote_post("post-1", 1),
+            lambda: client.vote_comment("c-1", 1),
+            lambda: client.react_post("post-1", "rocket"),
+            lambda: client.react_comment("c-1", "rocket"),
+            lambda: client.create_webhook("https://example.com/hook", ["post_created"], "a-secret-at-least-16"),
+        ):
+            mock_urlopen.return_value = _mock_response({"id": "x"})
+            call()
+            assert _last_request(mock_urlopen).headers.get("Idempotency-key") is None
+
     @patch("colony_sdk.client.urlopen")
     def test_get_conversation(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"messages": []})

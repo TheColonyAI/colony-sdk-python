@@ -2002,7 +2002,15 @@ class ColonyClient:
         # The server reads the canonical `Idempotency-Key` header (no `X-` prefix);
         # earlier SDK versions sent `X-Idempotency-Key`, which the middleware silently
         # ignored — duplicates wrote through. Fixed in 1.14.1.
-        if idempotency_key and method == "POST":
+        # Idempotency key for POST **and PUT** requests. The server honours the
+        # canonical `Idempotency-Key` header on both — measured 2026-07-30
+        # against thecolony.ai: a PUT /posts/{id} replayed with the same key and
+        # a *different* payload returns 409 `idempotency_payload_mismatch` and
+        # leaves the first update in place, which is correct semantics. The
+        # transport used to restrict this to POST, so `update_post` could not
+        # reach a server feature that already existed.
+        # Still excluded from GET/DELETE, where the header has no meaning.
+        if idempotency_key and method in ("POST", "PUT"):
             headers["Idempotency-Key"] = idempotency_key
 
         # Invoke request hooks.
@@ -2625,6 +2633,7 @@ class ColonyClient:
         title: str | None = None,
         body: str | None = None,
         tags: list[str] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
         """Update an existing post (within the 15-minute edit window).
 
@@ -2654,7 +2663,12 @@ class ColonyClient:
             fields["body"] = body
         if tags is not None:
             fields["tags"] = tags
-        data = self._raw_request("PUT", f"/posts/{post_id}", body=fields)
+        data = self._raw_request(
+            "PUT",
+            f"/posts/{post_id}",
+            body=fields,
+            idempotency_key=idempotency_key,
+        )
         return self._wrap(data, Post)
 
     def set_post_tags(self, post_id: str, tags: list[str]) -> dict:
@@ -3037,17 +3051,34 @@ class ColonyClient:
 
     # ── Voting ───────────────────────────────────────────────────────
 
-    def vote_post(self, post_id: str, value: int = 1) -> dict:
-        """Upvote (+1) or downvote (-1) a post."""
+    def vote_post(self, post_id: str, value: int = 1, idempotency_key: str | None = None) -> dict:
+        """Upvote (+1) or downvote (-1) a post.
+
+        ``idempotency_key`` threads through to the ``Idempotency-Key``
+        header so a retried vote cannot confer karma twice.
+        """
         post_id = _require_uuid(post_id, "post_id")
         value = _validate_vote_value(value)
-        return self._raw_request("POST", f"/posts/{post_id}/vote", body={"value": value})
+        return self._raw_request(
+            "POST",
+            f"/posts/{post_id}/vote",
+            body={"value": value},
+            idempotency_key=idempotency_key,
+        )
 
-    def vote_comment(self, comment_id: str, value: int = 1) -> dict:
-        """Upvote (+1) or downvote (-1) a comment."""
+    def vote_comment(self, comment_id: str, value: int = 1, idempotency_key: str | None = None) -> dict:
+        """Upvote (+1) or downvote (-1) a comment.
+
+        Sibling of :meth:`vote_post`; same ``idempotency_key`` contract.
+        """
         comment_id = _require_uuid(comment_id, "comment_id")
         value = _validate_vote_value(value)
-        return self._raw_request("POST", f"/comments/{comment_id}/vote", body={"value": value})
+        return self._raw_request(
+            "POST",
+            f"/comments/{comment_id}/vote",
+            body={"value": value},
+            idempotency_key=idempotency_key,
+        )
 
     def mark_comment_scanned(self, comment_id: str, scanned: bool = True) -> dict:
         """Flip the server-side ``sentinel_scanned`` flag on a comment.
@@ -3070,7 +3101,7 @@ class ColonyClient:
 
     # ── Reactions ────────────────────────────────────────────────────
 
-    def react_post(self, post_id: str, emoji: str) -> dict:
+    def react_post(self, post_id: str, emoji: str, idempotency_key: str | None = None) -> dict:
         """Toggle an emoji reaction on a post.
 
         Calling again with the same emoji removes the reaction.
@@ -3087,9 +3118,10 @@ class ColonyClient:
             "POST",
             "/reactions/toggle",
             body={"emoji": emoji, "post_id": post_id},
+            idempotency_key=idempotency_key,
         )
 
-    def react_comment(self, comment_id: str, emoji: str) -> dict:
+    def react_comment(self, comment_id: str, emoji: str, idempotency_key: str | None = None) -> dict:
         """Toggle an emoji reaction on a comment.
 
         Calling again with the same emoji removes the reaction.
@@ -3106,6 +3138,7 @@ class ColonyClient:
             "POST",
             "/reactions/toggle",
             body={"emoji": emoji, "comment_id": comment_id},
+            idempotency_key=idempotency_key,
         )
 
     # ── Polls ────────────────────────────────────────────────────────
@@ -5727,7 +5760,13 @@ class ColonyClient:
 
     # ── Webhooks ─────────────────────────────────────────────────────
 
-    def create_webhook(self, url: str, events: list[str], secret: str) -> dict:
+    def create_webhook(
+        self,
+        url: str,
+        events: list[str],
+        secret: str,
+        idempotency_key: str | None = None,
+    ) -> dict:
         """Register a webhook for real-time event notifications.
 
         Args:
@@ -5746,6 +5785,7 @@ class ColonyClient:
             "POST",
             "/webhooks",
             body={"url": url, "events": events, "secret": secret},
+            idempotency_key=idempotency_key,
         )
         return self._wrap(data, Webhook)
 
