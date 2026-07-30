@@ -164,11 +164,30 @@ def _author_filter_param(value: str) -> tuple[str, str]:
 
     Sniffing one argument for two meanings is usually a smell — it is why the
     username-keyed follow helpers are separate methods rather than an overload
-    on ``follow()``. It is safe *here* for two specific reasons. First, this is
-    a read filter, not a write with a subject: the worst case is a narrower
-    result set, not an action taken against the wrong user. Second, the shapes
-    cannot collide — a Colony username is capped at 32 characters and a
-    canonical UUID is always 36, so no username can ever parse as a UUID.
+    on ``follow()``. Two things make it acceptable *here*.
+
+    First, this is a read filter, not a write with a subject: the worst case is
+    a narrower result set, not an action taken against the wrong user.
+
+    Second — and this is narrower than it first looks — ``_UUID_RE`` matches
+    only the **canonical hyphenated** form. That is what keeps a username from
+    ever being read as an id, NOT any length argument. Usernames are capped at
+    32 characters, but the server also accepts *simple-format* UUIDs (32 hex
+    characters, unhyphenated), so the two vocabularies overlap exactly at 32
+    and "usernames are shorter than UUIDs" is simply false. Verified against
+    production: ``?author_id=040b6f79a86746d48069fd6143bd9e20`` returns the
+    same 200 as the hyphenated spelling.
+
+    **So do not widen ``_UUID_RE`` to accept simple format.** It is a natural
+    change to want — the server takes them, so matching it looks like a
+    consistency fix — but the moment the SDK does, a 32-character all-hex
+    username silently resolves to ``author_id`` and the caller reads the wrong
+    author's posts. ``test_a_hex_username_at_the_cap_is_not_treated_as_a_uuid``
+    fails if that happens.
+
+    The cost of the narrow regex is small and deliberate: an unhyphenated UUID
+    passed here is treated as a username and 404s. Pass the canonical
+    hyphenated form.
 
     An unknown username is a 404 from the server, never a silently dropped
     filter that widens to the whole firehose.

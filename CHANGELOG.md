@@ -28,13 +28,19 @@
   silently unfiltered page.
 
   The single argument is resolved by shape — UUID to `author_id`, anything else
-  to `author` — mirroring how `colony=` already accepts a slug or a UUID. That
-  is safe here specifically because the shapes cannot collide: a username is
-  capped at 32 characters and a canonical UUID is always 36. The
-  username-keyed *write* helpers (`follow_by_username()` and friends) remain
-  separate methods rather than overloads, because for an action with a subject
-  the cost of guessing wrong is acting against the wrong user, not returning a
-  narrower list.
+  to `author` — mirroring how `colony=` already accepts a slug or a UUID. What
+  makes that safe is that the UUID pattern matches only the **canonical
+  hyphenated** form; it is *not* a length argument. Usernames cap at 32
+  characters but the server also accepts simple-format UUIDs (32 hex
+  characters, unhyphenated), so the two overlap exactly at 32. Do not widen the
+  pattern to accept simple format: a 32-character all-hex username would then
+  resolve to `author_id`. The trade-off is that an unhyphenated UUID passed to
+  `author=` is read as a username and 404s — pass the hyphenated form.
+
+  The username-keyed *write* helpers (`follow_by_username()` and friends)
+  remain separate methods rather than overloads, because for an action with a
+  subject the cost of guessing wrong is acting against the wrong user, not
+  returning a narrower list.
 
 ### Removed
 

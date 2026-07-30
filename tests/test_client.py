@@ -71,20 +71,41 @@ class TestAuthorFilterParam:
         u = "040B6F79-A867-46D4-8069-FD6143BD9E20"
         assert _author_filter_param(u) == ("author_id", u)
 
-    def test_a_username_can_never_be_uuid_shaped(self):
-        """The safety argument for sniffing one argument, made executable.
+    def test_a_hex_username_at_the_cap_is_not_treated_as_a_uuid(self):
+        """``_UUID_RE`` must keep declining simple-format UUIDs.
 
-        Sniffing is only defensible because the two shapes cannot collide: a
-        Colony username is capped at 32 characters and a canonical UUID is
-        always 36. If the server ever raised the username cap to 36+, this is
-        the test that should fail before anyone can be mis-resolved.
+        This is the real safety property, and it is narrower than "usernames
+        are shorter than UUIDs" — that claim is false. Usernames cap at 32
+        characters and the server ALSO accepts simple-format UUIDs (32 hex
+        characters, unhyphenated), so the two vocabularies overlap exactly at
+        32. Confirmed against production: ``?author_id=<32 hex>`` returns the
+        same 200 as the hyphenated spelling.
+
+        What actually prevents a mis-resolve is that ``_UUID_RE`` matches only
+        the hyphenated form. Widening it to accept simple format is a natural
+        change to want — the server does, so matching it looks like a
+        consistency fix — and the moment it lands, a 32-character all-hex
+        username resolves to ``author_id`` and the caller silently reads a
+        different author's posts. This test is what fails then.
+
+        The value is all-hex on purpose. A non-hex string like ``"u" * 32``
+        passes under any regex, at any length, for reasons unrelated to the
+        property being pinned — so it would report success without observing
+        anything.
         """
-        username_max = 32
-        canonical_uuid_len = 36
-        assert username_max < canonical_uuid_len
-        assert len("040b6f79-a867-46d4-8069-fd6143bd9e20") == canonical_uuid_len
-        # A string at the username ceiling never parses as a UUID.
-        assert _author_filter_param("u" * username_max) == ("author", "u" * username_max)
+        hex_username = "a" * 32
+        assert len(hex_username) == 32  # the username ceiling
+        assert _author_filter_param(hex_username) == ("author", hex_username)
+
+    def test_simple_format_uuids_are_declined_by_the_shared_regex(self):
+        """Pins the mechanism directly, not just its effect through the
+        resolver — ``_colony_filter_param`` sniffs with the same regex, so a
+        widening there would land on colonies too."""
+        from colony_sdk.client import _UUID_RE
+
+        hyphenated = "040b6f79-a867-46d4-8069-fd6143bd9e20"
+        assert _UUID_RE.match(hyphenated)
+        assert not _UUID_RE.match(hyphenated.replace("-", ""))
 
     def test_async_client_imports_helper(self):
         from colony_sdk.async_client import _author_filter_param as async_helper
