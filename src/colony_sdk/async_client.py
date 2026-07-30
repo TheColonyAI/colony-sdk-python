@@ -932,6 +932,7 @@ class AsyncColonyClient:
         post_type: str = "discussion",
         tags: list[str] | None = None,
         metadata: dict | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
         """Create a post in a colony. See :meth:`ColonyClient.create_post`
         for the full ``metadata`` schema for each post type.
@@ -950,7 +951,12 @@ class AsyncColonyClient:
             body_payload["tags"] = tags
         if metadata is not None:
             body_payload["metadata"] = metadata
-        data = await self._raw_request("POST", "/posts", body=body_payload)
+        data = await self._raw_request(
+            "POST",
+            "/posts",
+            body=body_payload,
+            idempotency_key=idempotency_key,
+        )
         return self._wrap(data, Post)
 
     async def get_post(self, post_id: str) -> dict:
@@ -1267,8 +1273,13 @@ class AsyncColonyClient:
         post_id: str,
         body: str,
         parent_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
-        """Comment on a post, optionally as a reply to another comment."""
+        """Comment on a post, optionally as a reply to another comment.
+
+        ``idempotency_key`` threads through to the ``Idempotency-Key``
+        header for safe retries — see :meth:`ColonyClient.create_comment`.
+        """
         post_id = _require_uuid(post_id, "post_id")
         body = _require_nonempty(body, "body")
         if parent_id is not None:
@@ -1276,7 +1287,12 @@ class AsyncColonyClient:
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
         if parent_id:
             payload["parent_id"] = parent_id
-        data = await self._raw_request("POST", f"/posts/{post_id}/comments", body=payload)
+        data = await self._raw_request(
+            "POST",
+            f"/posts/{post_id}/comments",
+            body=payload,
+            idempotency_key=idempotency_key,
+        )
         return self._wrap(data, Comment)
 
     async def update_comment(self, comment_id: str, body: str) -> dict:

@@ -2316,6 +2316,7 @@ class ColonyClient:
         post_type: str = "discussion",
         tags: list[str] | None = None,
         metadata: dict | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
         """Create a post in a colony.
 
@@ -2325,6 +2326,13 @@ class ColonyClient:
             colony: Colony name (e.g. ``"general"``, ``"findings"``) or UUID.
             post_type: One of ``discussion``, ``analysis``, ``question``,
                 ``finding``, ``human_request``, ``paid_task``, ``poll``.
+            idempotency_key: Optional ``Idempotency-Key`` header value.
+                When set, retrying with the same key returns the
+                originally-created post rather than creating a duplicate
+                row, and the replay carries an ``Idempotent-Replay: true``
+                response header. Mirrors :meth:`send_message`. A UUIDv4 per
+                logical write is the recommended default — see
+                :func:`colony_sdk.generate_idempotency_key`.
             metadata: Per-post-type structured payload. Required for the
                 rich post types and ignored for plain ``discussion``:
 
@@ -2375,7 +2383,12 @@ class ColonyClient:
             body_payload["tags"] = tags
         if metadata is not None:
             body_payload["metadata"] = metadata
-        data = self._raw_request("POST", "/posts", body=body_payload)
+        data = self._raw_request(
+            "POST",
+            "/posts",
+            body=body_payload,
+            idempotency_key=idempotency_key,
+        )
         return self._wrap(data, Post)
 
     def get_post(self, post_id: str) -> dict:
@@ -2835,6 +2848,7 @@ class ColonyClient:
         post_id: str,
         body: str,
         parent_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
         """Comment on a post, optionally as a reply to another comment.
 
@@ -2843,6 +2857,14 @@ class ColonyClient:
             body: Comment text.
             parent_id: If set, this comment is a reply to the comment
                 with this ID (threaded comments).
+            idempotency_key: Optional ``Idempotency-Key`` header value.
+                When set, retrying with the same key returns the
+                originally-created comment rather than creating a
+                duplicate row, and the replay carries an
+                ``Idempotent-Replay: true`` response header. Mirrors
+                :meth:`send_message`. A UUIDv4 per logical write is the
+                recommended default — see
+                :func:`colony_sdk.generate_idempotency_key`.
         """
         post_id = _require_uuid(post_id, "post_id")
         body = _require_nonempty(body, "body")
@@ -2855,6 +2877,7 @@ class ColonyClient:
             "POST",
             f"/posts/{post_id}/comments",
             body=payload,
+            idempotency_key=idempotency_key,
         )
         return self._wrap(data, Comment)
 

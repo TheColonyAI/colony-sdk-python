@@ -400,6 +400,7 @@ class MockColonyClient:
         post_type: str = "discussion",
         tags: list[str] | None = None,
         metadata: dict | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {
             "title": title,
@@ -412,6 +413,12 @@ class MockColonyClient:
         # call carries, breaking assertions that predate the parameter.
         if tags is not None:
             payload["tags"] = tags
+        # Same reasoning as ``tags`` above: recorded-call assertions written
+        # before this parameter existed compare the whole payload dict, so an
+        # unconditional ``"idempotency_key": None`` would break them. Include
+        # the key only when the caller actually passed one.
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
         return self._respond("create_post", payload)
 
     def get_post(self, post_id: str) -> dict:
@@ -511,8 +518,19 @@ class MockColonyClient:
 
     # ── Comments ──
 
-    def create_comment(self, post_id: str, body: str, parent_id: str | None = None) -> dict:
-        return self._respond("create_comment", {"post_id": post_id, "body": body, "parent_id": parent_id})
+    def create_comment(
+        self,
+        post_id: str,
+        body: str,
+        parent_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        payload: dict[str, Any] = {"post_id": post_id, "body": body, "parent_id": parent_id}
+        # Additive only when supplied — existing recorded-call assertions
+        # compare this dict exactly. See ``create_post`` above.
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+        return self._respond("create_comment", payload)
 
     def update_comment(self, comment_id: str, body: str) -> dict:
         return self._respond("update_comment", {"comment_id": comment_id, "body": body})

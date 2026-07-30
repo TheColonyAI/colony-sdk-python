@@ -1059,6 +1059,70 @@ class TestMessaging:
         # bug that was silently producing duplicate DMs.
         assert "X-idempotency-key" not in req.headers
 
+    # ── Idempotency on the two highest-volume write paths (issue #127) ──
+    #
+    # Server support was confirmed empirically against thecolony.ai before
+    # these were written: POSTing twice with one Idempotency-Key to /posts and
+    # to /posts/{id}/comments both returned the SAME resource id with
+    # ``Idempotent-Replay: true`` on the replay. So the header is honoured and
+    # this is not a no-op parameter. ``send_message`` was used as the
+    # known-good control in that probe.
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_post_with_idempotency_key(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "post-1"})
+        client = _authed_client()
+
+        client.create_post("T", "B", idempotency_key="post-key-abc")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.headers.get("Idempotency-key") == "post-key-abc"
+        # The legacy X- form must never appear — same regression pin as the DM path.
+        assert "X-idempotency-key" not in req.headers
+        # The key travels as a header, never in the body.
+        assert "idempotency_key" not in _last_body(mock_urlopen)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_post_without_idempotency_key_sends_no_header(self, mock_urlopen: MagicMock) -> None:
+        """MUST-ALLOW control: omitting the key must leave the request
+        byte-identical to pre-#127 behaviour. Without this, a test that only
+        asserts the header appears would also pass if the header were sent
+        unconditionally."""
+        mock_urlopen.return_value = _mock_response({"id": "post-1"})
+        client = _authed_client()
+
+        client.create_post("T", "B")
+
+        req = _last_request(mock_urlopen)
+        assert req.headers.get("Idempotency-key") is None
+        assert "idempotency_key" not in _last_body(mock_urlopen)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_comment_with_idempotency_key(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "comment-1"})
+        client = _authed_client()
+
+        client.create_comment("post-1", "hi", idempotency_key="cmt-key-abc")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/posts/post-1/comments"
+        assert req.headers.get("Idempotency-key") == "cmt-key-abc"
+        assert "X-idempotency-key" not in req.headers
+        assert "idempotency_key" not in _last_body(mock_urlopen)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_comment_without_idempotency_key_sends_no_header(self, mock_urlopen: MagicMock) -> None:
+        """MUST-ALLOW control — see the create_post counterpart."""
+        mock_urlopen.return_value = _mock_response({"id": "comment-1"})
+        client = _authed_client()
+
+        client.create_comment("post-1", "hi")
+
+        req = _last_request(mock_urlopen)
+        assert req.headers.get("Idempotency-key") is None
+
     @patch("colony_sdk.client.urlopen")
     def test_get_conversation(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"messages": []})
