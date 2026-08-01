@@ -139,10 +139,53 @@ class TestTheInviteeSide:
 
     @patch("colony_sdk.client.urlopen")
     def test_no_invites_is_an_empty_list(self, mock_urlopen: MagicMock) -> None:
-        """Control for the unwrap above: it must not be "always return the
-        first value in the dict"."""
+        """An empty envelope yields ``[]`` — not ``None``, not a raise, not the
+        envelope. A caller's ``for inv in ...`` has to be safe on the common case.
+
+        This does NOT control for "return the first value in the dict", which
+        the docstring previously claimed. It cannot: on ``{"invites": []}`` the
+        positional form returns ``[]`` as well, so both implementations agree on
+        every single-key fixture. That degeneration is pinned by
+        :meth:`test_the_unwrap_keys_on_the_name_not_the_position`, which is the
+        only fixture here where the two forms disagree.
+        """
         mock_urlopen.return_value = _mock_response({"invites": []})
         assert _authed_client().list_my_colony_mod_invitations() == []
+
+    @patch("colony_sdk.client.urlopen")
+    def test_the_unwrap_keys_on_the_name_not_the_position(self, mock_urlopen: MagicMock) -> None:
+        """The unwrap must read ``data["invites"]``, never "the first value".
+
+        Every other fixture in this file sends a single-key envelope, on which
+        ``data.get("invites")`` and ``list(data.values())[0]`` return the same
+        object — so the whole suite passes with either. The forms diverge only
+        when the envelope carries a sibling key, which is a change the server
+        can make compatibly at any time (a ``total``, a cursor, a rate hint).
+        At that point the positional form starts handing callers an int.
+
+        Verified by mutation: swapping the implementation for the positional
+        form passes all other tests in the repository and fails this one.
+        """
+        mock_urlopen.return_value = _mock_response(
+            {"total": 3, "invites": [INVITE_ROW]},
+        )
+        result = _authed_client().list_my_colony_mod_invitations()
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["invite_id"] == INVITE
+
+    @patch("colony_sdk.client.urlopen")
+    def test_the_manager_listing_unwraps_by_name_too(self, mock_urlopen: MagicMock) -> None:
+        """The same guarantee on the colony-scoped listing. Two call sites share
+        this unwrap, and a mutation applied to only one of them was caught while
+        the same mutation applied to both was not — so both need pinning."""
+        mock_urlopen.return_value = _mock_response(
+            {"total": 1, "invites": [INVITE_ROW]},
+        )
+        result = _authed_client().list_colony_mod_invitations(COLONY)
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["invite_id"] == INVITE
 
     @patch("colony_sdk.client.urlopen")
     def test_accept_and_decline_key_on_the_invite(self, mock_urlopen: MagicMock) -> None:
@@ -440,3 +483,24 @@ class TestAsyncMatchesSync:
         )
         assert async_result == sync_result
         assert len(async_result) == 2
+
+    @pytest.mark.asyncio
+    async def test_both_transports_unwrap_by_name(self) -> None:
+        """Parity for the sibling-key case. The async client carries its own
+        copy of the unwrap, so a positional regression can land on one
+        transport and not the other — which is the drift this class exists for.
+        """
+        payload = {"total": 3, "invites": [INVITE_ROW]}
+        with patch("colony_sdk.client.urlopen") as m:
+            m.return_value = _mock_response(payload)
+            sync_result = _authed_client().list_my_colony_mod_invitations()
+
+        _, async_result = await self._record(
+            "list_my_colony_mod_invitations",
+            (),
+            {},
+            payload,
+        )
+        assert async_result == sync_result
+        assert len(async_result) == 1
+        assert async_result[0]["invite_id"] == INVITE
