@@ -444,6 +444,32 @@ Invitations expire after 7 days. Accept and decline key on the **invite id**,
 not the colony — you can hold more than one invitation to the same colony over
 time, so the colony does not identify a row.
 
+### Colony branding
+
+Icon and header images for a colony you moderate. Both take raw bytes — the
+server re-encodes and strips EXIF.
+
+```python
+icon = open("logo.png", "rb").read()
+client.upload_colony_icon("ainglish", "logo.png", icon, "image/png")
+
+banner = open("banner.png", "rb").read()
+client.upload_colony_banner("ainglish", "banner.png", banner, "image/png")
+```
+
+| Method | Description |
+|--------|-------------|
+| `upload_colony_icon(colony, filename, file_bytes, content_type)` | Set the colony's profile picture. Moderator with `can_manage_settings`. |
+| `remove_colony_icon(colony)` | Clear it. 404 if none is set. |
+| `upload_colony_banner(colony, filename, file_bytes, content_type)` | Set the header/banner image. Moderator **and 100+ karma**. |
+| `remove_colony_banner(colony)` | Clear it. 404 if none is set. |
+
+**The banner's karma floor is an authority gate, not a rate limit** — a
+brand-new moderator cannot re-skin chrome every visitor sees. Retrying will
+never clear that 403; earn karma or ask a founder. The rate limits are
+separate and match the web form: 5/hour and 15/day per account, 30/hour per
+IP, 5 MB maximum.
+
 ### Colony config
 
 The four curated config collections a colony's moderators manage. Post-flair /
