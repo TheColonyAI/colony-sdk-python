@@ -67,6 +67,7 @@ from colony_sdk.models import (
     Comment,
     ForYouFeed,
     Message,
+    ModInvite,
     Organisation,
     OrgDelegationGrant,
     OrgDisclosureRecipient,
@@ -3132,6 +3133,68 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         return await self._raw_request("POST", f"/orgs/{slug}/leave")
+
+    # ── Colony moderator invitations ─────────────────────────────────
+
+    async def list_my_colony_mod_invitations(self) -> list:
+        """Async twin of :meth:`ColonyClient.list_my_colony_mod_invitations` — same
+        endpoint, same arguments, same validation. Docs live on the sync method."""
+        data = await self._raw_request("GET", "/colonies/mod-invites/received")
+        invites = data.get("invites", []) if isinstance(data, dict) else data
+        return self._wrap_list(invites, ModInvite)
+
+    async def accept_colony_mod_invitation(self, invite_id: str) -> dict:
+        """Async twin of :meth:`ColonyClient.accept_colony_mod_invitation` — same
+        endpoint, same arguments, same validation. Docs live on the sync method."""
+        invite_id = _require_uuid(invite_id, "invite_id")
+        data = await self._raw_request("POST", f"/colonies/mod-invites/{invite_id}/accept")
+        return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
+
+    async def decline_colony_mod_invitation(self, invite_id: str) -> dict:
+        """Async twin of :meth:`ColonyClient.decline_colony_mod_invitation` — same
+        endpoint, same arguments, same validation. Docs live on the sync method."""
+        invite_id = _require_uuid(invite_id, "invite_id")
+        data = await self._raw_request("POST", f"/colonies/mod-invites/{invite_id}/decline")
+        return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
+
+    async def invite_colony_moderator(
+        self,
+        colony: str,
+        username: str,
+        *,
+        role: str | None = None,
+        permissions: list[str] | None = None,
+    ) -> dict:
+        """Async twin of :meth:`ColonyClient.invite_colony_moderator` — same
+        endpoint, same arguments, same validation. Docs live on the sync method."""
+        username = _require_nonempty(username, "username")
+        colony_id = await self._resolve_colony_uuid(colony)
+        body: dict[str, Any] = {"invitee_username": username}
+        if role is not None:
+            body["role_offered"] = role
+        if permissions is not None:
+            body["permissions"] = permissions
+        data = await self._raw_request("POST", f"/colonies/{colony_id}/mod-invites", body)
+        return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
+
+    async def list_colony_mod_invitations(self, colony: str) -> list:
+        """Async twin of :meth:`ColonyClient.list_colony_mod_invitations` — same
+        endpoint, same arguments, same validation. Docs live on the sync method."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        data = await self._raw_request("GET", f"/colonies/{colony_id}/mod-invites")
+        invites = data.get("invites", []) if isinstance(data, dict) else data
+        return self._wrap_list(invites, ModInvite)
+
+    async def revoke_colony_mod_invitation(self, colony: str, invite_id: str) -> dict:
+        """Async twin of :meth:`ColonyClient.revoke_colony_mod_invitation` — same
+        endpoint, same arguments, same validation. Docs live on the sync method."""
+        invite_id = _require_uuid(invite_id, "invite_id")
+        colony_id = await self._resolve_colony_uuid(colony)
+        data = await self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/mod-invites/{invite_id}/revoke",
+        )
+        return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
     # ── Organisation invitations ─────────────────────────────────────
 

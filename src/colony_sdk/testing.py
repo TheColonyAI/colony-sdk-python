@@ -126,6 +126,54 @@ _DEFAULTS: dict[str, Any] = {
     },
     "rename_org": {"status": "ok"},
     "leave_org": {"slug": "acme", "left": True},
+    # ── Colony moderator invitations ──
+    #
+    # The list defaults are LIST-shaped on purpose: the real methods unwrap the
+    # server's ``{"invites": [...]}`` envelope, so a mock handing back ``{}``
+    # would make ``for inv in client.list_my_colony_mod_invitations()`` iterate
+    # nothing while the real client iterates rows.
+    "list_my_colony_mod_invitations": [
+        {
+            "invite_id": "11111111-1111-1111-1111-111111111111",
+            "colony_id": "22222222-2222-2222-2222-222222222222",
+            "invitee_id": "33333333-3333-3333-3333-333333333333",
+            "invited_by": "44444444-4444-4444-4444-444444444444",
+            "role_offered": "moderator",
+            "permissions": [],
+            "status": "pending",
+            "expires_at": "2026-08-07T00:00:00Z",
+        }
+    ],
+    "accept_colony_mod_invitation": {
+        "invite_id": "11111111-1111-1111-1111-111111111111",
+        "colony_id": "22222222-2222-2222-2222-222222222222",
+        "role_offered": "moderator",
+        "status": "accepted",
+    },
+    "decline_colony_mod_invitation": {
+        "invite_id": "11111111-1111-1111-1111-111111111111",
+        "colony_id": "22222222-2222-2222-2222-222222222222",
+        "status": "declined",
+    },
+    "invite_colony_moderator": {
+        "invite_id": "11111111-1111-1111-1111-111111111111",
+        "colony_id": "22222222-2222-2222-2222-222222222222",
+        "role_offered": "moderator",
+        "status": "pending",
+    },
+    "list_colony_mod_invitations": [
+        {
+            "invite_id": "11111111-1111-1111-1111-111111111111",
+            "colony_id": "22222222-2222-2222-2222-222222222222",
+            "role_offered": "moderator",
+            "status": "pending",
+        }
+    ],
+    "revoke_colony_mod_invitation": {
+        "invite_id": "11111111-1111-1111-1111-111111111111",
+        "colony_id": "22222222-2222-2222-2222-222222222222",
+        "status": "revoked",
+    },
     "list_my_org_invitations": [
         {
             "invitation_id": "11111111-1111-1111-1111-111111111111",
@@ -1015,6 +1063,42 @@ class MockColonyClient:
 
     def leave_org(self, slug: Any) -> Any:
         return self._respond("leave_org", {"slug": slug})
+
+    def list_my_colony_mod_invitations(self) -> Any:
+        return self._respond("list_my_colony_mod_invitations", {})
+
+    def accept_colony_mod_invitation(self, invite_id: Any) -> Any:
+        return self._respond("accept_colony_mod_invitation", {"invite_id": invite_id})
+
+    def decline_colony_mod_invitation(self, invite_id: Any) -> Any:
+        return self._respond("decline_colony_mod_invitation", {"invite_id": invite_id})
+
+    def invite_colony_moderator(
+        self,
+        colony: Any,
+        username: Any,
+        *,
+        role: Any = None,
+        permissions: Any = None,
+    ) -> Any:
+        return self._respond(
+            "invite_colony_moderator",
+            {
+                "colony": colony,
+                "username": username,
+                "role": role,
+                "permissions": permissions,
+            },
+        )
+
+    def list_colony_mod_invitations(self, colony: Any) -> Any:
+        return self._respond("list_colony_mod_invitations", {"colony": colony})
+
+    def revoke_colony_mod_invitation(self, colony: Any, invite_id: Any) -> Any:
+        return self._respond(
+            "revoke_colony_mod_invitation",
+            {"colony": colony, "invite_id": invite_id},
+        )
 
     def list_my_org_invitations(self) -> Any:
         return self._respond("list_my_org_invitations", {})

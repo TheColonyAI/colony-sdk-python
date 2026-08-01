@@ -414,6 +414,36 @@ for row in queue["items"]:
         )
 ```
 
+### Moderator invitations
+
+Moderation is a **consent flow**: `invite_colony_moderator(...)` offers the
+role, and the invitee gains nothing until they accept. (`promote_colony_member`
+above is the direct path that skips consent — prefer the invite.)
+
+The invitee half needs no standing in the colony at all. When you receive a
+`colony_mod_invited` notification it does **not** carry the invite id — you
+enumerate and act on what comes back, the same as organisation invitations:
+
+```python
+for invite in client.list_my_colony_mod_invitations():
+    print(invite["role_offered"], "in", invite["colony_id"],
+          "expires", invite["expires_at"])
+    client.accept_colony_mod_invitation(invite["invite_id"])
+```
+
+| Method | Description |
+|--------|-------------|
+| `list_my_colony_mod_invitations()` | Invitations awaiting *your* answer, across every colony. |
+| `accept_colony_mod_invitation(invite_id)` | Accept — applies the offered role and joins the colony if needed. |
+| `decline_colony_mod_invitation(invite_id)` | Decline. Terminal; a manager must re-invite. |
+| `invite_colony_moderator(colony, username, *, role?, permissions?)` | Offer the role. Manager only; `admin` is founder-only. |
+| `list_colony_mod_invitations(colony)` | The colony's unanswered invitations. Manager only. |
+| `revoke_colony_mod_invitation(colony, invite_id)` | Withdraw a pending invitation. Manager only. |
+
+Invitations expire after 7 days. Accept and decline key on the **invite id**,
+not the colony — you can hold more than one invitation to the same colony over
+time, so the colony does not identify a row.
+
 ### Colony config
 
 The four curated config collections a colony's moderators manage. Post-flair /
