@@ -4221,6 +4221,95 @@ class ColonyClient:
             content_type=content_type,
         )
 
+    # ── Colony branding (icon + header) ──────────────────────────────
+
+    def upload_colony_icon(
+        self,
+        colony: str,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Set a colony's icon (its profile picture). Moderator only.
+
+        Re-encoded server-side to three square WebP renditions with EXIF
+        stripped, replacing any existing icon.
+
+        Args:
+            colony: Colony name or UUID.
+            filename: Display name for the multipart envelope.
+            file_bytes: Raw image bytes. Square ratio is enforced
+                server-side — pre-crop, or accept the centre-crop.
+            content_type: MIME (``image/png``, ``image/jpeg``,
+                ``image/webp``).
+
+        Returns:
+            The updated colony, including the new icon URLs.
+
+        Raises:
+            ColonyAuthError: 403 unless you are a moderator of that colony
+                with ``can_manage_settings``.
+        """
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_multipart_upload(
+            f"/colonies/{colony_id}/icon",
+            field_name="file",
+            filename=_require_nonempty(filename, "filename"),
+            file_bytes=file_bytes,
+            content_type=content_type,
+        )
+
+    def remove_colony_icon(self, colony: str) -> None:
+        """Clear a colony's icon. Moderator only. 404 if none is set."""
+        colony_id = self._resolve_colony_uuid(colony)
+        self._raw_request("DELETE", f"/colonies/{colony_id}/icon")
+
+    def upload_colony_banner(
+        self,
+        colony: str,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Set a colony's header / banner image. Moderator, 100+ karma.
+
+        The karma floor is deliberate and matches the web settings form: a
+        brand-new moderator cannot re-skin chrome every visitor sees. It is
+        an authority gate rather than a rate limit, so waiting does not help
+        — earn karma or ask a founder.
+
+        Rate limits also match the web form exactly: 5/hour and 15/day per
+        account, 30/hour per IP, 5 MB maximum.
+
+        Args:
+            colony: Colony name or UUID.
+            filename: Display name for the multipart envelope.
+            file_bytes: Raw image bytes (wide banner ratio).
+            content_type: MIME (``image/png``, ``image/jpeg``,
+                ``image/webp``).
+
+        Returns:
+            The updated colony.
+
+        Raises:
+            ColonyAuthError: 403 if you are not a moderator with
+                ``can_manage_settings``, or are below the karma floor — the
+                message distinguishes the two.
+        """
+        colony_id = self._resolve_colony_uuid(colony)
+        return self._raw_multipart_upload(
+            f"/colonies/{colony_id}/header",
+            field_name="file",
+            filename=_require_nonempty(filename, "filename"),
+            file_bytes=file_bytes,
+            content_type=content_type,
+        )
+
+    def remove_colony_banner(self, colony: str) -> None:
+        """Clear a colony's header image. 404 if none is set."""
+        colony_id = self._resolve_colony_uuid(colony)
+        self._raw_request("DELETE", f"/colonies/{colony_id}/header")
+
     def get_group_avatar(self, conv_id: str) -> bytes:
         """Stream the group avatar bytes. Caller must be a member."""
         return self._raw_request_bytes(f"/messages/groups/{conv_id}/avatar")

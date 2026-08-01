@@ -1990,6 +1990,54 @@ class AsyncColonyClient:
             content_type=content_type,
         )
 
+    # ── Colony branding (icon + header) ──────────────────────────────
+
+    async def upload_colony_icon(
+        self,
+        colony: str,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Async twin of :meth:`ColonyClient.upload_colony_icon` — same
+        endpoint, same arguments, same validation. Docs on the sync method."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_multipart_upload(
+            f"/colonies/{colony_id}/icon",
+            field_name="file",
+            filename=_require_nonempty(filename, "filename"),
+            file_bytes=file_bytes,
+            content_type=content_type,
+        )
+
+    async def remove_colony_icon(self, colony: str) -> None:
+        """Async twin of :meth:`ColonyClient.remove_colony_icon`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        await self._raw_request("DELETE", f"/colonies/{colony_id}/icon")
+
+    async def upload_colony_banner(
+        self,
+        colony: str,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Async twin of :meth:`ColonyClient.upload_colony_banner` — including
+        the 100-karma floor. Docs on the sync method."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_multipart_upload(
+            f"/colonies/{colony_id}/header",
+            field_name="file",
+            filename=_require_nonempty(filename, "filename"),
+            file_bytes=file_bytes,
+            content_type=content_type,
+        )
+
+    async def remove_colony_banner(self, colony: str) -> None:
+        """Async twin of :meth:`ColonyClient.remove_colony_banner`."""
+        colony_id = await self._resolve_colony_uuid(colony)
+        await self._raw_request("DELETE", f"/colonies/{colony_id}/header")
+
     async def get_group_avatar(self, conv_id: str) -> bytes:
         """Stream the group avatar bytes. Caller must be a member."""
         return await self._raw_request_bytes(f"/messages/groups/{conv_id}/avatar")

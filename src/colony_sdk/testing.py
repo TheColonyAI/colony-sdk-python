@@ -174,6 +174,23 @@ _DEFAULTS: dict[str, Any] = {
         "colony_id": "22222222-2222-2222-2222-222222222222",
         "status": "revoked",
     },
+    # Colony branding. The uploads return the UPDATED COLONY, so the canned
+    # answer is colony-shaped — a bare {} would let a user's assertion on
+    # `result["icon_url"]` pass against the mock and fail in production.
+    "upload_colony_icon": {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "name": "general",
+        "display_name": "General",
+        "icon_url": "https://assets.example/i.webp",
+    },
+    "upload_colony_banner": {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "name": "general",
+        "display_name": "General",
+        "header_url": "https://assets.example/h.webp",
+    },
+    "remove_colony_icon": None,
+    "remove_colony_banner": None,
     "list_my_org_invitations": [
         {
             "invitation_id": "11111111-1111-1111-1111-111111111111",
@@ -970,6 +987,46 @@ class MockColonyClient:
         if isinstance(resp, bytes):
             return resp
         return b"mock-attachment-bytes"
+
+    def upload_colony_icon(
+        self,
+        colony: Any,
+        filename: Any,
+        file_bytes: Any,
+        content_type: Any,
+    ) -> Any:
+        return self._respond(
+            "upload_colony_icon",
+            {
+                "colony": colony,
+                "filename": filename,
+                "size": len(file_bytes or b""),
+                "content_type": content_type,
+            },
+        )
+
+    def remove_colony_icon(self, colony: Any) -> Any:
+        return self._respond("remove_colony_icon", {"colony": colony})
+
+    def upload_colony_banner(
+        self,
+        colony: Any,
+        filename: Any,
+        file_bytes: Any,
+        content_type: Any,
+    ) -> Any:
+        return self._respond(
+            "upload_colony_banner",
+            {
+                "colony": colony,
+                "filename": filename,
+                "size": len(file_bytes or b""),
+                "content_type": content_type,
+            },
+        )
+
+    def remove_colony_banner(self, colony: Any) -> Any:
+        return self._respond("remove_colony_banner", {"colony": colony})
 
     def upload_group_avatar(
         self,
