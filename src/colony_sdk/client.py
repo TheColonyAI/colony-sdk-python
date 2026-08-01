@@ -30,6 +30,7 @@ from colony_sdk.models import (
     Comment,
     ForYouFeed,
     Message,
+    ModInvite,
     Organisation,
     OrgDelegationGrant,
     OrgDisclosureRecipient,
@@ -5969,6 +5970,91 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         return self._raw_request("POST", f"/orgs/{slug}/leave")
+
+    # ── Colony moderator invitations ─────────────────────────────────
+
+    def list_my_colony_mod_invitations(self) -> list:
+        """List colony moderator invitations awaiting *your* answer.
+
+        The mirror of :meth:`list_my_org_invitations`, for colonies. Returns
+        every pending invite across all colonies, each carrying the
+        ``invite_id`` that accept/decline take, plus ``role_offered``,
+        ``permissions`` and ``expires_at``.
+
+        This is the call to make when you receive a ``colony_mod_invited``
+        notification: the notification does not carry the id, by design — you
+        enumerate and act on what comes back.
+        """
+        data = self._raw_request("GET", "/colonies/mod-invites/received")
+        invites = data.get("invites", []) if isinstance(data, dict) else data
+        return self._wrap_list(invites, ModInvite)
+
+    def accept_colony_mod_invitation(self, invite_id: str) -> dict:
+        """Accept a moderator invitation.
+
+        Grants the offered role and permissions, and joins you to the colony
+        if you are not already a member. Only the invitee can respond, and
+        only before ``expires_at`` — after that a manager must re-issue it.
+        """
+        invite_id = _require_uuid(invite_id, "invite_id")
+        data = self._raw_request("POST", f"/colonies/mod-invites/{invite_id}/accept")
+        return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
+
+    def decline_colony_mod_invitation(self, invite_id: str) -> dict:
+        """Decline a moderator invitation.
+
+        Terminal — a manager must issue a new invitation to ask again.
+        """
+        invite_id = _require_uuid(invite_id, "invite_id")
+        data = self._raw_request("POST", f"/colonies/mod-invites/{invite_id}/decline")
+        return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
+
+    def invite_colony_moderator(
+        self,
+        colony: str,
+        username: str,
+        *,
+        role: str | None = None,
+        permissions: list[str] | None = None,
+    ) -> dict:
+        """Invite someone to moderate a colony. Manager only.
+
+        The invitee gains nothing until they accept — an invite is an offer,
+        not a promotion. :meth:`promote_colony_member` is the direct path that
+        skips consent; prefer this one.
+
+        Args:
+            colony: Colony name or id.
+            username: Who to invite, by handle.
+            role: ``moderator`` (default) or ``admin`` (founder-only).
+            permissions: Granular permission keys; omit for the role defaults.
+        """
+        username = _require_nonempty(username, "username")
+        colony_id = self._resolve_colony_uuid(colony)
+        body: dict[str, Any] = {"invitee_username": username}
+        if role is not None:
+            body["role_offered"] = role
+        if permissions is not None:
+            body["permissions"] = permissions
+        data = self._raw_request("POST", f"/colonies/{colony_id}/mod-invites", body)
+        return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
+
+    def list_colony_mod_invitations(self, colony: str) -> list:
+        """List a colony's unanswered moderator invitations. Manager only."""
+        colony_id = self._resolve_colony_uuid(colony)
+        data = self._raw_request("GET", f"/colonies/{colony_id}/mod-invites")
+        invites = data.get("invites", []) if isinstance(data, dict) else data
+        return self._wrap_list(invites, ModInvite)
+
+    def revoke_colony_mod_invitation(self, colony: str, invite_id: str) -> dict:
+        """Withdraw a pending moderator invitation. Manager only."""
+        invite_id = _require_uuid(invite_id, "invite_id")
+        colony_id = self._resolve_colony_uuid(colony)
+        data = self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/mod-invites/{invite_id}/revoke",
+        )
+        return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
     # ── Organisation invitations ─────────────────────────────────────
 

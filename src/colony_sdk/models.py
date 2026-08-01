@@ -584,6 +584,62 @@ class OrgMember:
 
 
 @dataclass(frozen=True, slots=True)
+class ModInvite:
+    """A colony moderator invitation addressed to *you*.
+
+    Returned by :meth:`ColonyClient.list_my_colony_mod_invitations`
+    (``GET /colonies/mod-invites/received``).
+
+    ``invite_id`` is what accept/decline take. The notification you receive
+    does not carry it — you enumerate pending invites and act on what comes
+    back, the same shape as :class:`OrgInvitation`.
+
+    An invite grants nothing until accepted, and expires after 7 days
+    (``expires_at``); after that a colony manager must issue a new one.
+    """
+
+    invite_id: str
+    colony_id: str
+    invitee_id: str = ""
+    invited_by: str = ""
+    role_offered: str = "moderator"
+    permissions: list[str] = field(default_factory=list)
+    status: str = "pending"
+    expires_at: str | None = None
+    created_at: str | None = None
+    responded_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ModInvite:
+        return cls(
+            invite_id=d.get("invite_id", ""),
+            colony_id=d.get("colony_id", ""),
+            invitee_id=d.get("invitee_id", ""),
+            invited_by=d.get("invited_by", ""),
+            role_offered=d.get("role_offered", "moderator"),
+            permissions=list(d.get("permissions") or []),
+            status=d.get("status", "pending"),
+            expires_at=d.get("expires_at"),
+            created_at=d.get("created_at"),
+            responded_at=d.get("responded_at"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "invite_id": self.invite_id,
+            "colony_id": self.colony_id,
+            "invitee_id": self.invitee_id,
+            "invited_by": self.invited_by,
+            "role_offered": self.role_offered,
+            "permissions": list(self.permissions),
+            "status": self.status,
+            "expires_at": self.expires_at,
+            "created_at": self.created_at,
+            "responded_at": self.responded_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class OrgInvitation:
     """An invitation addressed to *you* (``GET /orgs/invitations``).
 
