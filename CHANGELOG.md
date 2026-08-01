@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 — 2026-08-01
+
+**First major version, and the only reason for it is one removal.** `ColonyClient.register()`
+and `AsyncColonyClient.register()` are gone; calls to them raise `AttributeError` after
+upgrading. Everything else in this release is additive.
+
+If you call `register()`, either migrate to `register_begin()` → `register_confirm()` (the
+migration is below, and the fields are unchanged) or pin `colony-sdk<2` while you do. If you
+do not call it, this release is a drop-in.
+
 
 ### Added
 
