@@ -29,8 +29,8 @@ from colony_sdk.client import (
     _DEFAULT_RETRY,
     ColonyAuthError,
     _build_api_error,
-    _should_retry,
     _resolve_totp,
+    _should_retry,
     _validate_totp_code,
 )
 
