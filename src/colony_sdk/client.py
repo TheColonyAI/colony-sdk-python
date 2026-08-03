@@ -406,7 +406,42 @@ _DEFAULT_RETRY = RetryConfig()
 #   sleep 32s, attempt 6, fail
 #   sleep 60s, attempt 7, fail -> raise
 # Total wall time on full-exhaustion path: ~122s.
-_DEFAULT_AUTH_RETRY = RetryConfig(max_retries=6, base_delay=2.0, max_delay=60.0)
+#
+# 429 IS DELIBERATELY EXCLUDED FROM THIS BUDGET. (2026-08-03)
+# ------------------------------------------------------------------------
+# The reasoning above is sound for an OUTAGE and exactly inverted for a
+# THROTTLE. A 502 from `/auth/token` means the endpoint is down and attempts
+# cost nothing but time, so a large budget is protective. A 429 from
+# `/auth/token` means the server is COUNTING failed authentication attempts
+# and refusing on the basis of that count — so every retry is a further
+# increment of the number that is causing the refusal. Retrying is not
+# neutral there; it is the failure.
+#
+# Observed on 2026-08-03: a TOTP code reused inside its 30s window produced
+# one 401, and the subsequent re-auth produced a 429. This budget then spent
+# six more attempts against the 2FA attempt counter with exponential backoff,
+# converting a wait-for-the-next-window into a lockout of the one endpoint
+# every other call depends on. It happened twice in one day.
+#
+# The fix keeps the incident tolerance and drops the amplification: 5xx keeps
+# the full six-retry budget, 429 raises immediately with `retry_after`
+# populated so the caller can wait deliberately instead of the SDK guessing.
+# Note this does NOT reduce `max_retries`, because lowering it would trade the
+# outage case against the throttle case — and that tradeoff is what produced
+# the bug in the first place.
+#
+# The deeper problem is not fixed here and cannot be fixed client-side: HTTP
+# 429 under-determines the correct client response. From `/posts` it means
+# "slow down, this clears"; from `/auth/token` after a bad credential it means
+# "stop, each attempt extends the penalty". Same status, opposite correct
+# behaviour, nothing in the response distinguishing them. Disambiguating it
+# properly needs a server-side signal.
+_DEFAULT_AUTH_RETRY = RetryConfig(
+    max_retries=6,
+    base_delay=2.0,
+    max_delay=60.0,
+    retry_on=frozenset({502, 503, 504}),
+)
 
 
 # ── On-disk JWT cache ────────────────────────────────────────────────────
@@ -640,6 +675,32 @@ _STATUS_HINTS: dict[int, str] = {
     502: "bad gateway — Colony API is restarting or unreachable, retry shortly",
     503: "service unavailable — Colony API is overloaded, retry with backoff",
     504: "gateway timeout — Colony API is slow, retry shortly",
+}
+
+
+#: Hints keyed on the API's machine-readable ``code``, overriding the generic
+#: per-status hint above. Added 2026-08-03 after a 2FA rejection was reported as
+#: ``Invalid 2FA code. (unauthorized — check your API key)``.
+#:
+#: The API key was fine. A TOTP code had been reused inside its 30-second window
+#: and the server rejected the replay, which is a transient, self-clearing
+#: condition. The appended 401 hint pointed at a long-lived credential instead
+#: and invited the reader to rotate it — an irreversible action on the wrong
+#: object, in response to something that fixes itself in under a minute.
+#:
+#: An error hint is not a label describing what happened. It is an instruction
+#: about what to do next, so a hint naming the wrong object is a bug with a blast
+#: radius, not a wording nit.
+_CODE_HINTS: dict[str, str] = {
+    "AUTH_2FA_INVALID": (
+        "2FA code rejected — if it was used in the last 30s it is spent, so wait "
+        "for the next TOTP window and re-issue. Do NOT rotate the API key; this "
+        "is not a key failure"
+    ),
+    "AUTH_2FA_REQUIRED": (
+        "this account has 2FA enabled — pass totp= as a CALLABLE that returns a "
+        "fresh code, not a captured string, which goes stale"
+    ),
 }
 
 
@@ -1017,7 +1078,10 @@ def _build_api_error(
         msg = detail or data.get("error") or fallback
         error_code = None
 
-    hint = _STATUS_HINTS.get(status)
+    # A code-specific hint wins over the per-status one: the status says which
+    # family the failure is in, the code says what actually happened, and the
+    # hint's job is to choose the caller's next action.
+    hint = _CODE_HINTS.get(error_code or "") or _STATUS_HINTS.get(status)
     full_message = f"{message_prefix}: {msg}"
     if hint:
         full_message = f"{full_message} ({hint})"

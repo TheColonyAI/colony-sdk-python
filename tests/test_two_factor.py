@@ -25,9 +25,12 @@ from colony_sdk import (
     ColonyTwoFactorRequiredError,
 )
 from colony_sdk.client import (
+    _DEFAULT_AUTH_RETRY,
+    _DEFAULT_RETRY,
     ColonyAuthError,
     _build_api_error,
     _resolve_totp,
+    _should_retry,
     _validate_totp_code,
 )
 
@@ -337,3 +340,81 @@ def test_valid_callable_still_resolves_and_does_not_burn_the_static_flag():
 def test_valid_static_code_marks_itself_used():
     code, used = _resolve_totp("654321", False)
     assert (code, used) == ("654321", True)
+
+
+class TestAuthRetryDoesNotAmplifyAThrottle:
+    """`/auth/token` must survive an outage and must NOT retry a throttle.
+
+    Regression test for 2026-08-03. A TOTP code reused inside its 30s window
+    produced a 401; the re-auth produced a 429; the auth retry budget then spent
+    six more attempts, with backoff, against the very counter that was causing
+    the refusal. A wait-for-the-next-window became a lockout of the one endpoint
+    every other call depends on. Twice in one day.
+
+    The distinction the SDK has to hold: a 5xx from `/auth/token` means the
+    endpoint is down and attempts are free, so retry hard. A 429 means the
+    server is counting attempts and refusing on that count, so an attempt is
+    the thing being penalised.
+    """
+
+    def test_auth_budget_does_not_retry_429(self) -> None:
+        assert not _should_retry(429, 0, _DEFAULT_AUTH_RETRY)
+
+    @pytest.mark.parametrize("status", [502, 503, 504])
+    def test_auth_budget_still_absorbs_outages(self, status: int) -> None:
+        # The 2026-05-21 incident this budget was built for must still be
+        # covered — the fix removes amplification, not outage tolerance.
+        assert _should_retry(status, 0, _DEFAULT_AUTH_RETRY)
+        assert _should_retry(status, 5, _DEFAULT_AUTH_RETRY)
+
+    def test_auth_budget_is_not_merely_smaller(self) -> None:
+        # Guard against a future "fix" that just lowers max_retries, which
+        # would trade the outage case against the throttle case — the exact
+        # tradeoff that produced the bug.
+        assert _DEFAULT_AUTH_RETRY.max_retries == 6
+
+    def test_control_ordinary_endpoints_still_retry_429(self) -> None:
+        # CONTROL. Without this, every assertion above would still pass if
+        # someone removed 429 from RetryConfig's default retry_on globally —
+        # a much larger behaviour change wearing this fix's clothes. This test
+        # is what makes the others specific to the auth path.
+        assert _should_retry(429, 0, _DEFAULT_RETRY)
+
+
+class TestErrorHintChoosesTheRightRecovery:
+    """A hint is an instruction about what to do next, not a description.
+
+    The 2FA rejection used to render as
+    ``Invalid 2FA code. (unauthorized — check your API key)``. The key was fine;
+    a spent TOTP code had been replayed. Pointing at a long-lived credential
+    invites rotating a healthy secret — irreversible, and in response to a
+    condition that clears itself in under a minute.
+    """
+
+    def _msg(self, code: str | None) -> str:
+        detail: dict = {"message": "Invalid 2FA code."}
+        if code:
+            detail["code"] = code
+        return str(
+            _build_api_error(
+                status=401,
+                raw_body=json.dumps({"detail": detail}),
+                fallback="unauthorized",
+                message_prefix="Colony API error (POST /auth/token)",
+            )
+        )
+
+    def test_2fa_invalid_does_not_blame_the_api_key(self) -> None:
+        msg = self._msg("AUTH_2FA_INVALID")
+        assert "check your API key" not in msg
+        assert "Do NOT rotate the API key" in msg
+        assert "next TOTP window" in msg
+
+    def test_2fa_required_points_at_the_callable(self) -> None:
+        assert "CALLABLE" in self._msg("AUTH_2FA_REQUIRED")
+
+    def test_control_plain_401_keeps_the_generic_hint(self) -> None:
+        # CONTROL. A genuine key failure SHOULD still say "check your API key".
+        # Without this the fix could have deleted the generic hint entirely and
+        # every assertion above would still pass.
+        assert "check your API key" in self._msg(None)
