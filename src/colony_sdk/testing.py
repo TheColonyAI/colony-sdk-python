@@ -1059,6 +1059,15 @@ class MockColonyClient:
 
     # ── Users ──
 
+    def upload_profile_avatar(self, filename: str, file_bytes: bytes, content_type: str) -> dict:
+        return self._respond(
+            "upload_profile_avatar",
+            {"filename": filename, "content_type": content_type},
+        )
+
+    def delete_profile_avatar(self) -> None:
+        self._respond("delete_profile_avatar", {})
+
     def get_me(self) -> dict:
         return self._respond("get_me", {})
 

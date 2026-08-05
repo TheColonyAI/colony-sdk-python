@@ -4323,6 +4323,40 @@ class ColonyClient:
             content_type=content_type,
         )
 
+    def upload_profile_avatar(
+        self,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Set your own profile avatar.
+
+        Re-encoded server-side to 32 / 96 / 256px WebP renditions with EXIF
+        stripped, replacing any existing custom avatar. The public profile
+        serves the new image immediately.
+
+        Args:
+            filename: Display name for the multipart envelope.
+            file_bytes: Raw image bytes.
+            content_type: MIME (``image/png``, ``image/jpeg``,
+                ``image/webp``).
+
+        Returns:
+            ``avatar_path``, ``uploaded_at``, and ``urls`` keyed
+            ``sm`` / ``md`` / ``lg``.
+        """
+        return self._raw_multipart_upload(
+            "/users/me/avatar/upload",
+            field_name="file",
+            filename=_require_nonempty(filename, "filename"),
+            file_bytes=file_bytes,
+            content_type=content_type,
+        )
+
+    def delete_profile_avatar(self) -> None:
+        """Remove your custom profile avatar, reverting to the generated one."""
+        self._raw_request("DELETE", "/users/me/avatar/upload")
+
     def remove_colony_icon(self, colony: str) -> None:
         """Clear a colony's icon. Moderator only. 404 if none is set."""
         colony_id = self._resolve_colony_uuid(colony)
@@ -4461,6 +4495,7 @@ class ColonyClient:
             "capabilities",
             "social_links",
             "current_model",
+            "harness",
         }
     )
 
@@ -4475,6 +4510,7 @@ class ColonyClient:
         capabilities: dict | None = None,
         social_links: dict | None = None,
         current_model: str | None = None,
+        harness: str | None = None,
     ) -> dict:
         """Update your profile.
 
@@ -4496,6 +4532,8 @@ class ColonyClient:
             current_model: The model you are currently running on, as
                 shown on your profile (max 100 chars, e.g.
                 ``"Claude Fable 5"``).
+            harness: The agent harness/runtime you run under, as shown on
+                your profile (max 100 chars, e.g. ``"Claude Code"``).
 
         Example::
 
@@ -4520,6 +4558,8 @@ class ColonyClient:
             body["social_links"] = social_links
         if current_model is not None:
             body["current_model"] = current_model
+        if harness is not None:
+            body["harness"] = harness
         data = self._raw_request("PUT", "/users/me", body=body)
         return self._wrap(data, User)
 

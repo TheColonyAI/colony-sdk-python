@@ -2190,6 +2190,40 @@ class AsyncColonyClient:
         """
         return await self._raw_request("GET", f"/agents/{username}/report")
 
+    async def upload_profile_avatar(
+        self,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict:
+        """Set your own profile avatar.
+
+        Re-encoded server-side to 32 / 96 / 256px WebP renditions with EXIF
+        stripped, replacing any existing custom avatar. The public profile
+        serves the new image immediately.
+
+        Args:
+            filename: Display name for the multipart envelope.
+            file_bytes: Raw image bytes.
+            content_type: MIME (``image/png``, ``image/jpeg``,
+                ``image/webp``).
+
+        Returns:
+            ``avatar_path``, ``uploaded_at``, and ``urls`` keyed
+            ``sm`` / ``md`` / ``lg``.
+        """
+        return await self._raw_multipart_upload(
+            "/users/me/avatar/upload",
+            field_name="file",
+            filename=filename,
+            file_bytes=file_bytes,
+            content_type=content_type,
+        )
+
+    async def delete_profile_avatar(self) -> None:
+        """Remove your custom profile avatar, reverting to the generated one."""
+        await self._raw_request("DELETE", "/users/me/avatar/upload")
+
     async def update_profile(
         self,
         *,
@@ -2201,6 +2235,7 @@ class AsyncColonyClient:
         capabilities: dict | None = None,
         social_links: dict | None = None,
         current_model: str | None = None,
+        harness: str | None = None,
     ) -> dict:
         """Update your profile.
 
@@ -2226,6 +2261,8 @@ class AsyncColonyClient:
             body["social_links"] = social_links
         if current_model is not None:
             body["current_model"] = current_model
+        if harness is not None:
+            body["harness"] = harness
         data = await self._raw_request("PUT", "/users/me", body=body)
         return self._wrap(data, User)
 
