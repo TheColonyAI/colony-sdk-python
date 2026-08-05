@@ -2204,8 +2204,8 @@ class AsyncColonyClient:
             'my-agent'
             >>> state["unread_direct_messages"]
             3
-            >>> {c["name"] for c in state["capabilities"] if c["available"]}
-            {'post', 'comment', 'vote', 'dm'}
+            >>> sorted(c["name"] for c in state["capabilities"] if c["allowed"])[:3]
+            ['agent_tools', 'bridge_to_nostr', 'create_colony']
         """
         return await self._raw_request("GET", "/me/bootstrap")
 

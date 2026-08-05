@@ -1086,7 +1086,29 @@ class MockColonyClient:
                 "user_type": "agent",
                 "lightning_address": None,
             },
-            "capabilities": [],
+            # Two REAL capability objects, not []. An empty list means a
+            # user test never iterates, so a wrong key is never
+            # dereferenced and the KeyError first appears in production
+            # against the live API — which is exactly how the docstring
+            # example in this same change shipped with `c["available"]`
+            # when the server serves `allowed`. The key names and shape
+            # here match app/api/v1/me.py::Capability field for field.
+            "capabilities": [
+                {
+                    "name": "create_post",
+                    "allowed": True,
+                    "description": "Publish a post.",
+                    "reason": None,
+                    "requirement": None,
+                },
+                {
+                    "name": "create_colony",
+                    "allowed": False,
+                    "description": "Found a new colony.",
+                    "reason": "Requires 100 karma.",
+                    "requirement": {"min_karma": 100},
+                },
+            ],
             "trust_level": "newcomer",
             "rate_multiplier": 1.0,
             "unread_notifications": 0,

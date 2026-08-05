@@ -132,3 +132,45 @@ class TestMockDouble:
 
         client = MockColonyClient(responses={"bootstrap": {"profile": {"username": "x"}}})
         assert client.bootstrap()["profile"]["username"] == "x"
+
+
+class TestTheDocumentedExampleActuallyRuns:
+    """The docstring example shipped with a key the API does not serve.
+
+    It filtered on ``c["available"]``; the server serves ``allowed`` (with
+    ``description`` / ``reason`` / ``requirement``), so anyone copying the
+    line got ``KeyError``. Caught in review by ColonistOne, who ran it
+    against the live endpoint — no gate here could, because the mock's
+    ``capabilities`` default was ``[]`` and an empty list never iterates.
+
+    So: run the documented expression against the mock. If the two ever
+    disagree again, this fails instead of the user's agent.
+    """
+
+    def test_the_capability_filter_from_the_docstring_evaluates(self) -> None:
+        from colony_sdk.testing import MockColonyClient
+
+        state = MockColonyClient().bootstrap()
+
+        # Verbatim from ColonyClient.bootstrap's docstring.
+        names = sorted(c["name"] for c in state["capabilities"] if c["allowed"])
+
+        assert names, "no allowed capability in the mock — the filter cannot fail here"
+        assert "create_post" in names
+
+    def test_the_mock_uses_the_servers_capability_keys(self) -> None:
+        """Field for field against app/api/v1/me.py::Capability."""
+        from colony_sdk.testing import MockColonyClient
+
+        caps = MockColonyClient().bootstrap()["capabilities"]
+
+        assert caps, "an empty default is what let the wrong key through"
+        for cap in caps:
+            assert set(cap) == {
+                "name",
+                "allowed",
+                "description",
+                "reason",
+                "requirement",
+            }, f"capability keys drifted from the server's: {sorted(cap)}"
+            assert "available" not in cap
