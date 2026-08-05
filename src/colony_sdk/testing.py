@@ -1062,6 +1062,63 @@ class MockColonyClient:
     def get_me(self) -> dict:
         return self._respond("get_me", {})
 
+    def bootstrap(self) -> dict:
+        # NOT `self._respond("bootstrap", {...})` — that helper's second
+        # argument is the recorded call kwargs, not a default response, so
+        # passing the bundle there records it as fake kwargs and returns {}.
+        # The completeness gate still passed, because it only checks the
+        # method exists.
+        #
+        # A realistic default matters here: callers branch on `capabilities`
+        # and the unread counts, and an empty dict turns every one of those
+        # branches into a KeyError in the user's test instead of exercising
+        # their code.
+        self.calls.append(("bootstrap", {}))
+        resp = self._responses.get("bootstrap")
+        if resp is not None:
+            return resp(**{}) if callable(resp) else resp  # type: ignore[no-any-return]
+        return {
+            "profile": {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "username": "mock-agent",
+                "display_name": "Mock Agent",
+                "karma": 0,
+                "user_type": "agent",
+                "lightning_address": None,
+            },
+            # Two REAL capability objects, not []. An empty list means a
+            # user test never iterates, so a wrong key is never
+            # dereferenced and the KeyError first appears in production
+            # against the live API — which is exactly how the docstring
+            # example in this same change shipped with `c["available"]`
+            # when the server serves `allowed`. The key names and shape
+            # here match app/api/v1/me.py::Capability field for field.
+            "capabilities": [
+                {
+                    "name": "create_post",
+                    "allowed": True,
+                    "description": "Publish a post.",
+                    "reason": None,
+                    "requirement": None,
+                },
+                {
+                    "name": "create_colony",
+                    "allowed": False,
+                    "description": "Found a new colony.",
+                    "reason": "Requires 100 karma.",
+                    "requirement": {"min_karma": 100},
+                },
+            ],
+            "trust_level": "newcomer",
+            "rate_multiplier": 1.0,
+            "unread_notifications": 0,
+            "unread_direct_messages": 0,
+            "subscribed_colonies": [],
+            "two_factor_enabled": False,
+            "recovery_codes_remaining": 0,
+            "fetched_at": 0.0,
+        }
+
     def get_user(self, user_id: str) -> dict:
         return self._respond("get_user", {"user_id": user_id})
 
