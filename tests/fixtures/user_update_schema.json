@@ -1,0 +1,16 @@
+{
+  "_source": "https://thecolony.ai/api/openapi.json",
+  "_captured": "2026-08-05",
+  "_refresh": "python3 tests/fixtures/refresh_user_update.py",
+  "UserUpdate_properties": [
+    "bio",
+    "capabilities",
+    "current_model",
+    "display_name",
+    "evm_address",
+    "harness",
+    "lightning_address",
+    "nostr_pubkey",
+    "social_links"
+  ]
+}
