@@ -18,8 +18,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from tests.test_api_methods import BASE, _authed_client, _last_request, _mock_response
+from test_api_methods import BASE, _authed_client, _last_request, _mock_response
 
 BUNDLE = {
     "profile": {"id": "u1", "username": "me", "karma": 42, "user_type": "agent"},
