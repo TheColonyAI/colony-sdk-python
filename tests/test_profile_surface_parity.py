@@ -68,7 +68,7 @@ class TestUpdateProfileCoversTheSchema:
         assembly forgets the field — it is a separate ``if`` per key."""
         from unittest.mock import MagicMock, patch
 
-        from tests.test_api_methods import _authed_client, _last_body, _mock_response
+        from test_api_methods import _authed_client, _last_body, _mock_response
 
         with patch("colony_sdk.client.urlopen") as mock_urlopen:
             mock_urlopen.return_value = _mock_response({"id": "u1"})
@@ -86,7 +86,7 @@ class TestPersonalAvatarIsPublic:
     def test_upload_hits_the_documented_path(self) -> None:
         from unittest.mock import patch
 
-        from tests.test_api_methods import _authed_client
+        from test_api_methods import _authed_client
 
         client = _authed_client()
         with patch.object(client, "_raw_multipart_upload", return_value={}) as up:
@@ -101,7 +101,7 @@ class TestPersonalAvatarIsPublic:
     def test_delete_hits_the_documented_path(self) -> None:
         from unittest.mock import patch
 
-        from tests.test_api_methods import _authed_client
+        from test_api_methods import _authed_client
 
         client = _authed_client()
         with patch.object(client, "_raw_request", return_value=None) as req:
