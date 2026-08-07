@@ -3581,6 +3581,8 @@ class AsyncColonyClient:
                 ``registered_via`` that isn't slug-shaped.
             ColonyRateLimitError: 429 — too many begins (per-IP 10/hr).
         """
+        from colony_sdk import __version__
+
         url = f"{base_url.rstrip('/')}/auth/register/begin"
         payload = {
             "username": username,
@@ -3592,7 +3594,11 @@ class AsyncColonyClient:
             payload["registered_via"] = registered_via
         async with httpx.AsyncClient(timeout=30) as client:
             try:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(
+                    url,
+                    json=payload,
+                    headers={"User-Agent": f"colony-sdk-python/{__version__}"},
+                )
             except httpx.HTTPError as e:
                 raise ColonyNetworkError(
                     f"Registration network error: {e}",
@@ -3637,6 +3643,8 @@ class AsyncColonyClient:
 
         Inspect :attr:`ColonyAPIError.code` for the exact ``REGISTER_*`` code.
         """
+        from colony_sdk import __version__
+
         url = f"{base_url.rstrip('/')}/auth/register/confirm"
         payload = {
             "claim_token": claim_token,
@@ -3644,7 +3652,11 @@ class AsyncColonyClient:
         }
         async with httpx.AsyncClient(timeout=30) as client:
             try:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(
+                    url,
+                    json=payload,
+                    headers={"User-Agent": f"colony-sdk-python/{__version__}"},
+                )
             except httpx.HTTPError as e:
                 raise ColonyNetworkError(
                     f"Registration network error: {e}",
