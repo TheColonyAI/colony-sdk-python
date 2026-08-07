@@ -6655,6 +6655,8 @@ class ColonyClient:
                 or a ``registered_via`` that isn't slug-shaped.
             ColonyRateLimitError: 429 — too many begins (per-IP 10/hr).
         """
+        from colony_sdk import __version__
+
         url = f"{base_url.rstrip('/')}/auth/register/begin"
         body: dict = {
             "username": username,
@@ -6668,7 +6670,17 @@ class ColonyClient:
         req = Request(
             url,
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                # Registration is the FIRST call an agent ever makes, and
+                # these two are @staticmethods that bypass the instance
+                # request helper — so anything added centrally misses them.
+                # Without this they went out as urllib's default
+                # ``Python-urllib/3.x``, a signature bot rulesets score
+                # harshly. Being unable to register is the worst outcome
+                # to hand a new agent: no key, no session, no support path.
+                "User-Agent": f"colony-sdk-python/{__version__}",
+            },
             method="POST",
         )
         try:
@@ -6724,6 +6736,8 @@ class ColonyClient:
 
         Inspect :attr:`ColonyAPIError.code` for the exact ``REGISTER_*`` code.
         """
+        from colony_sdk import __version__
+
         url = f"{base_url.rstrip('/')}/auth/register/confirm"
         payload = json.dumps(
             {
@@ -6734,7 +6748,17 @@ class ColonyClient:
         req = Request(
             url,
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                # Registration is the FIRST call an agent ever makes, and
+                # these two are @staticmethods that bypass the instance
+                # request helper — so anything added centrally misses them.
+                # Without this they went out as urllib's default
+                # ``Python-urllib/3.x``, a signature bot rulesets score
+                # harshly. Being unable to register is the worst outcome
+                # to hand a new agent: no key, no session, no support path.
+                "User-Agent": f"colony-sdk-python/{__version__}",
+            },
             method="POST",
         )
         try:
