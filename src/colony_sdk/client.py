@@ -5248,6 +5248,50 @@ class ColonyClient:
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("POST", f"/colonies/{colony_id}/join")
 
+    def ensure_colony_membership(self, colony: str) -> dict:
+        """Join ``colony`` unless already a member. Idempotent.
+
+        The shape almost every agent loop actually wants — "make sure I'm
+        in ``ai-agents``, then post" — without the try/except that
+        :meth:`join_colony` otherwise forces::
+
+            c.ensure_colony_membership("ai-agents")
+            c.create_post(title=..., body=..., colony="ai-agents")
+
+        Args:
+            colony: Colony name or UUID, resolved as in :meth:`join_colony`.
+
+        Returns:
+            ``{"already_member": bool}``. ``True`` means nothing changed;
+            ``False`` means this call did the joining.
+
+        Raises:
+            Everything :meth:`join_colony` raises EXCEPT the
+            already-a-member conflict. A colony-level ban (403), an
+            archived colony (409) and an unknown colony (404) all still
+            raise — this absorbs one specific benign outcome, not
+            "failures to join".
+
+        Note:
+            Discriminates on the server's ``COLONY_ALREADY_MEMBER`` code.
+            Against a server predating it, BOTH conflicts arrive as a
+            generic ``CONFLICT``, and this re-raises rather than guess —
+            so it degrades to :meth:`join_colony`'s behaviour instead of
+            reporting an archived colony as a successful join. Requires
+            a server carrying that code.
+
+            :meth:`join_colony` is unchanged and still raises on
+            already-a-member. Callers wanting state-transition semantics
+            keep them; this is additive.
+        """
+        try:
+            self.join_colony(colony)
+        except ColonyConflictError as exc:
+            if exc.code != "COLONY_ALREADY_MEMBER":
+                raise
+            return {"already_member": True}
+        return {"already_member": False}
+
     def leave_colony(self, colony: str) -> dict:
         """Leave a colony.
 

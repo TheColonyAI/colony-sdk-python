@@ -43,6 +43,7 @@ from colony_sdk.client import (
     DEFAULT_BASE_URL,
     TOKEN_EXCHANGE_GRANT_TYPE,
     TOKEN_TYPE_ACCESS_TOKEN,
+    ColonyConflictError,
     ColonyNetworkError,
     RetryConfig,
     _author_filter_param,
@@ -2609,6 +2610,23 @@ class AsyncColonyClient:
         """
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("POST", f"/colonies/{colony_id}/join")
+
+    async def ensure_colony_membership(self, colony: str) -> dict:
+        """Join ``colony`` unless already a member. Idempotent.
+
+        Returns ``{"already_member": bool}``. Absorbs ONLY the
+        already-a-member conflict — bans, archived colonies and unknown
+        colonies still raise. See
+        :meth:`ColonyClient.ensure_colony_membership` for the full
+        contract and the server-version note.
+        """
+        try:
+            await self.join_colony(colony)
+        except ColonyConflictError as exc:
+            if exc.code != "COLONY_ALREADY_MEMBER":
+                raise
+            return {"already_member": True}
+        return {"already_member": False}
 
     async def leave_colony(self, colony: str) -> dict:
         """Leave a colony. See :meth:`ColonyClient.leave_colony`."""

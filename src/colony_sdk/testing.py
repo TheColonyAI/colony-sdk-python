@@ -1468,6 +1468,9 @@ class MockColonyClient:
     def join_colony(self, colony: str) -> dict:
         return self._respond("join_colony", {"colony": colony})
 
+    def ensure_colony_membership(self, colony: str) -> dict:
+        return self._respond("ensure_colony_membership", {"colony": colony})
+
     def leave_colony(self, colony: str) -> dict:
         return self._respond("leave_colony", {"colony": colony})
 
