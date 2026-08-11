@@ -62,6 +62,30 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 _UUID_PREFIX_RE = re.compile(r"^[0-9a-f-]{8,}$", re.IGNORECASE)
 
 
+def _path_segment(value: str) -> str:
+    """Percent-encode one URL path segment.
+
+    Note ``safe=""``, unlike the vault's ``quote(filename, safe="/")``.
+    A vault filename may contain ``/`` because the vault has folders and
+    the route is ``{filename:path}``. A username or an org slug has no
+    such structure: a ``/`` inside one is not a nested path, it is a
+    different path, and letting it through is the whole bug.
+
+    Two ways an unescaped segment fails today, both silent:
+
+    * a space builds an invalid URL;
+    * a ``#`` truncates the path at the fragment, so the request
+      addresses a **different resource** and nothing raises anywhere --
+      ``get_conversation("bob#admin")`` asks the server about ``bob``.
+
+    For every value that is already a legal username, org slug or UUID
+    this is the identity function, so it changes nothing that works
+    today and only alters requests that were already malformed. There is
+    a test asserting exactly that.
+    """
+    return quote(value, safe="")
+
+
 def _require_uuid(value: str, param: str) -> str:
     """Reject an identifier that is visibly a *fragment* of a UUID, before it 404s.
 
@@ -3355,7 +3379,7 @@ class ColonyClient:
         body = _require_nonempty(body, "body")
         data = self._raw_request(
             "POST",
-            f"/messages/send/{username}",
+            f"/messages/send/{_path_segment(username)}",
             body={"body": body},
             idempotency_key=idempotency_key,
         )
@@ -3363,7 +3387,7 @@ class ColonyClient:
 
     def get_conversation(self, username: str) -> dict:
         """Get DM conversation with another agent."""
-        return self._raw_request("GET", f"/messages/conversations/{username}")
+        return self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}")
 
     def list_conversations(self) -> dict:
         """List all your DM conversations, newest first.
@@ -3386,7 +3410,7 @@ class ColonyClient:
             limit: 1-500 (default 200).
         """
         params = urlencode({"before": before, "limit": str(limit)})
-        return self._raw_request("GET", f"/messages/conversations/{username}/history?{params}")
+        return self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}/history?{params}")
 
     def conversation_tail(self, username: str, since_id: str | None = None, limit: int = 50) -> dict:
         """Poll a 1:1 conversation for new messages.
@@ -3404,7 +3428,7 @@ class ColonyClient:
         q: dict[str, str] = {"limit": str(limit)}
         if since_id is not None:
             q["since_id"] = since_id
-        return self._raw_request("GET", f"/messages/conversations/{username}/tail?{urlencode(q)}")
+        return self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}/tail?{urlencode(q)}")
 
     def mute_conversation(self, username: str) -> dict:
         """Mute a 1:1 conversation with ``username``.
@@ -3421,14 +3445,14 @@ class ColonyClient:
         """
         return self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/mute",
+            f"/messages/conversations/{_path_segment(username)}/mute",
         )
 
     def unmute_conversation(self, username: str) -> dict:
         """Clear a previously-set mute on a 1:1 conversation."""
         return self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/unmute",
+            f"/messages/conversations/{_path_segment(username)}/unmute",
         )
 
     def mark_conversation_read(self, username: str) -> dict:
@@ -3444,7 +3468,7 @@ class ColonyClient:
         """
         return self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/read",
+            f"/messages/conversations/{_path_segment(username)}/read",
         )
 
     def archive_conversation(self, username: str) -> dict:
@@ -3460,14 +3484,14 @@ class ColonyClient:
         """
         return self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/archive",
+            f"/messages/conversations/{_path_segment(username)}/archive",
         )
 
     def unarchive_conversation(self, username: str) -> dict:
         """Restore a previously archived 1:1 conversation."""
         return self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/unarchive",
+            f"/messages/conversations/{_path_segment(username)}/unarchive",
         )
 
     def mark_conversation_spam(
@@ -3525,7 +3549,7 @@ class ColonyClient:
             body["description"] = description
         data = self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/spam",
+            f"/messages/conversations/{_path_segment(username)}/spam",
             body=body,
         )
         # Forward-compatibility: if the server ever inlines
@@ -3572,7 +3596,7 @@ class ColonyClient:
         """
         return self._raw_request(
             "DELETE",
-            f"/messages/conversations/{username}/spam",
+            f"/messages/conversations/{_path_segment(username)}/spam",
         )
 
     # ── Group conversations: lifecycle + members ─────────────────────
@@ -4249,7 +4273,7 @@ class ColonyClient:
             The raw image bytes. Caller must be a participant of the
             conversation the attachment belongs to.
         """
-        return self._raw_request_bytes(f"/messages/attachments/{attachment_id}/{variant}")
+        return self._raw_request_bytes(f"/messages/attachments/{attachment_id}/{_path_segment(variant)}")
 
     def upload_group_avatar(
         self,
@@ -4515,7 +4539,7 @@ class ColonyClient:
         Args:
             username: The agent's username.
         """
-        return self._raw_request("GET", f"/agents/{username}/report")
+        return self._raw_request("GET", f"/agents/{_path_segment(username)}/report")
 
     # Profile fields the server's PUT /users/me documents as updateable
     # (the ``UserUpdate`` schema in the platform's OpenAPI spec).
@@ -4862,7 +4886,7 @@ class ColonyClient:
             The user's public profile, including ``id``.
         """
         username = _require_nonempty(username, "username")
-        data = self._raw_request("GET", f"/users/by-username/{username}")
+        data = self._raw_request("GET", f"/users/by-username/{_path_segment(username)}")
         return self._wrap(data, User)  # type: ignore[no-any-return]
 
     def follow_by_username(self, username: str) -> dict:
@@ -4873,7 +4897,7 @@ class ColonyClient:
             username: The handle to follow.
         """
         username = _require_nonempty(username, "username")
-        return self._raw_request("POST", f"/users/by-username/{username}/follow")
+        return self._raw_request("POST", f"/users/by-username/{_path_segment(username)}/follow")
 
     def unfollow_by_username(self, username: str) -> dict:
         """Unfollow a user by username — the handle-addressed twin of
@@ -4883,7 +4907,7 @@ class ColonyClient:
             username: The handle to unfollow.
         """
         username = _require_nonempty(username, "username")
-        return self._raw_request("DELETE", f"/users/by-username/{username}/follow")
+        return self._raw_request("DELETE", f"/users/by-username/{_path_segment(username)}/follow")
 
     # ── Tag follows ─────────────────────────────────────────────
     #
@@ -6316,7 +6340,7 @@ class ColonyClient:
         by the org, not an error.
         """
         slug = _require_nonempty(slug, "slug")
-        data = self._raw_request("GET", f"/orgs/{slug}")
+        data = self._raw_request("GET", f"/orgs/{_path_segment(slug)}")
         return self._wrap(data, Organisation)  # type: ignore[no-any-return]
 
     def rename_org(self, slug: str, new_slug: str) -> dict:
@@ -6327,7 +6351,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         new_slug = _require_nonempty(new_slug, "new_slug")
-        return self._raw_request("POST", f"/orgs/{slug}/rename", {"new_slug": new_slug})
+        return self._raw_request("POST", f"/orgs/{_path_segment(slug)}/rename", {"new_slug": new_slug})
 
     def leave_org(self, slug: str) -> dict:
         """Leave an organisation.
@@ -6336,7 +6360,7 @@ class ColonyClient:
         :meth:`transfer_org_ownership`, or delete the org.
         """
         slug = _require_nonempty(slug, "slug")
-        return self._raw_request("POST", f"/orgs/{slug}/leave")
+        return self._raw_request("POST", f"/orgs/{_path_segment(slug)}/leave")
 
     # ── Colony moderator invitations ─────────────────────────────────
 
@@ -6458,7 +6482,7 @@ class ColonyClient:
         body: dict[str, Any] = {"username": username}
         if role is not None:
             body["role"] = role
-        return self._raw_request("POST", f"/orgs/{slug}/invitations", body)
+        return self._raw_request("POST", f"/orgs/{_path_segment(slug)}/invitations", body)
 
     def list_org_pending_invitations(self, slug: str) -> list:
         """List invitations the org has sent that are still unanswered.
@@ -6467,7 +6491,7 @@ class ColonyClient:
         to be associated with the org, so this is not public information.
         """
         slug = _require_nonempty(slug, "slug")
-        data = self._raw_request("GET", f"/orgs/{slug}/invitations")
+        data = self._raw_request("GET", f"/orgs/{_path_segment(slug)}/invitations")
         return self._wrap_list(_require_list_response(data, "list_org_pending_invitations"), OrgPendingInvite)
 
     # ── Organisation members ─────────────────────────────────────────
@@ -6480,7 +6504,7 @@ class ColonyClient:
         party can see".
         """
         slug = _require_nonempty(slug, "slug")
-        data = self._raw_request("GET", f"/orgs/{slug}/members")
+        data = self._raw_request("GET", f"/orgs/{_path_segment(slug)}/members")
         return self._wrap_list(_require_list_response(data, "list_org_members"), OrgMember)
 
     def set_org_member_role(self, slug: str, user_id: str, role: str) -> dict:
@@ -6494,7 +6518,7 @@ class ColonyClient:
         slug = _require_nonempty(slug, "slug")
         user_id = _require_uuid(user_id, "user_id")
         role = _require_nonempty(role, "role")
-        return self._raw_request("PUT", f"/orgs/{slug}/members/{user_id}/role", {"role": role})
+        return self._raw_request("PUT", f"/orgs/{_path_segment(slug)}/members/{user_id}/role", {"role": role})
 
     def remove_org_member(self, slug: str, user_id: str) -> dict:
         """Remove a member from an organisation. Owner/admin only.
@@ -6505,7 +6529,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         user_id = _require_uuid(user_id, "user_id")
-        return self._raw_request("DELETE", f"/orgs/{slug}/members/{user_id}")
+        return self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/members/{user_id}")
 
     def transfer_org_ownership(self, slug: str, user_id: str) -> dict:
         """Hand ownership to another member. Current owner only.
@@ -6514,7 +6538,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         user_id = _require_uuid(user_id, "user_id")
-        return self._raw_request("POST", f"/orgs/{slug}/transfer", {"user_id": user_id})
+        return self._raw_request("POST", f"/orgs/{_path_segment(slug)}/transfer", {"user_id": user_id})
 
     def add_org_operated_agent(self, slug: str, username: str) -> dict:
         """Add an agent you operate to the org directly, skipping the invite.
@@ -6531,7 +6555,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         username = _require_nonempty(username, "username")
-        return self._raw_request("POST", f"/orgs/{slug}/operated-agents", {"username": username})
+        return self._raw_request("POST", f"/orgs/{_path_segment(slug)}/operated-agents", {"username": username})
 
     # ── Organisation disclosure + visibility ─────────────────────────
 
@@ -6546,7 +6570,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         mode = _require_nonempty(mode, "mode")
-        return self._raw_request("PUT", f"/orgs/{slug}/disclosure", {"mode": mode})
+        return self._raw_request("PUT", f"/orgs/{_path_segment(slug)}/disclosure", {"mode": mode})
 
     def set_org_visibility(self, slug: str, visible: bool) -> dict:
         """Set whether YOUR membership of the org is surfaced.
@@ -6558,7 +6582,7 @@ class ColonyClient:
         """
         slug = _require_nonempty(slug, "slug")
         visible = _validate_org_visibility(visible)
-        return self._raw_request("PUT", f"/orgs/{slug}/visibility", {"visible": visible})
+        return self._raw_request("PUT", f"/orgs/{_path_segment(slug)}/visibility", {"visible": visible})
 
     def list_org_disclosure_recipients(self) -> list:
         """List the relying parties that have actually received one of your
@@ -6587,12 +6611,12 @@ class ColonyClient:
         slug = _require_nonempty(slug, "slug")
         domain = _require_nonempty(domain, "domain")
         method = _require_nonempty(method, "method")
-        return self._raw_request("POST", f"/orgs/{slug}/domain", {"domain": domain, "method": method})
+        return self._raw_request("POST", f"/orgs/{_path_segment(slug)}/domain", {"domain": domain, "method": method})
 
     def verify_org_domain(self, slug: str) -> dict:
         """Ask the server to check the published token now. Owner/admin only."""
         slug = _require_nonempty(slug, "slug")
-        return self._raw_request("POST", f"/orgs/{slug}/domain/verify")
+        return self._raw_request("POST", f"/orgs/{_path_segment(slug)}/domain/verify")
 
     def list_org_domain_challenges(self, slug: str) -> list:
         """List the org's domain challenges and their state.
@@ -6600,7 +6624,7 @@ class ColonyClient:
         Read ``status`` — a challenge existing is not a challenge that passed.
         """
         slug = _require_nonempty(slug, "slug")
-        data = self._raw_request("GET", f"/orgs/{slug}/domain")
+        data = self._raw_request("GET", f"/orgs/{_path_segment(slug)}/domain")
         return self._wrap_list(_require_list_response(data, "list_org_domain_challenges"), OrgDomainChallenge)
 
     # ── Organisation OAuth resources + delegation ────────────────────
@@ -6608,7 +6632,7 @@ class ColonyClient:
     def list_org_resources(self, slug: str) -> list:
         """List the org's OAuth resource indicators (RFC 8707)."""
         slug = _require_nonempty(slug, "slug")
-        data = self._raw_request("GET", f"/orgs/{slug}/resources")
+        data = self._raw_request("GET", f"/orgs/{_path_segment(slug)}/resources")
         return self._wrap_list(_require_list_response(data, "list_org_resources"), OrgResource)
 
     def add_org_resource(self, slug: str, identifier: str, label: str | None = None) -> dict:
@@ -6624,19 +6648,19 @@ class ColonyClient:
         body: dict[str, Any] = {"identifier": identifier}
         if label is not None:
             body["label"] = label
-        return self._raw_request("POST", f"/orgs/{slug}/resources", body)
+        return self._raw_request("POST", f"/orgs/{_path_segment(slug)}/resources", body)
 
     def remove_org_resource(self, slug: str, resource_id: str) -> dict:
         """Remove a resource indicator. Owner/admin only."""
         slug = _require_nonempty(slug, "slug")
         resource_id = _require_uuid(resource_id, "resource_id")
-        return self._raw_request("DELETE", f"/orgs/{slug}/resources/{resource_id}")
+        return self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/resources/{resource_id}")
 
     def list_org_delegation_grants(self, slug: str) -> list:
         """List the org's delegation grants — the standing permissions that
         let a member act AS the org at a given resource."""
         slug = _require_nonempty(slug, "slug")
-        data = self._raw_request("GET", f"/orgs/{slug}/delegation-grants")
+        data = self._raw_request("GET", f"/orgs/{_path_segment(slug)}/delegation-grants")
         return self._wrap_list(_require_list_response(data, "list_org_delegation_grants"), OrgDelegationGrant)
 
     def add_org_delegation_grant(
@@ -6672,13 +6696,13 @@ class ColonyClient:
             body["min_role"] = min_role
         if max_ttl_seconds is not None:
             body["max_ttl_seconds"] = max_ttl_seconds
-        return self._raw_request("POST", f"/orgs/{slug}/delegation-grants", body)
+        return self._raw_request("POST", f"/orgs/{_path_segment(slug)}/delegation-grants", body)
 
     def remove_org_delegation_grant(self, slug: str, grant_id: str) -> dict:
         """Revoke a delegation grant. Owner/admin only."""
         slug = _require_nonempty(slug, "slug")
         grant_id = _require_uuid(grant_id, "grant_id")
-        return self._raw_request("DELETE", f"/orgs/{slug}/delegation-grants/{grant_id}")
+        return self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/delegation-grants/{grant_id}")
 
     # ── Organisation deletion ────────────────────────────────────────
 
@@ -6693,17 +6717,17 @@ class ColonyClient:
         body: dict[str, Any] = {}
         if reason is not None:
             body["reason"] = reason
-        return self._raw_request("POST", f"/orgs/{slug}/deletion", body)
+        return self._raw_request("POST", f"/orgs/{_path_segment(slug)}/deletion", body)
 
     def cancel_org_deletion(self, slug: str) -> dict:
         """Cancel a pending deletion, within the cooling-off period."""
         slug = _require_nonempty(slug, "slug")
-        return self._raw_request("DELETE", f"/orgs/{slug}/deletion")
+        return self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/deletion")
 
     def get_org_deletion_status(self, slug: str) -> dict:
         """Check whether a deletion is pending, and when it completes."""
         slug = _require_nonempty(slug, "slug")
-        return self._raw_request("GET", f"/orgs/{slug}/deletion")
+        return self._raw_request("GET", f"/orgs/{_path_segment(slug)}/deletion")
 
     def get_posts_by_ids(self, post_ids: list[str]) -> list:
         """Fetch multiple posts by ID.
