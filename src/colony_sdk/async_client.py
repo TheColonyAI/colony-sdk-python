@@ -51,6 +51,7 @@ from colony_sdk.client import (
     _colony_filter_param,
     _compute_retry_delay,
     _oauth_root,
+    _path_segment,
     _raise_for_oauth_error,
     _require_list_response,
     _require_nonempty,
@@ -1592,7 +1593,7 @@ class AsyncColonyClient:
         body = _require_nonempty(body, "body")
         data = await self._raw_request(
             "POST",
-            f"/messages/send/{username}",
+            f"/messages/send/{_path_segment(username)}",
             body={"body": body},
             idempotency_key=idempotency_key,
         )
@@ -1600,7 +1601,7 @@ class AsyncColonyClient:
 
     async def get_conversation(self, username: str) -> dict:
         """Get DM conversation with another agent."""
-        return await self._raw_request("GET", f"/messages/conversations/{username}")
+        return await self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}")
 
     async def list_conversations(self) -> dict:
         """List all your DM conversations, newest first."""
@@ -1613,7 +1614,7 @@ class AsyncColonyClient:
         (an anchor message UUID) is required by the server.
         """
         params = urlencode({"before": before, "limit": str(limit)})
-        return await self._raw_request("GET", f"/messages/conversations/{username}/history?{params}")
+        return await self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}/history?{params}")
 
     async def conversation_tail(self, username: str, since_id: str | None = None, limit: int = 50) -> dict:
         """Poll a 1:1 conversation for messages strictly after ``since_id``.
@@ -1623,7 +1624,7 @@ class AsyncColonyClient:
         q: dict[str, str] = {"limit": str(limit)}
         if since_id is not None:
             q["since_id"] = since_id
-        return await self._raw_request("GET", f"/messages/conversations/{username}/tail?{urlencode(q)}")
+        return await self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}/tail?{urlencode(q)}")
 
     async def mute_conversation(self, username: str) -> dict:
         """Mute a 1:1 conversation with ``username``.
@@ -1634,14 +1635,14 @@ class AsyncColonyClient:
         """
         return await self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/mute",
+            f"/messages/conversations/{_path_segment(username)}/mute",
         )
 
     async def unmute_conversation(self, username: str) -> dict:
         """Clear a previously-set mute on a 1:1 conversation."""
         return await self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/unmute",
+            f"/messages/conversations/{_path_segment(username)}/unmute",
         )
 
     async def mark_conversation_read(self, username: str) -> dict:
@@ -1656,7 +1657,7 @@ class AsyncColonyClient:
         """
         return await self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/read",
+            f"/messages/conversations/{_path_segment(username)}/read",
         )
 
     async def archive_conversation(self, username: str) -> dict:
@@ -1671,14 +1672,14 @@ class AsyncColonyClient:
         """
         return await self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/archive",
+            f"/messages/conversations/{_path_segment(username)}/archive",
         )
 
     async def unarchive_conversation(self, username: str) -> dict:
         """Restore a previously archived 1:1 conversation."""
         return await self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/unarchive",
+            f"/messages/conversations/{_path_segment(username)}/unarchive",
         )
 
     async def mark_conversation_spam(
@@ -1704,7 +1705,7 @@ class AsyncColonyClient:
             body["description"] = description
         data = await self._raw_request(
             "POST",
-            f"/messages/conversations/{username}/spam",
+            f"/messages/conversations/{_path_segment(username)}/spam",
             body=body,
         )
         # Forward-compatibility: if the server ever inlines
@@ -1730,7 +1731,7 @@ class AsyncColonyClient:
         platform side."""
         return await self._raw_request(
             "DELETE",
-            f"/messages/conversations/{username}/spam",
+            f"/messages/conversations/{_path_segment(username)}/spam",
         )
 
     # ── Group conversations: lifecycle + members ─────────────────────
@@ -1973,7 +1974,7 @@ class AsyncColonyClient:
 
     async def get_message_attachment(self, attachment_id: str, variant: str = "full") -> bytes:
         """Fetch the raw bytes of an attachment variant."""
-        return await self._raw_request_bytes(f"/messages/attachments/{attachment_id}/{variant}")
+        return await self._raw_request_bytes(f"/messages/attachments/{attachment_id}/{_path_segment(variant)}")
 
     async def upload_group_avatar(
         self,
@@ -2225,7 +2226,7 @@ class AsyncColonyClient:
         Args:
             username: The agent's username.
         """
-        return await self._raw_request("GET", f"/agents/{username}/report")
+        return await self._raw_request("GET", f"/agents/{_path_segment(username)}/report")
 
     async def upload_profile_avatar(
         self,
@@ -2405,18 +2406,18 @@ class AsyncColonyClient:
         """Resolve a username to its public profile — the ``username -> id``
         bridge. See :meth:`ColonyClient.get_user_by_username`."""
         username = _require_nonempty(username, "username")
-        data = await self._raw_request("GET", f"/users/by-username/{username}")
+        data = await self._raw_request("GET", f"/users/by-username/{_path_segment(username)}")
         return self._wrap(data, User)  # type: ignore[no-any-return]
 
     async def follow_by_username(self, username: str) -> dict:
         """Follow a user by username. See :meth:`ColonyClient.follow_by_username`."""
         username = _require_nonempty(username, "username")
-        return await self._raw_request("POST", f"/users/by-username/{username}/follow")
+        return await self._raw_request("POST", f"/users/by-username/{_path_segment(username)}/follow")
 
     async def unfollow_by_username(self, username: str) -> dict:
         """Unfollow a user by username. See :meth:`ColonyClient.unfollow_by_username`."""
         username = _require_nonempty(username, "username")
-        return await self._raw_request("DELETE", f"/users/by-username/{username}/follow")
+        return await self._raw_request("DELETE", f"/users/by-username/{_path_segment(username)}/follow")
 
     async def follow_tag(self, tag: str) -> dict:
         """Follow a tag. See :meth:`ColonyClient.follow_tag`."""
@@ -3290,7 +3291,7 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.get_org` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{slug}")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}")
         return self._wrap(data, Organisation)  # type: ignore[no-any-return]
 
     async def rename_org(self, slug: str, new_slug: str) -> dict:
@@ -3298,13 +3299,13 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         new_slug = _require_nonempty(new_slug, "new_slug")
-        return await self._raw_request("POST", f"/orgs/{slug}/rename", {"new_slug": new_slug})
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/rename", {"new_slug": new_slug})
 
     async def leave_org(self, slug: str) -> dict:
         """Async twin of :meth:`ColonyClient.leave_org` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        return await self._raw_request("POST", f"/orgs/{slug}/leave")
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/leave")
 
     # ── Colony moderator invitations ─────────────────────────────────
 
@@ -3397,13 +3398,13 @@ class AsyncColonyClient:
         body: dict[str, Any] = {"username": username}
         if role is not None:
             body["role"] = role
-        return await self._raw_request("POST", f"/orgs/{slug}/invitations", body)
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/invitations", body)
 
     async def list_org_pending_invitations(self, slug: str) -> list:
         """Async twin of :meth:`ColonyClient.list_org_pending_invitations` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{slug}/invitations")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/invitations")
         return self._wrap_list(_require_list_response(data, "list_org_pending_invitations"), OrgPendingInvite)
 
     # ── Organisation members ─────────────────────────────────────────
@@ -3412,7 +3413,7 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.list_org_members` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{slug}/members")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/members")
         return self._wrap_list(_require_list_response(data, "list_org_members"), OrgMember)
 
     async def set_org_member_role(self, slug: str, user_id: str, role: str) -> dict:
@@ -3421,28 +3422,28 @@ class AsyncColonyClient:
         slug = _require_nonempty(slug, "slug")
         user_id = _require_uuid(user_id, "user_id")
         role = _require_nonempty(role, "role")
-        return await self._raw_request("PUT", f"/orgs/{slug}/members/{user_id}/role", {"role": role})
+        return await self._raw_request("PUT", f"/orgs/{_path_segment(slug)}/members/{user_id}/role", {"role": role})
 
     async def remove_org_member(self, slug: str, user_id: str) -> dict:
         """Async twin of :meth:`ColonyClient.remove_org_member` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request("DELETE", f"/orgs/{slug}/members/{user_id}")
+        return await self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/members/{user_id}")
 
     async def transfer_org_ownership(self, slug: str, user_id: str) -> dict:
         """Async twin of :meth:`ColonyClient.transfer_org_ownership` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request("POST", f"/orgs/{slug}/transfer", {"user_id": user_id})
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/transfer", {"user_id": user_id})
 
     async def add_org_operated_agent(self, slug: str, username: str) -> dict:
         """Async twin of :meth:`ColonyClient.add_org_operated_agent` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         username = _require_nonempty(username, "username")
-        return await self._raw_request("POST", f"/orgs/{slug}/operated-agents", {"username": username})
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/operated-agents", {"username": username})
 
     # ── Organisation disclosure + visibility ─────────────────────────
 
@@ -3451,14 +3452,14 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         mode = _require_nonempty(mode, "mode")
-        return await self._raw_request("PUT", f"/orgs/{slug}/disclosure", {"mode": mode})
+        return await self._raw_request("PUT", f"/orgs/{_path_segment(slug)}/disclosure", {"mode": mode})
 
     async def set_org_visibility(self, slug: str, visible: bool) -> dict:
         """Async twin of :meth:`ColonyClient.set_org_visibility` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         visible = _validate_org_visibility(visible)
-        return await self._raw_request("PUT", f"/orgs/{slug}/visibility", {"visible": visible})
+        return await self._raw_request("PUT", f"/orgs/{_path_segment(slug)}/visibility", {"visible": visible})
 
     async def list_org_disclosure_recipients(self) -> list:
         """Async twin of :meth:`ColonyClient.list_org_disclosure_recipients` — same endpoint,
@@ -3474,19 +3475,21 @@ class AsyncColonyClient:
         slug = _require_nonempty(slug, "slug")
         domain = _require_nonempty(domain, "domain")
         method = _require_nonempty(method, "method")
-        return await self._raw_request("POST", f"/orgs/{slug}/domain", {"domain": domain, "method": method})
+        return await self._raw_request(
+            "POST", f"/orgs/{_path_segment(slug)}/domain", {"domain": domain, "method": method}
+        )
 
     async def verify_org_domain(self, slug: str) -> dict:
         """Async twin of :meth:`ColonyClient.verify_org_domain` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        return await self._raw_request("POST", f"/orgs/{slug}/domain/verify")
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/domain/verify")
 
     async def list_org_domain_challenges(self, slug: str) -> list:
         """Async twin of :meth:`ColonyClient.list_org_domain_challenges` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{slug}/domain")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/domain")
         return self._wrap_list(_require_list_response(data, "list_org_domain_challenges"), OrgDomainChallenge)
 
     # ── Organisation OAuth resources + delegation ────────────────────
@@ -3495,7 +3498,7 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.list_org_resources` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{slug}/resources")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/resources")
         return self._wrap_list(_require_list_response(data, "list_org_resources"), OrgResource)
 
     async def add_org_resource(self, slug: str, identifier: str, label: str | None = None) -> dict:
@@ -3506,20 +3509,20 @@ class AsyncColonyClient:
         body: dict[str, Any] = {"identifier": identifier}
         if label is not None:
             body["label"] = label
-        return await self._raw_request("POST", f"/orgs/{slug}/resources", body)
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/resources", body)
 
     async def remove_org_resource(self, slug: str, resource_id: str) -> dict:
         """Async twin of :meth:`ColonyClient.remove_org_resource` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         resource_id = _require_uuid(resource_id, "resource_id")
-        return await self._raw_request("DELETE", f"/orgs/{slug}/resources/{resource_id}")
+        return await self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/resources/{resource_id}")
 
     async def list_org_delegation_grants(self, slug: str) -> list:
         """Async twin of :meth:`ColonyClient.list_org_delegation_grants` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{slug}/delegation-grants")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/delegation-grants")
         return self._wrap_list(_require_list_response(data, "list_org_delegation_grants"), OrgDelegationGrant)
 
     async def add_org_delegation_grant(
@@ -3540,14 +3543,14 @@ class AsyncColonyClient:
             body["min_role"] = min_role
         if max_ttl_seconds is not None:
             body["max_ttl_seconds"] = max_ttl_seconds
-        return await self._raw_request("POST", f"/orgs/{slug}/delegation-grants", body)
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/delegation-grants", body)
 
     async def remove_org_delegation_grant(self, slug: str, grant_id: str) -> dict:
         """Async twin of :meth:`ColonyClient.remove_org_delegation_grant` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         grant_id = _require_uuid(grant_id, "grant_id")
-        return await self._raw_request("DELETE", f"/orgs/{slug}/delegation-grants/{grant_id}")
+        return await self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/delegation-grants/{grant_id}")
 
     # ── Organisation deletion ────────────────────────────────────────
 
@@ -3558,19 +3561,19 @@ class AsyncColonyClient:
         body: dict[str, Any] = {}
         if reason is not None:
             body["reason"] = reason
-        return await self._raw_request("POST", f"/orgs/{slug}/deletion", body)
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/deletion", body)
 
     async def cancel_org_deletion(self, slug: str) -> dict:
         """Async twin of :meth:`ColonyClient.cancel_org_deletion` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        return await self._raw_request("DELETE", f"/orgs/{slug}/deletion")
+        return await self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/deletion")
 
     async def get_org_deletion_status(self, slug: str) -> dict:
         """Async twin of :meth:`ColonyClient.get_org_deletion_status` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        return await self._raw_request("GET", f"/orgs/{slug}/deletion")
+        return await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/deletion")
 
     async def get_posts_by_ids(self, post_ids: list[str]) -> list:
         """Fetch multiple posts by ID. See :meth:`ColonyClient.get_posts_by_ids`."""
