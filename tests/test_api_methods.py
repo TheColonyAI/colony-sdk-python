@@ -2944,6 +2944,166 @@ class TestVault:
         assert "content" not in result
 
     @patch("colony_sdk.client.urlopen")
+    def test_vault_get_file_escapes_the_filename(self, mock_urlopen: MagicMock) -> None:
+        """A '#' used to truncate the path at the fragment, so the request
+        addressed a DIFFERENT file and no error was raised anywhere."""
+        mock_urlopen.return_value = _mock_response({"filename": "notes #2.md"})
+        client = _authed_client()
+
+        client.vault_get_file("notes #2.md")
+
+        assert _last_request(mock_urlopen).full_url == (f"{BASE}/vault/files/notes%20%232.md")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_upload_file_escapes_the_filename(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"filename": "my notes.md"})
+        client = _authed_client()
+
+        client.vault_upload_file("my notes.md", "x")
+
+        assert _last_request(mock_urlopen).full_url == (f"{BASE}/vault/files/my%20notes.md")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_delete_file_escapes_the_filename(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.vault_delete_file("my notes.md")
+
+        assert _last_request(mock_urlopen).full_url == (f"{BASE}/vault/files/my%20notes.md")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_methods_keep_folder_separators(self, mock_urlopen: MagicMock) -> None:
+        """CONTROL for the three above: escaping must not eat the '/'.
+
+        Percent-encoding it would address a file literally named
+        "logs%2Fday.md" rather than day.md inside the logs/ folder — a
+        silent wrong-file, which is what makes this worth pinning in
+        both directions.
+        """
+        client = _authed_client()
+        for call in (
+            lambda: client.vault_get_file("logs/day.md"),
+            lambda: client.vault_upload_file("logs/day.md", "x"),
+            lambda: client.vault_delete_file("logs/day.md"),
+        ):
+            mock_urlopen.return_value = _mock_response({})
+            call()
+            assert _last_request(mock_urlopen).full_url.startswith(f"{BASE}/vault/files/logs/day.md")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_append_file_request(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "filename": "journal.md",
+                "content_size": 22,
+                "created_at": "2026-05-23T19:25:33Z",
+                "updated_at": "2026-08-11T10:00:00Z",
+            }
+        )
+        client = _authed_client()
+
+        result = client.vault_append_file("journal.md", "\nanother line")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/vault/files/journal.md/append"
+        assert _last_body(mock_urlopen) == {"content": "\nanother line"}
+        # Metadata only on a write, same as upload.
+        assert "content" not in result
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_append_file_keeps_folder_separators(self, mock_urlopen: MagicMock) -> None:
+        """``/`` must survive escaping — the vault has folders.
+
+        The route is ``{filename:path}`` and ``GET /vault/folders``
+        groups on the first path segment, so percent-encoding the
+        separator would post to a file literally named "logs%2Fday.md"
+        instead of ``day.md`` inside ``logs/``.
+        """
+        mock_urlopen.return_value = _mock_response({"filename": "logs/day.md"})
+        client = _authed_client()
+
+        client.vault_append_file("logs/day.md", "x")
+
+        assert _last_request(mock_urlopen).full_url == (f"{BASE}/vault/files/logs/day.md/append")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_append_file_escapes_spaces(self, mock_urlopen: MagicMock) -> None:
+        """Everything that is NOT a separator still gets escaped."""
+        mock_urlopen.return_value = _mock_response({"filename": "my notes.md"})
+        client = _authed_client()
+
+        client.vault_append_file("my notes.md", "x")
+
+        assert _last_request(mock_urlopen).full_url == (f"{BASE}/vault/files/my%20notes.md/append")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_append_over_quota_raises_validation_error(self, mock_urlopen: MagicMock) -> None:
+        """The gates run against the CONCATENATED result, and nothing is
+        written when they fail — so a caller must be able to tell a
+        rejected append from a successful one."""
+        from colony_sdk import ColonyValidationError
+
+        mock_urlopen.side_effect = _make_http_error(
+            400,
+            {"detail": {"message": "Vault quota exceeded.", "code": "QUOTA_EXCEEDED"}},
+        )
+        client = _authed_client()
+
+        with pytest.raises(ColonyValidationError) as exc:
+            client.vault_append_file("journal.md", "x" * 100)
+        assert exc.value.code == "QUOTA_EXCEEDED"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_search_files_request(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {
+                "items": [
+                    {
+                        "filename": "notes.md",
+                        "content_size": 40,
+                        "snippet": "the [[hl]]kraken[[/hl]] problem",
+                        "created_at": "2026-05-23T19:25:33Z",
+                        "updated_at": "2026-05-23T19:25:33Z",
+                    }
+                ],
+                "total": 1,
+            }
+        )
+        client = _authed_client()
+
+        result = client.vault_search_files("kraken")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/vault/search?q=kraken&limit=20"
+        assert result["items"][0]["snippet"] == "the [[hl]]kraken[[/hl]] problem"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_search_files_encodes_the_query(self, mock_urlopen: MagicMock) -> None:
+        """A query is arbitrary user text — spaces and ``&`` must not
+        become extra query parameters."""
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.vault_search_files("tokio & rayon")
+
+        assert _last_request(mock_urlopen).full_url == (f"{BASE}/vault/search?q=tokio+%26+rayon&limit=20")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_search_files_offset_is_omitted_when_zero(self, mock_urlopen: MagicMock) -> None:
+        """Matches the convention the other paginated methods use."""
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.vault_search_files("x", limit=50, offset=100)
+        assert "offset=100" in _last_request(mock_urlopen).full_url
+
+        client.vault_search_files("x")
+        assert "offset" not in _last_request(mock_urlopen).full_url
+
+    @patch("colony_sdk.client.urlopen")
     def test_vault_upload_file_below_karma_raises_auth_error(self, mock_urlopen: MagicMock) -> None:
         from colony_sdk import ColonyAuthError
 

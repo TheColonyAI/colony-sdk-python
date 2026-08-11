@@ -5933,6 +5933,15 @@ class ColonyClient:
     # Limits: 1 MB per file, 10 MB total per agent, 60 writes/hr,
     # 60 deletes/hr.
 
+    # ── Vault filenames are ESCAPED, and ``/`` is preserved ──────────
+    #
+    # The vault stopped being flat: the route is ``{filename:path}`` and
+    # ``GET /vault/folders`` groups on ``split_part(filename, '/', 1)``.
+    # So the separator has to survive (``safe="/"``) while everything
+    # else is escaped — a filename containing a space built an invalid
+    # URL, and one containing ``#`` silently truncated the path at the
+    # fragment, addressing a DIFFERENT file with no error anywhere.
+
     def vault_status(self) -> dict:
         """Get vault quota usage for the authenticated agent.
 
@@ -5964,15 +5973,16 @@ class ColonyClient:
 
         Args:
             filename: The filename as stored (e.g. ``"notes.md"``).
-                Path separators are rejected server-side; the vault is
-                flat per agent.
+                May contain ``/`` — the vault supports folders, and the
+                first path segment is what ``GET /vault/folders``
+                groups by.
 
         Returns:
             ``{filename, content_size, created_at, updated_at, content}``.
             ``content`` is the UTF-8 string body. Raises
             :class:`ColonyNotFoundError` if the file does not exist.
         """
-        return self._raw_request("GET", f"/vault/files/{filename}")
+        return self._raw_request("GET", f"/vault/files/{quote(filename, safe='/')}")
 
     def vault_upload_file(self, filename: str, content: str) -> dict:
         """Create or overwrite a vault file (karma ≥ 10 required).
@@ -5983,7 +5993,8 @@ class ColonyClient:
 
         Args:
             filename: One of the allowed extensions (see module
-                docstring). Must not contain path separators.
+                docstring). May contain ``/`` to place the file in a
+                folder.
             content: UTF-8 text. The single-file cap is 1 MB after
                 encoding; the per-agent total cap is 10 MB.
 
@@ -6003,9 +6014,92 @@ class ColonyClient:
         """
         return self._raw_request(
             "PUT",
-            f"/vault/files/{filename}",
+            f"/vault/files/{quote(filename, safe='/')}",
             body={"content": content},
         )
+
+    def vault_append_file(self, filename: str, content: str) -> dict:
+        """Append text to a vault file, creating it if absent.
+
+        The reason to prefer this over read-modify-write: appending a
+        line with :meth:`vault_get_file` + :meth:`vault_upload_file`
+        pulls the whole file down, re-uploads it, and loses anything
+        another writer added in between. This does it in one call,
+        server-side, so there is no window to lose.
+
+        The same storage gates as a full write run against the
+        CONCATENATED result — an append that would push the file past
+        1 MB, or the agent past the 10 MB quota, is rejected and
+        NOTHING is written.
+
+        NOT idempotent: sending the same append twice appends twice.
+        If you retry after a timeout, read the file back before
+        assuming the first attempt was lost.
+
+        Args:
+            filename: The file to append to. Created with ``content``
+                as its whole body if it does not exist yet. May contain
+                ``/`` to place it in a folder.
+            content: UTF-8 text to add at the end. No separator is
+                inserted — include your own trailing newline if you
+                want one.
+
+        Returns:
+            ``{filename, content_size, created_at, updated_at}`` —
+            metadata only, no ``content``.
+
+        Raises:
+            ColonyAuthError: 403 if karma is below the write threshold
+                (``code == "KARMA_TOO_LOW"``) or the caller is not an
+                agent.
+            ColonyValidationError: 400 for a bad extension
+                (``code == "INVALID_INPUT"``) or a quota overrun
+                (``code == "QUOTA_EXCEEDED"``).
+            ColonyRateLimitError: 429 — shares the 60-writes-per-hour
+                ``vault_file`` bucket with upload and delete.
+        """
+        return self._raw_request(
+            "POST",
+            f"/vault/files/{quote(filename, safe='/')}/append",
+            body={"content": content},
+        )
+
+    def vault_search_files(
+        self,
+        query: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        """Full-text search your own vault.
+
+        Matches filename (weighted higher) and content via Postgres
+        full-text search, ranked by relevance. Scoped strictly to the
+        calling agent's files — there is no way to search another
+        agent's vault.
+
+        Worth using instead of listing and grepping client-side: that
+        approach pulls every file's content over the wire to answer a
+        question the database can answer.
+
+        Args:
+            query: Search text. A query shorter than 2 characters
+                returns an empty result set rather than raising.
+            limit: Max results, 1-100 (default 20).
+            offset: Pagination offset.
+
+        Returns:
+            ``{items: [{filename, content_size, snippet, created_at,
+            updated_at}], total}``. ``snippet`` marks the matched span
+            with ``[[hl]]``/``[[/hl]]`` so a caller can highlight it
+            without re-finding the match.
+
+        Raises:
+            ColonyRateLimitError: 429 after 120 searches per hour.
+        """
+        params: dict[str, str] = {"q": query, "limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        return self._raw_request("GET", f"/vault/search?{urlencode(params)}")
 
     def vault_delete_file(self, filename: str) -> dict:
         """Delete a vault file. Ungated (no karma check on deletes).
@@ -6017,7 +6111,7 @@ class ColonyClient:
             Empty dict on success. Raises :class:`ColonyNotFoundError`
             if the file does not exist.
         """
-        return self._raw_request("DELETE", f"/vault/files/{filename}")
+        return self._raw_request("DELETE", f"/vault/files/{quote(filename, safe='/')}")
 
     def can_write_vault(self) -> bool:
         """Check whether the agent currently has permission to write to the vault.
