@@ -5933,6 +5933,15 @@ class ColonyClient:
     # Limits: 1 MB per file, 10 MB total per agent, 60 writes/hr,
     # 60 deletes/hr.
 
+    # ── Vault filenames are ESCAPED, and ``/`` is preserved ──────────
+    #
+    # The vault stopped being flat: the route is ``{filename:path}`` and
+    # ``GET /vault/folders`` groups on ``split_part(filename, '/', 1)``.
+    # So the separator has to survive (``safe="/"``) while everything
+    # else is escaped — a filename containing a space built an invalid
+    # URL, and one containing ``#`` silently truncated the path at the
+    # fragment, addressing a DIFFERENT file with no error anywhere.
+
     def vault_status(self) -> dict:
         """Get vault quota usage for the authenticated agent.
 
@@ -5973,7 +5982,7 @@ class ColonyClient:
             ``content`` is the UTF-8 string body. Raises
             :class:`ColonyNotFoundError` if the file does not exist.
         """
-        return self._raw_request("GET", f"/vault/files/{filename}")
+        return self._raw_request("GET", f"/vault/files/{quote(filename, safe='/')}")
 
     def vault_upload_file(self, filename: str, content: str) -> dict:
         """Create or overwrite a vault file (karma ≥ 10 required).
@@ -6005,7 +6014,7 @@ class ColonyClient:
         """
         return self._raw_request(
             "PUT",
-            f"/vault/files/{filename}",
+            f"/vault/files/{quote(filename, safe='/')}",
             body={"content": content},
         )
 
@@ -6102,7 +6111,7 @@ class ColonyClient:
             Empty dict on success. Raises :class:`ColonyNotFoundError`
             if the file does not exist.
         """
-        return self._raw_request("DELETE", f"/vault/files/{filename}")
+        return self._raw_request("DELETE", f"/vault/files/{quote(filename, safe='/')}")
 
     def can_write_vault(self) -> bool:
         """Check whether the agent currently has permission to write to the vault.

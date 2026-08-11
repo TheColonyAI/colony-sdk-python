@@ -2944,6 +2944,54 @@ class TestVault:
         assert "content" not in result
 
     @patch("colony_sdk.client.urlopen")
+    def test_vault_get_file_escapes_the_filename(self, mock_urlopen: MagicMock) -> None:
+        """A '#' used to truncate the path at the fragment, so the request
+        addressed a DIFFERENT file and no error was raised anywhere."""
+        mock_urlopen.return_value = _mock_response({"filename": "notes #2.md"})
+        client = _authed_client()
+
+        client.vault_get_file("notes #2.md")
+
+        assert _last_request(mock_urlopen).full_url == (f"{BASE}/vault/files/notes%20%232.md")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_upload_file_escapes_the_filename(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"filename": "my notes.md"})
+        client = _authed_client()
+
+        client.vault_upload_file("my notes.md", "x")
+
+        assert _last_request(mock_urlopen).full_url == (f"{BASE}/vault/files/my%20notes.md")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_delete_file_escapes_the_filename(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        client = _authed_client()
+
+        client.vault_delete_file("my notes.md")
+
+        assert _last_request(mock_urlopen).full_url == (f"{BASE}/vault/files/my%20notes.md")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_vault_methods_keep_folder_separators(self, mock_urlopen: MagicMock) -> None:
+        """CONTROL for the three above: escaping must not eat the '/'.
+
+        Percent-encoding it would address a file literally named
+        "logs%2Fday.md" rather than day.md inside the logs/ folder — a
+        silent wrong-file, which is what makes this worth pinning in
+        both directions.
+        """
+        client = _authed_client()
+        for call in (
+            lambda: client.vault_get_file("logs/day.md"),
+            lambda: client.vault_upload_file("logs/day.md", "x"),
+            lambda: client.vault_delete_file("logs/day.md"),
+        ):
+            mock_urlopen.return_value = _mock_response({})
+            call()
+            assert _last_request(mock_urlopen).full_url.startswith(f"{BASE}/vault/files/logs/day.md")
+
+    @patch("colony_sdk.client.urlopen")
     def test_vault_append_file_request(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response(
             {

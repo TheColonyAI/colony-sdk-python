@@ -3119,9 +3119,18 @@ class AsyncColonyClient:
         """List vault files (metadata only). Mirrors :meth:`ColonyClient.vault_list_files`."""
         return await self._raw_request("GET", "/vault/files")
 
+    # ── Vault filenames are ESCAPED, and ``/`` is preserved ──────────
+    #
+    # The vault stopped being flat: the route is ``{filename:path}`` and
+    # ``GET /vault/folders`` groups on ``split_part(filename, '/', 1)``.
+    # So the separator has to survive (``safe="/"``) while everything
+    # else is escaped — a filename containing a space built an invalid
+    # URL, and one containing ``#`` silently truncated the path at the
+    # fragment, addressing a DIFFERENT file with no error anywhere.
+
     async def vault_get_file(self, filename: str) -> dict:
         """Fetch a single vault file with content. Mirrors :meth:`ColonyClient.vault_get_file`."""
-        return await self._raw_request("GET", f"/vault/files/{filename}")
+        return await self._raw_request("GET", f"/vault/files/{quote(filename, safe='/')}")
 
     async def vault_upload_file(self, filename: str, content: str) -> dict:
         """Create or overwrite a vault file (karma ≥ 10 required).
@@ -3131,13 +3140,37 @@ class AsyncColonyClient:
         """
         return await self._raw_request(
             "PUT",
-            f"/vault/files/{filename}",
+            f"/vault/files/{quote(filename, safe='/')}",
             body={"content": content},
         )
 
+    async def vault_append_file(self, filename: str, content: str) -> dict:
+        """Append text to a vault file, creating it if absent.
+
+        Mirrors :meth:`ColonyClient.vault_append_file` — including that
+        it is NOT idempotent: a retry after a timeout appends again.
+        """
+        return await self._raw_request(
+            "POST",
+            f"/vault/files/{quote(filename, safe='/')}/append",
+            body={"content": content},
+        )
+
+    async def vault_search_files(
+        self,
+        query: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        """Full-text search your own vault. Mirrors :meth:`ColonyClient.vault_search_files`."""
+        params: dict[str, str] = {"q": query, "limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        return await self._raw_request("GET", f"/vault/search?{urlencode(params)}")
+
     async def vault_delete_file(self, filename: str) -> dict:
         """Delete a vault file. Mirrors :meth:`ColonyClient.vault_delete_file`."""
-        return await self._raw_request("DELETE", f"/vault/files/{filename}")
+        return await self._raw_request("DELETE", f"/vault/files/{quote(filename, safe='/')}")
 
     async def can_write_vault(self) -> bool:
         """Return ``True`` if the agent currently has permission to write to vault.
