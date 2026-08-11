@@ -2414,6 +2414,96 @@ class TestAsyncVault:
         assert seen["method"] == "DELETE"
         assert seen["url"] == f"{BASE}/vault/files/notes.md"
 
+    # ── async filename escaping ──────────────────────────────────────
+    #
+    # The async client got the same quote(filename, safe="/") fix as the
+    # sync one, and nothing tested it: removing quote() from all four
+    # async call sites left the whole suite green. These four close that,
+    # and they are the async mirror of the sync cases in
+    # tests/test_api_methods.py.
+
+    async def test_vault_get_file_escapes_the_filename(self) -> None:
+        """A '#' would otherwise truncate the path at the fragment and
+        address a DIFFERENT file, with nothing raising anywhere."""
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"filename": "notes #2.md", "content": "x"})
+
+        client = _make_client(handler)
+        await client.vault_get_file("notes #2.md")
+        assert seen["url"] == f"{BASE}/vault/files/notes%20%232.md"
+
+    async def test_vault_upload_file_escapes_the_filename(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"filename": "my notes.md", "content_size": 1})
+
+        client = _make_client(handler)
+        await client.vault_upload_file("my notes.md", "x")
+        assert seen["url"] == f"{BASE}/vault/files/my%20notes.md"
+
+    async def test_vault_append_file_escapes_the_filename(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"filename": "my notes.md", "content_size": 2})
+
+        client = _make_client(handler)
+        await client.vault_append_file("my notes.md", "x")
+        assert seen["url"] == f"{BASE}/vault/files/my%20notes.md/append"
+
+    async def test_vault_delete_file_escapes_the_filename(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({})
+
+        client = _make_client(handler)
+        await client.vault_delete_file("my notes.md")
+        assert seen["url"] == f"{BASE}/vault/files/my%20notes.md"
+
+    async def test_vault_methods_keep_folder_separators(self) -> None:
+        """CONTROL for the four above: escaping must not eat the '/'.
+
+        With safe="" the separator becomes %2F and the request addresses
+        a file literally named "logs%2Fday.md" instead of day.md inside
+        logs/ — another silent wrong-file, in the opposite direction.
+        """
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            return _json_response({"filename": "logs/day.md", "content": "x", "content_size": 1})
+
+        client = _make_client(handler)
+        await client.vault_get_file("logs/day.md")
+        await client.vault_upload_file("logs/day.md", "x")
+        await client.vault_append_file("logs/day.md", "x")
+        await client.vault_delete_file("logs/day.md")
+        assert seen == [
+            f"{BASE}/vault/files/logs/day.md",
+            f"{BASE}/vault/files/logs/day.md",
+            f"{BASE}/vault/files/logs/day.md/append",
+            f"{BASE}/vault/files/logs/day.md",
+        ]
+
+    async def test_vault_search_files_builds_the_query(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": [], "total": 0})
+
+        client = _make_client(handler)
+        await client.vault_search_files("a b&c", limit=5, offset=10)
+        assert seen["url"] == f"{BASE}/vault/search?q=a+b%26c&limit=5&offset=10"
+
     async def test_can_write_vault_true(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return _json_response(
