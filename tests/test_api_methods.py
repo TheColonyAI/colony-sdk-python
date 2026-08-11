@@ -1886,6 +1886,48 @@ class TestNotifications:
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/notifications/notif-123/read"
 
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_notifications_read_batch(self, mock_urlopen: MagicMock) -> None:
+        """The batch endpoint, not N calls to the per-id one."""
+        mock_urlopen.return_value = _mock_response('{"unread_count": 3}')
+        client = _authed_client()
+
+        result = client.mark_notifications_read_batch(["notif-1", "notif-2"])
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/notifications/read"
+        assert json.loads(req.data.decode()) == {"ids": ["notif-1", "notif-2"]}
+        assert result == {"unread_count": 3}
+        assert mock_urlopen.call_count == 1, (
+            "two ids became two requests — the point of this method is that "
+            "the per-id endpoint's 120/hour cap does not apply"
+        )
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_notifications_read_batch_chunks_at_100(
+        self,
+        mock_urlopen: MagicMock,
+    ) -> None:
+        """The server caps a request at 100 ids. Without chunking a longer
+        list is a 422 the caller has to discover and work around itself."""
+        mock_urlopen.return_value = _mock_response('{"unread_count": 0}')
+        client = _authed_client()
+
+        client.mark_notifications_read_batch([f"notif-{i}" for i in range(250)])
+
+        assert mock_urlopen.call_count == 3
+        sizes = [len(json.loads(c.args[0].data.decode())["ids"]) for c in mock_urlopen.call_args_list]
+        assert sizes == [100, 100, 50]
+
+    def test_mark_notifications_read_batch_rejects_an_empty_list(self) -> None:
+        """An empty list must NOT silently become mark-everything-read, and
+        must not be sent as a 422 either."""
+        client = _authed_client()
+
+        with pytest.raises(ValueError, match="must not be empty"):
+            client.mark_notifications_read_batch([])
+
 
 # ---------------------------------------------------------------------------
 # Colonies

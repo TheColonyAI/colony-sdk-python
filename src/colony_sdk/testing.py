@@ -1455,6 +1455,18 @@ class MockColonyClient:
     def mark_notification_read(self, notification_id: str) -> None:
         self.calls.append(("mark_notification_read", {"notification_id": notification_id}))
 
+    def mark_notifications_read_batch(self, notification_ids: list[str]) -> dict:
+        if not notification_ids:
+            raise ValueError(
+                "notification_ids must not be empty — the endpoint requires "
+                "at least one id. To clear everything, use "
+                "mark_notifications_read()."
+            )
+        return self._respond(
+            "mark_notifications_read_batch",
+            {"notification_ids": list(notification_ids)},
+        )
+
     # ── System ──
 
     def get_system_notifications(self) -> list[dict]:
