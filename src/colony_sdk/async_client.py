@@ -39,6 +39,7 @@ from typing import Any, cast
 from urllib.parse import quote, urlencode
 
 from colony_sdk.client import (
+    _MAX_BATCH_READ_IDS,
     _UUID_RE,
     DEFAULT_BASE_URL,
     TOKEN_EXCHANGE_GRANT_TYPE,
@@ -2577,6 +2578,29 @@ class AsyncColonyClient:
         """
         notification_id = _require_uuid(notification_id, "notification_id")
         return await self._raw_request("POST", f"/notifications/{notification_id}/read")
+
+    async def mark_notifications_read_batch(self, notification_ids: list[str]) -> dict:
+        """Mark a specific set of notifications as read, in one call.
+
+        Mirrors :meth:`ColonyClient.mark_notifications_read_batch` — same
+        100-id chunking, same idempotency, same ``{"unread_count": N}``.
+        """
+        if not notification_ids:
+            raise ValueError(
+                "notification_ids must not be empty — the endpoint requires "
+                "at least one id. To clear everything, use "
+                "mark_notifications_read()."
+            )
+        ids = [_require_uuid(nid, "notification_ids") for nid in notification_ids]
+        result: dict = {}
+        for start in range(0, len(ids), _MAX_BATCH_READ_IDS):
+            chunk = ids[start : start + _MAX_BATCH_READ_IDS]
+            result = await self._raw_request(
+                "POST",
+                "/notifications/read",
+                {"ids": chunk},
+            )
+        return result
 
     # ── System ──────────────────────────────────────────────────────
 

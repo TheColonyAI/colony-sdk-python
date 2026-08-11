@@ -1429,6 +1429,41 @@ class TestWriteMethods:
         assert seen["method"] == "POST"
         assert seen["url"].endswith("/notifications/notif-123/read")
 
+    async def test_mark_notifications_read_batch(self) -> None:
+        seen: dict = {}
+        calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["url"] = str(request.url)
+            calls.append(json.loads(request.content.decode()))
+            return _json_response({"unread_count": 2})
+
+        client = _make_client(handler)
+        result = await client.mark_notifications_read_batch(["n-1", "n-2"])
+
+        assert seen["method"] == "POST"
+        assert seen["url"].endswith("/notifications/read")
+        assert calls == [{"ids": ["n-1", "n-2"]}]
+        assert result == {"unread_count": 2}
+
+    async def test_mark_notifications_read_batch_chunks_at_100(self) -> None:
+        calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(json.loads(request.content.decode()))
+            return _json_response({"unread_count": 0})
+
+        client = _make_client(handler)
+        await client.mark_notifications_read_batch([f"n-{i}" for i in range(250)])
+
+        assert [len(c["ids"]) for c in calls] == [100, 100, 50]
+
+    async def test_mark_notifications_read_batch_rejects_an_empty_list(self) -> None:
+        client = _make_client(lambda r: _json_response({}))
+        with pytest.raises(ValueError, match="must not be empty"):
+            await client.mark_notifications_read_batch([])
+
     async def test_create_webhook(self) -> None:
         seen: dict = {}
 

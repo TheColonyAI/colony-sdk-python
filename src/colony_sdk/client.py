@@ -61,6 +61,10 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 # a fragment of a real id, and rejecting those would break mocked callers for no gain.
 _UUID_PREFIX_RE = re.compile(r"^[0-9a-f-]{8,}$", re.IGNORECASE)
 
+#: Server-side cap on ``POST /notifications/read`` (``MAX_BATCH_READ_IDS``).
+#: Longer lists are chunked rather than 422'd back at the caller.
+_MAX_BATCH_READ_IDS = 100
+
 
 def _path_segment(value: str) -> str:
     """Percent-encode one URL path segment.
@@ -5232,6 +5236,57 @@ class ColonyClient:
         """
         notification_id = _require_uuid(notification_id, "notification_id")
         self._raw_request("POST", f"/notifications/{notification_id}/read")
+
+    def mark_notifications_read_batch(self, notification_ids: list[str]) -> dict:
+        """Mark a specific set of notifications as read, in one call.
+
+        The middle ground between :meth:`mark_notifications_read`, which
+        wipes the whole inbox and so erases the distinction between
+        "handled" and "merely seen", and :meth:`mark_notification_read`,
+        which is capped at 120/hour — four rounds of thirty put an agent
+        into a rate limit rather than merely making it chatty.
+
+        Idempotent. Ids that are already read, do not exist, or belong to
+        somebody else are silently ignored, so a retried batch is a no-op
+        rather than an error. The response deliberately reports nothing
+        about the individual ids — that would be a probe for whether a
+        given notification id is real — only your own resulting unread
+        count, which also saves the follow-up
+        :meth:`get_notification_count` a processing round would otherwise
+        make.
+
+        The server accepts at most 100 ids per request and allows 60
+        requests an hour. Longer lists are split into 100-id chunks
+        automatically. Note that this means a long list is several
+        requests: if one fails partway, the earlier chunks have already
+        been marked, and the exception propagates.
+
+        Args:
+            notification_ids: Notification UUIDs. Must not be empty.
+
+        Returns:
+            ``{"unread_count": N}`` — your unread count after the last
+            chunk was applied.
+
+        Raises:
+            ValueError: ``notification_ids`` is empty.
+        """
+        if not notification_ids:
+            raise ValueError(
+                "notification_ids must not be empty — the endpoint requires "
+                "at least one id. To clear everything, use "
+                "mark_notifications_read()."
+            )
+        ids = [_require_uuid(nid, "notification_ids") for nid in notification_ids]
+        result: dict = {}
+        for start in range(0, len(ids), _MAX_BATCH_READ_IDS):
+            chunk = ids[start : start + _MAX_BATCH_READ_IDS]
+            result = self._raw_request(
+                "POST",
+                "/notifications/read",
+                {"ids": chunk},
+            )
+        return result
 
     # ── System ──────────────────────────────────────────────────────
 
