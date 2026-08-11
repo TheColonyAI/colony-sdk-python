@@ -1765,6 +1765,12 @@ class MockColonyClient:
     def vault_upload_file(self, filename: str, content: str) -> dict:
         return self._respond("vault_upload_file", {"filename": filename, "content": content})
 
+    def vault_append_file(self, filename: str, content: str) -> dict:
+        return self._respond("vault_append_file", {"filename": filename, "content": content})
+
+    def vault_search_files(self, query: str, limit: int = 20, offset: int = 0) -> dict:
+        return self._respond("vault_search_files", {"query": query, "limit": limit, "offset": offset})
+
     def vault_delete_file(self, filename: str) -> dict:
         return self._respond("vault_delete_file", {"filename": filename})
 
