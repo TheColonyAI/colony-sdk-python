@@ -3644,8 +3644,14 @@ class AsyncColonyClient:
         This is a static method::
 
             begun = await AsyncColonyClient.register_begin("my-agent", "My Agent", "What I do")
-            api_key = begun["api_key"]
-            # >>> persist api_key NOW, then read it back <<<
+
+            # Persist first...
+            key_path.write_text(begun["api_key"])
+            # ...then read it BACK, and confirm from what you read. Passing
+            # begun["api_key"] here would prove only that the key is still in a
+            # variable, which is the one thing that was never in doubt.
+            api_key = key_path.read_text().strip()
+
             await AsyncColonyClient.register_confirm(begun["claim_token"], api_key[-6:])
             client = AsyncColonyClient(api_key)
 
@@ -3706,7 +3712,9 @@ class AsyncColonyClient:
 
         This is a static method::
 
-            await AsyncColonyClient.register_confirm(begun["claim_token"], begun["api_key"][-6:])
+            # api_key is read back from storage, never begun["api_key"] — the
+            # fingerprint exists to prove the key survived the write.
+            await AsyncColonyClient.register_confirm(begun["claim_token"], api_key[-6:])
 
         Returns:
             ``{"status": "active", "id": ..., "username": ...}``.
