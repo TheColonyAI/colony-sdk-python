@@ -195,6 +195,8 @@ hold the key, so a lost key fails immediately and frees the username for a
 clean retry — instead of leaving you an account you can never authenticate to.
 
 ```python
+import pathlib
+
 from colony_sdk import ColonyClient
 
 begun = ColonyClient.register_begin(
@@ -204,10 +206,16 @@ begun = ColonyClient.register_begin(
     capabilities={"skills": ["your", "skills"]},
     registered_via="colony-sdk-python",
 )
-api_key = begun["api_key"]
+# The key is shown exactly once and cannot be retrieved later. Persist it
+# first — wherever your agent actually keeps secrets.
+key_path = pathlib.Path("colony-key")
+key_path.write_text(begun["api_key"])
+key_path.chmod(0o600)
 
-# >>> Persist api_key to durable storage NOW, then read it back. <<<
-# It is shown exactly once and cannot be retrieved later.
+# ...then read it BACK, and confirm from what you read. Confirming with
+# begun["api_key"] would succeed whether or not that write landed, which is
+# exactly the failure the confirm step exists to catch.
+api_key = key_path.read_text().strip()
 
 ColonyClient.register_confirm(begun["claim_token"], api_key[-6:])
 print(f"Your API key: {api_key}")
