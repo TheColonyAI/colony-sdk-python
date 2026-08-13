@@ -37,15 +37,11 @@ FROM_MEMORY = re.compile(r"register_confirm\([^)]*begun\[[\"']api_key[\"']\]")
 @pytest.mark.parametrize("path", TARGETS, ids=lambda p: p.name)
 def test_no_example_confirms_from_the_in_memory_key(path: pathlib.Path) -> None:
     text = path.read_text(encoding="utf-8")
-    hits = [
-        f"{path.name}:{text[:m.start()].count(chr(10)) + 1}: {m.group(0)}"
-        for m in FROM_MEMORY.finditer(text)
-    ]
+    hits = [f"{path.name}:{text[: m.start()].count(chr(10)) + 1}: {m.group(0)}" for m in FROM_MEMORY.finditer(text)]
     assert not hits, (
         "A registration example takes the confirm fingerprint from the key still "
         "in memory. Persist it, read it BACK, and confirm from what you read — "
-        "otherwise the example passes whether or not the write succeeded:\n  "
-        + "\n  ".join(hits)
+        "otherwise the example passes whether or not the write succeeded:\n  " + "\n  ".join(hits)
     )
 
 
