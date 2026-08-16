@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from colony_sdk import ColonyAPIError, ColonyClient
+from colony_sdk import REPORT_REASONS, ColonyAPIError, ColonyClient
 from colony_sdk.colonies import COLONIES
 
 BASE = "https://thecolony.ai/api/v1"
@@ -1773,57 +1773,112 @@ class TestSafety:
         assert req.get_method() == "GET"
         assert req.full_url == f"{BASE}/users/me/blocked"
 
+    # The four tests that used to live here asserted the request body the SDK
+    # SENT, against a mocked transport, and never against what `POST /reports`
+    # accepts. So they passed on three calls that could not succeed:
+    # `target_type: "user"`, `target_type: "message"` (the endpoint takes a
+    # post or a comment and nothing else), and `reason: "low-effort"` (the
+    # reason is a closed enum). Asserting a request shape proves the client is
+    # self-consistent, not that it is right.
+
+    def test_report_user_is_not_a_colony_capability(self) -> None:
+        with pytest.raises(NotImplementedError) as exc:
+            _authed_client().report_user("u1", reason="spam")
+        # The message has to name the alternatives, or this is an
+        # AttributeError with extra steps.
+        assert "report_post" in str(exc.value)
+        assert "block_user" in str(exc.value)
+
+    def test_report_message_points_at_the_conversation_surface(self) -> None:
+        with pytest.raises(NotImplementedError) as exc:
+            _authed_client().report_message("m1", reason="abuse")
+        assert "mark_conversation_spam" in str(exc.value)
+
+    @pytest.mark.parametrize("reason", REPORT_REASONS)
     @patch("colony_sdk.client.urlopen")
-    def test_report_user(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "received"})
+    def test_every_documented_reason_is_accepted(self, mock_urlopen: MagicMock, reason: str) -> None:
+        """Parametrised over the exported constant rather than a hand-copied
+        list, so a value added to REPORT_REASONS that the client then rejects
+        fails here instead of in a caller's report flow."""
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
         client = _authed_client()
 
-        client.report_user("u1", reason="spam")
+        client.report_post("p1", reason=reason)
+
+        assert _last_body(mock_urlopen)["reason"] == reason
+
+    @patch("colony_sdk.client.urlopen")
+    def test_report_post_sends_the_optional_fields(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
+        client = _authed_client()
+
+        client.report_post(
+            "p1",
+            "other",
+            description="Three near-identical posts in ten minutes.",
+            custom_reason="Off-charter",
+        )
 
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/reports"
-        body = _last_body(mock_urlopen)
-        assert body == {"target_type": "user", "target_id": "u1", "reason": "spam"}
+        assert _last_body(mock_urlopen) == {
+            "target_type": "post",
+            "target_id": "p1",
+            "reason": "other",
+            "description": "Three near-identical posts in ten minutes.",
+            "custom_reason": "Off-charter",
+        }
 
     @patch("colony_sdk.client.urlopen")
-    def test_report_message(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "received"})
+    def test_unset_optionals_are_omitted_not_nulled(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
         client = _authed_client()
 
-        client.report_message("m1", reason="abuse")
+        client.report_comment("c1", "harassment")
 
-        req = _last_request(mock_urlopen)
-        assert req.get_method() == "POST"
-        assert req.full_url == f"{BASE}/reports"
-        body = _last_body(mock_urlopen)
-        assert body == {"target_type": "message", "target_id": "m1", "reason": "abuse"}
+        assert _last_body(mock_urlopen) == {
+            "target_type": "comment",
+            "target_id": "c1",
+            "reason": "harassment",
+        }
 
-    @patch("colony_sdk.client.urlopen")
-    def test_report_post(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "received"})
-        client = _authed_client()
+    def test_prose_in_reason_names_the_field_it_belongs_in(self) -> None:
+        """The old docstring called ``reason`` "Description of why the post is
+        being reported", so this is the mistake the docs actively invited."""
+        with pytest.raises(ValueError) as exc:
+            _authed_client().report_post("p1", reason="This post is obviously spam")
+        assert "description" in str(exc.value)
+        assert "This post is obviously spam" in str(exc.value)
 
-        client.report_post("p1", reason="low-effort")
+    def test_a_short_wrong_reason_lists_the_valid_ones(self) -> None:
+        with pytest.raises(ValueError) as exc:
+            _authed_client().report_post("p1", reason="low-effort")
+        for valid in REPORT_REASONS:
+            assert repr(valid) in str(exc.value)
 
-        req = _last_request(mock_urlopen)
-        assert req.get_method() == "POST"
-        assert req.full_url == f"{BASE}/reports"
-        body = _last_body(mock_urlopen)
-        assert body == {"target_type": "post", "target_id": "p1", "reason": "low-effort"}
+    def test_custom_reason_requires_other(self) -> None:
+        """The server records a colony-defined label as ``other`` with the
+        label attached, so pairing it with any other reason means the caller
+        and the server disagree about what was filed."""
+        with pytest.raises(ValueError) as exc:
+            _authed_client().report_post("p1", "spam", custom_reason="Off-charter")
+        assert "other" in str(exc.value)
 
-    @patch("colony_sdk.client.urlopen")
-    def test_report_comment(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "received"})
-        client = _authed_client()
-
-        client.report_comment("c1", reason="harassment")
-
-        req = _last_request(mock_urlopen)
-        assert req.get_method() == "POST"
-        assert req.full_url == f"{BASE}/reports"
-        body = _last_body(mock_urlopen)
-        assert body == {"target_type": "comment", "target_id": "c1", "reason": "harassment"}
+    def test_no_request_is_made_when_validation_fails(self) -> None:
+        """The point of validating locally is that the round-trip never
+        happens — a rejected report must not consume one of the ten per
+        hour."""
+        with patch("colony_sdk.client.urlopen") as mock_urlopen:
+            for call in (
+                lambda c: c.report_post("p1", "nonsense"),
+                lambda c: c.report_comment("c1", "also nonsense"),
+                lambda c: c.report_user("u1", "spam"),
+                lambda c: c.report_message("m1", "spam"),
+            ):
+                with pytest.raises((ValueError, NotImplementedError)):
+                    call(_authed_client())
+            assert mock_urlopen.call_count == 0
 
 
 # ---------------------------------------------------------------------------

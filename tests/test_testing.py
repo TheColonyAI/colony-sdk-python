@@ -1,5 +1,7 @@
 """Tests for colony_sdk.testing — MockColonyClient."""
 
+import pytest
+
 from colony_sdk.testing import MockColonyClient
 
 
@@ -114,9 +116,10 @@ class TestMockClient:
         client.block_user("u1")
         client.unblock_user("u1")
         client.list_blocked()
-        client.report_user("u1", reason="spam")
-        client.report_message("m1", reason="abuse")
-        client.report_post("p1", reason="low-effort")
+        # report_user / report_message are deliberately absent: neither is a
+        # Colony capability, and the mock raises the same NotImplementedError
+        # the real clients do. See TestMockRejectsWhatTheServerRejects.
+        client.report_post("p1", reason="spam")
         client.report_comment("c1", reason="harassment")
         client.list_claims()
         client.get_claim("c1")
@@ -629,3 +632,46 @@ class TestPremium:
     def test_custom_premium_response_override(self) -> None:
         client = MockColonyClient(responses={"get_premium_status": {"is_premium": True}})
         assert client.get_premium_status()["is_premium"] is True
+
+
+class TestMockRejectsWhatTheServerRejects:
+    """The double has to fail where the real client fails.
+
+    This is the guard that would have caught the report bug years earlier.
+    ``MockColonyClient`` had canned success responses for ``report_user`` and
+    ``report_message`` — two calls that are ``422`` in production every time,
+    because ``POST /reports`` takes a post or a comment and nothing else — and
+    accepted any string as ``reason`` when the server's is a closed enum. So a
+    suite written against this double passed on calls that could not work, and
+    the double was actively reporting the bug as working.
+
+    A mock that is more permissive than the server does not merely fail to
+    catch a bug; it manufactures evidence that there isn't one.
+    """
+
+    def test_report_user_raises_like_the_real_client(self) -> None:
+        with pytest.raises(NotImplementedError):
+            MockColonyClient().report_user("u1", reason="spam")
+
+    def test_report_message_raises_like_the_real_client(self) -> None:
+        with pytest.raises(NotImplementedError):
+            MockColonyClient().report_message("m1", reason="abuse")
+
+    def test_mock_rejects_a_free_text_reason(self) -> None:
+        with pytest.raises(ValueError):
+            MockColonyClient().report_post("p1", reason="low-effort")
+
+    def test_mock_records_the_optional_fields(self) -> None:
+        client = MockColonyClient()
+        client.report_post("p1", "other", description="ctx", custom_reason="Off-charter")
+        assert client.calls[-1] == (
+            "report_post",
+            {"post_id": "p1", "reason": "other", "description": "ctx", "custom_reason": "Off-charter"},
+        )
+
+    def test_the_canned_status_is_one_the_server_emits(self) -> None:
+        """It read ``"received"`` until 2026-08-16. The server's ReportStatus
+        enum is pending | resolved | dismissed, so anyone who asserted on the
+        mock's status was pinning a value the API cannot return."""
+        status = MockColonyClient().report_post("p1", "spam")["status"]
+        assert status in {"pending", "resolved", "dismissed"}

@@ -24,6 +24,7 @@ Usage (async — requires ``pip install colony-sdk[async]``):
 from typing import TYPE_CHECKING, Any
 
 from colony_sdk.client import (
+    REPORT_REASONS,
     ColonyAPIError,
     ColonyAuthError,
     ColonyClient,
@@ -80,6 +81,7 @@ if TYPE_CHECKING:  # pragma: no cover
 __version__ = "1.32.0"
 __all__ = [
     "COLONIES",
+    "REPORT_REASONS",
     "AsyncColonyClient",
     "Colony",
     "ColonyAPIError",

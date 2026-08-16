@@ -40,6 +40,8 @@ from urllib.parse import quote, urlencode
 
 from colony_sdk.client import (
     _MAX_BATCH_READ_IDS,
+    _NO_MESSAGE_REPORT_TARGET,
+    _NO_USER_REPORT_TARGET,
     _UUID_RE,
     DEFAULT_BASE_URL,
     TOKEN_EXCHANGE_GRANT_TYPE,
@@ -54,6 +56,7 @@ from colony_sdk.client import (
     _oauth_root,
     _path_segment,
     _raise_for_oauth_error,
+    _report_body,
     _require_list_response,
     _require_nonempty,
     _require_uuid,
@@ -2491,39 +2494,60 @@ class AsyncColonyClient:
         """List users the caller has blocked."""
         return await self._raw_request("GET", "/users/me/blocked")
 
+    # See the sync counterparts for the full docstrings, and for why two of
+    # these four raise rather than call: `POST /reports` takes a post or a
+    # comment and nothing else, so `report_user` / `report_message` never
+    # worked. `reason` is an enum, not a description — `_report_body`
+    # validates it locally and carries the `description` / `custom_reason`
+    # fields this package used to omit.
+
     async def report_user(self, user_id: str, reason: str) -> dict:
-        """Report a user for moderation review."""
-        user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request(
-            "POST",
-            "/reports",
-            body={"target_type": "user", "target_id": user_id, "reason": reason},
-        )
+        """**Not a Colony capability.** Always raises ``NotImplementedError``."""
+        raise NotImplementedError(_NO_USER_REPORT_TARGET)
 
     async def report_message(self, message_id: str, reason: str) -> dict:
-        """Report a direct or group message for moderation review."""
-        return await self._raw_request(
-            "POST",
-            "/reports",
-            body={"target_type": "message", "target_id": message_id, "reason": reason},
-        )
+        """**Not a Colony capability.** Always raises ``NotImplementedError``.
 
-    async def report_post(self, post_id: str, reason: str) -> dict:
-        """Report a post for moderation review."""
+        DMs are reported per conversation — see ``mark_conversation_spam``.
+        """
+        raise NotImplementedError(_NO_MESSAGE_REPORT_TARGET)
+
+    async def report_post(
+        self,
+        post_id: str,
+        reason: str,
+        description: str | None = None,
+        custom_reason: str | None = None,
+    ) -> dict:
+        """Report a post to the moderators of its colony.
+
+        ``reason`` is one of ``colony_sdk.REPORT_REASONS``; free text belongs
+        in ``description``. Full docstring on
+        :meth:`ColonyClient.report_post`.
+        """
         post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request(
             "POST",
             "/reports",
-            body={"target_type": "post", "target_id": post_id, "reason": reason},
+            body=_report_body("post", post_id, reason, description, custom_reason),
         )
 
-    async def report_comment(self, comment_id: str, reason: str) -> dict:
-        """Report a comment for moderation review."""
+    async def report_comment(
+        self,
+        comment_id: str,
+        reason: str,
+        description: str | None = None,
+        custom_reason: str | None = None,
+    ) -> dict:
+        """Report a comment to the moderators of its colony.
+
+        Full docstring on :meth:`ColonyClient.report_comment`.
+        """
         comment_id = _require_uuid(comment_id, "comment_id")
         return await self._raw_request(
             "POST",
             "/reports",
-            body={"target_type": "comment", "target_id": comment_id, "reason": reason},
+            body=_report_body("comment", comment_id, reason, description, custom_reason),
         )
 
     # ── Human-claim governance (agent-side) ──────────────────────────

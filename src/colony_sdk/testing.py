@@ -31,6 +31,9 @@ from collections.abc import Iterator
 from typing import Any, cast
 
 from colony_sdk.client import (
+    _NO_MESSAGE_REPORT_TARGET,
+    _NO_USER_REPORT_TARGET,
+    _require_report_reason,
     _validate_delegation_scopes,
     _validate_org_visibility,
 )
@@ -295,10 +298,16 @@ _DEFAULTS: dict[str, Any] = {
     "block_user": {"blocked": True},
     "unblock_user": {"blocked": False},
     "list_blocked": {"items": [], "total": 0},
-    "report_user": {"id": "mock-report-id", "status": "received"},
-    "report_message": {"id": "mock-report-id", "status": "received"},
-    "report_post": {"id": "mock-report-id", "status": "received"},
-    "report_comment": {"id": "mock-report-id", "status": "received"},
+    # No entries for report_user / report_message: neither is a Colony
+    # capability, and both raise before reaching _respond. A canned success for
+    # a call that always 422s in production is precisely how this went
+    # unnoticed for as long as it did.
+    #
+    # `status` is "pending", the value the server's ReportStatus enum actually
+    # emits (pending | resolved | dismissed). It read "received" until
+    # 2026-08-16, which the API has never returned for anything.
+    "report_post": {"id": "mock-report-id", "status": "pending"},
+    "report_comment": {"id": "mock-report-id", "status": "pending"},
     "list_claims": [
         {
             "id": "mock-claim-id",
@@ -1415,17 +1424,52 @@ class MockColonyClient:
     def list_blocked(self) -> dict:
         return self._respond("list_blocked", {})
 
+    # The mock has to REJECT what the real client rejects. It did not, and
+    # that is what let three broken report methods survive: a suite written
+    # against this double passed on calls that were 422 in production, so the
+    # double was actively reporting the bug as working.
+
     def report_user(self, user_id: str, reason: str) -> dict:
-        return self._respond("report_user", {"user_id": user_id, "reason": reason})
+        raise NotImplementedError(_NO_USER_REPORT_TARGET)
 
     def report_message(self, message_id: str, reason: str) -> dict:
-        return self._respond("report_message", {"message_id": message_id, "reason": reason})
+        raise NotImplementedError(_NO_MESSAGE_REPORT_TARGET)
 
-    def report_post(self, post_id: str, reason: str) -> dict:
-        return self._respond("report_post", {"post_id": post_id, "reason": reason})
+    def report_post(
+        self,
+        post_id: str,
+        reason: str,
+        description: str | None = None,
+        custom_reason: str | None = None,
+    ) -> dict:
+        _require_report_reason(reason, custom_reason=custom_reason)
+        return self._respond(
+            "report_post",
+            {
+                "post_id": post_id,
+                "reason": reason,
+                "description": description,
+                "custom_reason": custom_reason,
+            },
+        )
 
-    def report_comment(self, comment_id: str, reason: str) -> dict:
-        return self._respond("report_comment", {"comment_id": comment_id, "reason": reason})
+    def report_comment(
+        self,
+        comment_id: str,
+        reason: str,
+        description: str | None = None,
+        custom_reason: str | None = None,
+    ) -> dict:
+        _require_report_reason(reason, custom_reason=custom_reason)
+        return self._respond(
+            "report_comment",
+            {
+                "comment_id": comment_id,
+                "reason": reason,
+                "description": description,
+                "custom_reason": custom_reason,
+            },
+        )
 
     # ── Human-claim governance ──
 

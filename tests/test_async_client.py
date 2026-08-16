@@ -1331,53 +1331,70 @@ class TestWriteMethods:
         assert "/users/me/blocked" in seen["url"]
         assert seen["method"] == "GET"
 
-    async def test_report_user(self) -> None:
+    # Same correction as the sync suite: these asserted the body the client
+    # sent, so they passed on `target_type: "user"` / `"message"` (the
+    # endpoint takes a post or a comment only) and on a free-text reason (it
+    # is a closed enum).
+
+    async def test_report_user_is_not_a_colony_capability(self) -> None:
+        client = _make_client(lambda r: _json_response({}))
+        with pytest.raises(NotImplementedError) as exc:
+            await client.report_user("u2", reason="spam")
+        assert "report_post" in str(exc.value)
+
+    async def test_report_message_points_at_the_conversation_surface(self) -> None:
+        client = _make_client(lambda r: _json_response({}))
+        with pytest.raises(NotImplementedError) as exc:
+            await client.report_message("m1", reason="abuse")
+        assert "mark_conversation_spam" in str(exc.value)
+
+    async def test_report_post(self) -> None:
         seen: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
             seen["url"] = str(request.url)
             seen["method"] = request.method
             seen["body"] = json.loads(request.content.decode())
-            return _json_response({"id": "r1", "status": "received"})
+            return _json_response({"id": "r1", "status": "pending"})
 
         client = _make_client(handler)
-        await client.report_user("u2", reason="spam")
+        await client.report_post(
+            "p1",
+            "prompt_injection",
+            description="Contains an instruction-override block.",
+        )
         assert "/reports" in seen["url"]
         assert seen["method"] == "POST"
-        assert seen["body"] == {"target_type": "user", "target_id": "u2", "reason": "spam"}
-
-    async def test_report_message(self) -> None:
-        seen: dict = {}
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen["body"] = json.loads(request.content.decode())
-            return _json_response({"id": "r1", "status": "received"})
-
-        client = _make_client(handler)
-        await client.report_message("m1", reason="abuse")
-        assert seen["body"] == {"target_type": "message", "target_id": "m1", "reason": "abuse"}
-
-    async def test_report_post(self) -> None:
-        seen: dict = {}
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen["body"] = json.loads(request.content.decode())
-            return _json_response({"id": "r1", "status": "received"})
-
-        client = _make_client(handler)
-        await client.report_post("p1", reason="low-effort")
-        assert seen["body"] == {"target_type": "post", "target_id": "p1", "reason": "low-effort"}
+        assert seen["body"] == {
+            "target_type": "post",
+            "target_id": "p1",
+            "reason": "prompt_injection",
+            "description": "Contains an instruction-override block.",
+        }
 
     async def test_report_comment(self) -> None:
         seen: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
             seen["body"] = json.loads(request.content.decode())
-            return _json_response({"id": "r1", "status": "received"})
+            return _json_response({"id": "r1", "status": "pending"})
 
         client = _make_client(handler)
         await client.report_comment("c1", reason="harassment")
-        assert seen["body"] == {"target_type": "comment", "target_id": "c1", "reason": "harassment"}
+        assert seen["body"] == {
+            "target_type": "comment",
+            "target_id": "c1",
+            "reason": "harassment",
+        }
+
+    async def test_async_rejects_the_same_reasons_as_sync(self) -> None:
+        """The validator is shared, but the async client importing it is the
+        part that can silently regress — parity here is a real risk, not a
+        theoretical one (vault_append_file shipped sync-only on 2026-08-11)."""
+        client = _make_client(lambda r: _json_response({}))
+        with pytest.raises(ValueError) as exc:
+            await client.report_post("p1", reason="This post is obviously spam")
+        assert "description" in str(exc.value)
 
     async def test_join_colony(self) -> None:
         seen: dict = {}
