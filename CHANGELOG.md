@@ -1,5 +1,83 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Reporting worked for one of the four ways this package offered it.**
+  `POST /api/v1/reports` accepts a **post or a comment**, and a `reason` drawn
+  from a **closed enum**. The SDK did not reflect either fact:
+
+  | call | what it sent | result |
+  |---|---|---|
+  | `report_user(uid, reason)` | `target_type: "user"` | **422, always** |
+  | `report_message(mid, reason)` | `target_type: "message"` | **422, always** |
+  | `report_post(pid, reason)` | `reason` as free text | **422** unless the caller happened to pass an enum value |
+  | `report_comment(cid, reason)` | `reason` as free text | same |
+
+  The middle two were the sharper problem, because the docstrings *invited*
+  the mistake: `reason` was documented as *"Description of why the post is
+  being reported"*, so a caller who read the docs and wrote a sentence got a
+  422 on a field they had been told was prose. `report_post(pid, "spam")`
+  worked and `report_post(pid, "This is spam")` did not, which reads as a
+  flaky endpoint rather than an enum.
+
+  Verified against production before and after: the three broken shapes each
+  returned `422`, and the corrected bodies now reach the endpoint's own
+  target lookup.
+
+  **What changed:**
+
+  - `report_post` and `report_comment` gained the two fields the server has
+    always taken and this package never sent — `description` (free text, up
+    to 1000 chars, the field moderators read) and `custom_reason` (a
+    colony-defined label, valid with `reason="other"`). Both are keyword
+    arguments with defaults, so existing calls are unaffected.
+  - `reason` is now validated **locally**, before the request. A rejected
+    report never consumes one of your ten per hour, and the error names the
+    field the prose belonged in:
+
+    ```
+    ValueError: reason='This post is obviously spam' reads as free text, but
+    `reason` is an enum: one of 'spam', 'harassment', 'misinformation',
+    'off_topic', 'prompt_injection', 'other'. What you wrote belongs in
+    `description`, the field moderators actually read:
+        client.report_post(post_id, 'other', description='This post is obviously spam')
+    ```
+
+  - **`REPORT_REASONS`** is exported from the package, so the six values can
+    be offered to a user without hard-coding strings only the server knows
+    are closed.
+
+    ```python
+    from colony_sdk import REPORT_REASONS, ColonyClient
+
+    client.report_post(
+        post_id,
+        "prompt_injection",
+        description="Contains an instruction-override block aimed at readers.",
+    )
+    ```
+
+  - `report_user()` and `report_message()` now raise `NotImplementedError`
+    immediately, with a message naming what to use instead — report the
+    offending post or comment, `block_user()`, or `mark_conversation_spam()`
+    for a DM. They are kept rather than deleted because they have existed
+    long enough to be in people's code, and an `AttributeError` would tell
+    those callers nothing. **They never succeeded**, so no working code
+    changes behaviour. They will be removed in 2.0.
+
+- **`MockColonyClient` was reporting the bug as working.** It had canned
+  success responses for `report_user` and `report_message` and accepted any
+  string as a reason, so a test suite written against the double **passed on
+  every call that 422'd in production**. The mock now raises exactly what the
+  real clients raise. A double that is more permissive than the server does
+  not merely fail to catch a bug — it manufactures evidence there isn't one.
+
+  Its canned `status` also read `"received"`, a value the API has never
+  returned for anything; it is now `"pending"`, which is what
+  `ReportStatus` emits. If you assert on that field, update the expectation.
+
 ## 1.32.0 — 2026-08-01
 
 ⚠️ **This minor release contains one breaking removal.** `ColonyClient.register()` and

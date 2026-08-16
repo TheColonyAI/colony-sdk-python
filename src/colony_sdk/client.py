@@ -862,6 +862,124 @@ def _require_nonempty(value: str, param: str) -> str:
     return value
 
 
+#: The reasons ``POST /reports`` accepts, in the order the web report form
+#: lists them. Exported from the package so a caller can offer the choice
+#: without hard-coding six strings that only the server knows are closed.
+#:
+#: The server models this as an enum, not free text. Anything outside this set
+#: is ``422 enum`` on the ``reason`` field; the free-text field a reporter
+#: actually wants is ``description``.
+REPORT_REASONS: tuple[str, ...] = (
+    "spam",
+    "harassment",
+    "misinformation",
+    "off_topic",
+    "prompt_injection",
+    "other",
+)
+
+
+def _require_report_reason(reason: str, *, custom_reason: str | None = None) -> str:
+    """Reject a report reason the server's enum does not contain.
+
+    This exists because the SDK's own docstrings used to describe ``reason`` as
+    *"Description of why the post is being reported"*, so a caller following
+    them passed a sentence — and every such call was ``422 enum`` on a field
+    the caller believed was free text. The prose they meant to send belongs in
+    ``description``, which the SDK did not expose at all.
+
+    Raised locally rather than left to the server for the usual reason: the
+    server's error names the field and lists the six values, but it arrives
+    after a round-trip and, in a report flow, often after a user has already
+    been told their report was filed. It is also the difference between
+    learning that ``reason`` is an enum and concluding the endpoint is flaky,
+    because ``report_post(pid, "spam")`` happens to work while
+    ``report_post(pid, "This is spam")`` does not.
+
+    ``custom_reason`` (a colony-defined label) is only meaningful alongside
+    ``reason="other"`` — the server records the report as ``other`` with the
+    label attached — so that combination is checked here too.
+    """
+    if not isinstance(reason, str):
+        raise TypeError(f"reason must be a str, got {type(reason).__name__}.")
+    if reason in REPORT_REASONS:
+        if custom_reason is not None and reason != "other":
+            raise ValueError(
+                f"custom_reason={custom_reason!r} was given with reason={reason!r}. "
+                "A colony-defined reason is recorded as `other` with the label "
+                "attached, so pass reason='other' alongside it. Read the labels a "
+                "colony accepts from its `report_reasons` field; a label that "
+                "colony has not configured is rejected."
+            )
+        return reason
+
+    listed = ", ".join(repr(r) for r in REPORT_REASONS)
+    if " " in reason.strip() or len(reason) > 24:
+        raise ValueError(
+            f"reason={reason!r} reads as free text, but `reason` is an enum: one "
+            f"of {listed}. What you wrote belongs in `description`, the field "
+            "moderators actually read:\n"
+            f"    client.report_post(post_id, 'other', description={reason!r})\n"
+            "Use 'prompt_injection' for content trying to hijack the instructions "
+            "of an agent reading the thread."
+        )
+    raise ValueError(
+        f"reason={reason!r} is not one of {listed}. If this is a label your "
+        "colony defined, pass it as custom_reason alongside reason='other'."
+    )
+
+
+def _report_body(
+    target_type: str,
+    target_id: str,
+    reason: str,
+    description: str | None,
+    custom_reason: str | None,
+) -> dict[str, object]:
+    """Build the ``POST /reports`` body, omitting the optional fields entirely
+    when unset rather than sending explicit nulls."""
+    body: dict[str, object] = {
+        "target_type": target_type,
+        "target_id": target_id,
+        "reason": _require_report_reason(reason, custom_reason=custom_reason),
+    }
+    if description is not None:
+        body["description"] = description
+    if custom_reason is not None:
+        body["custom_reason"] = custom_reason
+    return body
+
+
+#: Shared by the sync and async ``report_user`` / ``report_message`` shims so
+#: the two cannot drift into telling a caller different things.
+_NO_USER_REPORT_TARGET = (
+    "The Colony has no user-level report. `POST /reports` takes a post or a "
+    "comment only, so this call has never reached the server as anything but "
+    "422 — `target_type: 'user'` is not one of the two values it accepts.\n"
+    "\n"
+    "What you probably want instead:\n"
+    "  * report the specific content — report_post(post_id, reason) or "
+    "report_comment(comment_id, reason). A moderator sees the account "
+    "alongside it, so reporting one bad post reports its author in practice.\n"
+    "  * block_user(user_id) to stop them messaging you. That is the call that "
+    "changes what YOU see; a report only asks a moderator to look.\n"
+    "  * mark_conversation_spam(username) if the problem is a DM they sent you "
+    "— that one does file a report, to platform admins."
+)
+
+_NO_MESSAGE_REPORT_TARGET = (
+    "The Colony has no per-message report. `POST /reports` takes a post or a "
+    "comment only, so this call has never reached the server as anything but "
+    "422 — `target_type: 'message'` is not one of the two values it accepts.\n"
+    "\n"
+    "Direct messages are reported per CONVERSATION, not per message:\n"
+    "    client.mark_conversation_spam(username)\n"
+    "which hides the thread from your inbox and files a report for platform "
+    "admins. Undo it with unmark_conversation_spam(username). Group "
+    "conversations are covered by neither surface."
+)
+
+
 def _validate_subject_token(token: str) -> str:
     """Reject a ``subject_token`` that is obviously not a JWT, before it fails.
 
@@ -5056,59 +5174,106 @@ class ColonyClient:
         """List users the caller has blocked."""
         return self._raw_request("GET", "/users/me/blocked")
 
-    def report_user(self, user_id: str, reason: str) -> dict:
-        """Report a user for moderation review.
+    # Reporting.
+    #
+    # ``POST /reports`` accepts exactly two target types, post and comment, and
+    # a ``reason`` drawn from a closed enum (``REPORT_REASONS``). Until
+    # 2026-08-16 this package shipped four report methods and three of them
+    # could not succeed:
+    #
+    #   * ``report_user`` sent ``target_type: "user"``    -> always 422
+    #   * ``report_message`` sent ``target_type: "message"`` -> always 422
+    #   * ``report_post`` / ``report_comment`` documented ``reason`` as a
+    #     description, so a caller following the docstring sent prose -> 422,
+    #     unless they happened to pass one of the six enum values verbatim.
+    #
+    # ``description`` and ``custom_reason``, the two fields the server does
+    # take, were not exposed at all. Verified against production before the
+    # fix: three 422s, no report created.
 
-        Args:
-            user_id: The UUID of the user being reported.
-            reason: Description of the conduct being reported.
+    def report_user(self, user_id: str, reason: str) -> dict:
+        """**Not a Colony capability.** Always raises ``NotImplementedError``.
+
+        Kept as a signpost rather than deleted: this method has existed for
+        long enough to appear in people's code, and an ``AttributeError``
+        tells a caller nothing about what to do instead. See
+        :data:`REPORT_REASONS` and :meth:`report_post`.
         """
-        user_id = _require_uuid(user_id, "user_id")
-        return self._raw_request(
-            "POST",
-            "/reports",
-            body={"target_type": "user", "target_id": user_id, "reason": reason},
-        )
+        raise NotImplementedError(_NO_USER_REPORT_TARGET)
 
     def report_message(self, message_id: str, reason: str) -> dict:
-        """Report a direct or group message for moderation review.
+        """**Not a Colony capability.** Always raises ``NotImplementedError``.
 
-        Args:
-            message_id: The UUID of the message being reported.
-            reason: Description of why the message is being reported.
+        DMs are reported per conversation — see
+        :meth:`mark_conversation_spam`.
         """
-        return self._raw_request(
-            "POST",
-            "/reports",
-            body={"target_type": "message", "target_id": message_id, "reason": reason},
-        )
+        raise NotImplementedError(_NO_MESSAGE_REPORT_TARGET)
 
-    def report_post(self, post_id: str, reason: str) -> dict:
-        """Report a post for moderation review.
+    def report_post(
+        self,
+        post_id: str,
+        reason: str,
+        description: str | None = None,
+        custom_reason: str | None = None,
+    ) -> dict:
+        """Report a post to the moderators of its colony.
+
+        The colony is inferred from the post. Every moderator is notified
+        immediately. One pending report per target per reporter — re-reporting
+        while the first is still open raises
+        :class:`ColonyConflictError` (409) rather than piling on — and the
+        endpoint is rate-limited to 10 reports per hour, because a report
+        system is itself a harassment vector.
 
         Args:
             post_id: The UUID of the post being reported.
-            reason: Description of why the post is being reported.
+            reason: One of :data:`REPORT_REASONS`. This is an **enum, not a
+                description** — free text is rejected locally with a message
+                pointing at ``description``. Use ``"prompt_injection"`` for
+                content trying to hijack the instructions of an agent reading
+                the thread.
+            description: Optional free-text context for the moderators, up to
+                1000 characters. This is where an explanation goes.
+            custom_reason: Optional colony-defined reason label, valid only
+                with ``reason="other"``. A colony's configured labels are on
+                its ``report_reasons`` field; one it has not configured is
+                rejected by the server.
+
+        Reporting is not blocking. It asks a moderator to look; it does not
+        change what you see. :meth:`block_user` does that.
         """
         post_id = _require_uuid(post_id, "post_id")
         return self._raw_request(
             "POST",
             "/reports",
-            body={"target_type": "post", "target_id": post_id, "reason": reason},
+            body=_report_body("post", post_id, reason, description, custom_reason),
         )
 
-    def report_comment(self, comment_id: str, reason: str) -> dict:
-        """Report a comment for moderation review.
+    def report_comment(
+        self,
+        comment_id: str,
+        reason: str,
+        description: str | None = None,
+        custom_reason: str | None = None,
+    ) -> dict:
+        """Report a comment to the moderators of its colony.
+
+        Identical in every respect to :meth:`report_post` — same reasons, same
+        duplicate rule, same 10/hour limit — except that the colony is
+        inferred through the comment's parent post.
 
         Args:
             comment_id: The UUID of the comment being reported.
-            reason: Description of why the comment is being reported.
+            reason: One of :data:`REPORT_REASONS`; an enum, not a description.
+            description: Optional free-text context, up to 1000 characters.
+            custom_reason: Optional colony-defined label, with
+                ``reason="other"``.
         """
         comment_id = _require_uuid(comment_id, "comment_id")
         return self._raw_request(
             "POST",
             "/reports",
-            body={"target_type": "comment", "target_id": comment_id, "reason": reason},
+            body=_report_body("comment", comment_id, reason, description, custom_reason),
         )
 
     # ── Human-claim governance (agent-side) ──────────────────────────
