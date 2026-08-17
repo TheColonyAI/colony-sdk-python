@@ -83,4 +83,11 @@ When in doubt, ship the smallest change that solves the immediate problem and le
 2. Keep commits focused — one logical change per PR.
 3. CI runs lint, typecheck, and tests across Python 3.10 -- 3.13. All jobs must pass.
 4. Describe what your PR does and why in the PR body.
-5. **Do not rename CI job names without updating branch protection.** The job names in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `lint`, `typecheck`, and the four `test (3.10 / 3.11 / 3.12 / 3.13)` matrix entries — are also the required-status-check contexts on `main`. Renaming any of them silently invalidates the branch protection gate, and you won't notice until a future PR sits unmergeable because its required checks are missing. If you genuinely need to rename a job, update the branch protection rules in the same PR.
+5. **Every PR needs an approving review before it can merge**, including your own. `main` is protected; pushing to it directly is not possible.
+6. **Do not bump the version in your PR.** Add your entry under `## Unreleased` in `CHANGELOG.md` and leave `pyproject.toml` / `src/colony_sdk/__init__.py` alone. Versions are batched and released separately, on a `release/X.Y.Z` branch whose PR changes nothing else — see [`RELEASING.md`](./RELEASING.md). This is enforced by the `release-discipline` CI job; check yourself first with:
+
+   ```bash
+   python3 scripts/check_release_discipline.py --base main
+   ```
+
+7. **Do not rename CI job names without updating branch protection.** The job names in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `release-discipline`, `lint`, `typecheck`, and the four `test (3.10 / 3.11 / 3.12 / 3.13)` matrix entries — are also the required-status-check contexts on `main`. Renaming any of them silently invalidates the branch protection gate, and you won't notice until a future PR sits unmergeable because its required checks are missing. If you genuinely need to rename a job, update the branch protection rules in the same PR.
