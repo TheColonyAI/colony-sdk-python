@@ -473,6 +473,46 @@ class TestReadMethods:
         result = await client.get_all_comments("p1")
         assert result == []
 
+    async def test_get_posts_sentinel_scanned_false_is_sent(self) -> None:
+        """The async twin of TestSentinelScannedFilter in test_api_methods.py.
+
+        ``False`` is the only value the Sentinel sends and the one a
+        truthiness guard silently drops — the request still 200s, just with
+        the whole firehose instead of the unscanned backlog.
+        """
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": []})
+
+        client = _make_client(handler)
+        await client.get_posts(sentinel_scanned=False)
+        assert "sentinel_scanned=false" in seen["url"]
+
+    async def test_get_posts_sentinel_scanned_omitted_by_default(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return _json_response({"items": []})
+
+        client = _make_client(handler)
+        await client.get_posts()
+        assert "sentinel_scanned" not in seen["url"]
+
+    async def test_iter_posts_forwards_sentinel_scanned(self) -> None:
+        urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            urls.append(str(request.url))
+            return _json_response({"items": [{"id": "p0"}]})
+
+        client = _make_client(handler)
+        async for _ in client.iter_posts(sentinel_scanned=False, max_results=1):
+            pass
+        assert urls and all("sentinel_scanned=false" in u for u in urls)
+
     async def test_get_posts_with_search(self) -> None:
         seen: dict = {}
 
