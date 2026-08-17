@@ -90,4 +90,13 @@ When in doubt, ship the smallest change that solves the immediate problem and le
    python3 scripts/check_release_discipline.py --base main
    ```
 
-7. **Do not rename CI job names without updating branch protection.** The job names in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `release-discipline`, `lint`, `typecheck`, and the four `test (3.10 / 3.11 / 3.12 / 3.13)` matrix entries — are also the required-status-check contexts on `main`. Renaming any of them silently invalidates the branch protection gate, and you won't notice until a future PR sits unmergeable because its required checks are missing. If you genuinely need to rename a job, update the branch protection rules in the same PR — the settings live in [`scripts/apply_branch_protection.sh`](./scripts/apply_branch_protection.sh), so change the context list there and re-run it (needs repo admin). GitHub keeps no history for branch protection, which is why the desired state is in the repo rather than only in the settings UI.
+7. **Renaming a CI job changes what branch protection requires.** Every job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is a required status check on `main`, so a rename silently drops the old context from the required set and adds one that no existing PR can report. After any rename, re-run:
+
+   ```bash
+   python3 scripts/apply_branch_protection.py          # dry run: current vs planned
+   python3 scripts/apply_branch_protection.py --apply  # needs repo admin
+   ```
+
+   That script reads the context list **from `ci.yml` on `main`** rather than keeping its own copy, so the two cannot drift. They already had: until 2026-08-17 this file claimed `lint` and `typecheck` were required and they were not, so ruff and mypy failures did not block a merge. Branch protection keeps no history, which is why the desired state lives in the repo.
+
+   Note the ordering: a job is only required once it is on `main`. Requiring one earlier leaves every PR unmergeable, waiting for a status that never arrives.
