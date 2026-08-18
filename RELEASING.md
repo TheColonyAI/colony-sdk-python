@@ -11,6 +11,54 @@ talking to the server. Those live in a **separate private repo**,
 [`TheColonyAI/colony-sdk-integration`](https://github.com/TheColonyAI/colony-sdk-integration), and are owned and run by
 the operator — never as part of cutting a release.
 
+## The version bump is its own PR
+
+**Do not bump the version as part of a feature branch.** Land the change with
+its CHANGELOG entry under `## Unreleased`; the version moves separately, in a
+PR that changes nothing else.
+
+Two reasons, and they pull in the same direction:
+
+- **Batching.** A bump per merge makes the version a running commentary on
+  branch history rather than a statement about a release, and it forces a
+  release for every change that lands. Entries accumulate under `## Unreleased`
+  and one release promotes them together.
+- **Standalone review and revert.** A release PR whose diff is three files can
+  be reviewed at a glance, and can be reverted without taking a feature with
+  it. Once a feature rides along, neither is true.
+
+This is enforced, not just documented — `scripts/check_release_discipline.py`
+runs on every PR (the `release-discipline` job in
+[`ci.yml`](.github/workflows/ci.yml)) and refuses:
+
+| Situation | Result |
+|---|---|
+| Feature PR changes the version | ❌ blocked |
+| Feature PR opens a new `## X.Y.Z` changelog heading | ❌ blocked |
+| `release/*` PR touches anything but the two version files + `CHANGELOG.md` | ❌ blocked |
+| `release/*` PR that forgets to bump the version | ❌ blocked |
+
+A release PR is identified by a branch name starting with `release/`.
+Deliberately a branch name rather than a label: a label can be added after
+approval, which would let a PR change meaning between review and merge.
+
+Check before pushing:
+
+```bash
+python3 scripts/check_release_discipline.py --base main
+```
+
+It compares the version *value* in `pyproject.toml` and
+`src/colony_sdk/__init__.py`, not whether those files changed — `pyproject.toml`
+legitimately changes for dependency and tooling edits, and blocking those would
+train everyone to route around the check.
+
+The rule predates the enforcement: step 8 below has always said the bump goes in
+its own PR, and `## Unreleased` has always been the staging area. Both decayed
+anyway — the changelog lost its `Unreleased` section entirely, and a feature
+branch shipped an inline bump on 2026-08-17 with nothing objecting. A rule that
+lives only in a document holds until someone is in a hurry.
+
 ## Pre-release checklist
 
 Run this in order. Stop and fix anything that's red.
@@ -64,18 +112,23 @@ Run this in order. Stop and fix anything that's red.
    Any `pytest` failure is a release blocker. mypy errors are reported
    as advisory (downstream packages have their own type-stub noise).
 
-5. **Bump the version.** Update `pyproject.toml` and
+5. **Cut a `release/X.Y.Z` branch off `main`.** The branch name is what
+   marks this as a release PR — see "The version bump is its own PR" above.
+
+6. **Bump the version.** Update `pyproject.toml` and
    `src/colony_sdk/__init__.py` to the new `X.Y.Z`. Both must agree —
    the release workflow refuses to publish if they don't.
 
-6. **Move the changelog.** Promote `## Unreleased` to
+7. **Move the changelog.** Promote `## Unreleased` to
    `## X.Y.Z — YYYY-MM-DD` in `CHANGELOG.md`. The release workflow uses
    awk to extract this section as the GitHub Release notes, so the
    heading format must match exactly.
 
-7. **Open a PR with steps 5–6, get it green on CI, and merge to `main`.**
+8. **Open a PR with steps 6–7 and nothing else**, get it green on CI, get
+   the required approving review, and merge to `main`. The diff should be
+   three files.
 
-8. **Tag and push.**
+9. **Tag and push.**
 
    ```bash
    git checkout main && git pull
@@ -87,7 +140,7 @@ Run this in order. Stop and fix anything that's red.
    + sdist, publish to PyPI via OIDC (no token), and create a GitHub
    Release with the changelog entry as the body.
 
-9. **Verify the release on PyPI** within ~2 minutes:
+10. **Verify the release on PyPI** within ~2 minutes:
    <https://pypi.org/project/colony-sdk/>
 
 ## If something goes wrong
@@ -95,7 +148,7 @@ Run this in order. Stop and fix anything that's red.
 - **Tag/version mismatch:** the build job's `Verify version matches tag`
   step fails. Delete the tag (`git push --delete origin vX.Y.Z`), fix
   the version in **both** `pyproject.toml` **and** `src/colony_sdk/__init__.py`
-  (they must agree — see step 5), and re-tag.
+  (they must agree — see step 6), and re-tag.
 - **Integration tests fail after release:** the bug shipped. Open a
   bugfix PR, bump the patch version, follow the checklist again. PyPI
   doesn't allow re-uploading the same version.

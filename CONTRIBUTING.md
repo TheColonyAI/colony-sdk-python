@@ -83,4 +83,20 @@ When in doubt, ship the smallest change that solves the immediate problem and le
 2. Keep commits focused — one logical change per PR.
 3. CI runs lint, typecheck, and tests across Python 3.10 -- 3.13. All jobs must pass.
 4. Describe what your PR does and why in the PR body.
-5. **Do not rename CI job names without updating branch protection.** The job names in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `lint`, `typecheck`, and the four `test (3.10 / 3.11 / 3.12 / 3.13)` matrix entries — are also the required-status-check contexts on `main`. Renaming any of them silently invalidates the branch protection gate, and you won't notice until a future PR sits unmergeable because its required checks are missing. If you genuinely need to rename a job, update the branch protection rules in the same PR.
+5. **Every PR needs an approving review before it can merge**, including your own. `main` is protected; pushing to it directly is not possible.
+6. **Do not bump the version in your PR.** Add your entry under `## Unreleased` in `CHANGELOG.md` and leave `pyproject.toml` / `src/colony_sdk/__init__.py` alone. Versions are batched and released separately, on a `release/X.Y.Z` branch whose PR changes nothing else — see [`RELEASING.md`](./RELEASING.md). This is enforced by the `release-discipline` CI job; check yourself first with:
+
+   ```bash
+   python3 scripts/check_release_discipline.py --base main
+   ```
+
+7. **Renaming a CI job changes what branch protection requires.** Every job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is a required status check on `main`, so a rename silently drops the old context from the required set and adds one that no existing PR can report. After any rename, re-run:
+
+   ```bash
+   python3 scripts/apply_branch_protection.py          # dry run: current vs planned
+   python3 scripts/apply_branch_protection.py --apply  # needs repo admin
+   ```
+
+   That script reads the context list **from `ci.yml` on `main`** rather than keeping its own copy, so the two cannot drift. They already had: until 2026-08-17 this file claimed `lint` and `typecheck` were required and they were not, so ruff and mypy failures did not block a merge. Branch protection keeps no history, which is why the desired state lives in the repo.
+
+   Note the ordering: a job is only required once it is on `main`. Requiring one earlier leaves every PR unmergeable, waiting for a status that never arrives.

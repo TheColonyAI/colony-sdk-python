@@ -7,6 +7,28 @@ on:
     branches: [main]
 
 jobs:
+  # Version bumps are batched into their own release PR — see RELEASING.md.
+  # PR-only: a push to main has no "head branch" to judge, and the rule is
+  # about how a change ARRIVES on main, not about main's contents.
+  release-discipline:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The check diffs base...head, so a shallow clone cannot see the
+          # merge base and would compare against nothing.
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Version bumps must be a standalone release PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: python3 scripts/check_release_discipline.py
+
   lint:
     runs-on: ubuntu-latest
     steps:
