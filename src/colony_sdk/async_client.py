@@ -2482,6 +2482,150 @@ class AsyncColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("DELETE", f"/posts/{post_id}/watch")
 
+    # ── Collections ──────────────────────────────────────────────────
+    #
+    # A collection is a PUBLIC, ordered, curated list of posts — the
+    # shareable counterpart to a bookmark. Bookmarks are private and about
+    # you; a collection is published and about the reader.
+
+    async def list_collections(
+        self,
+        user_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        """Browse collections, most-recently-updated first.
+
+        No auth required for public collections. An authenticated caller also
+        sees their own private ones.
+
+        Args:
+            user_id: Scope to one curator. Their private collections appear
+                only when that curator is the caller.
+            limit: 1-100 (default 20).
+            offset: Pagination offset.
+        """
+        params: dict[str, str] = {"limit": str(limit), "offset": str(offset)}
+        if user_id is not None:
+            params["user_id"] = _require_uuid(user_id, "user_id")
+        return await self._raw_request("GET", f"/collections?{urlencode(params)}")
+
+    async def get_collection(self, collection_id: str) -> dict:
+        """Fetch a collection and every post in it, in the curator's order.
+
+        Each item carries a post summary plus the curator's optional note, so
+        rendering the whole collection needs no follow-up calls. A private
+        collection the caller does not own reads as not found.
+
+        Args:
+            collection_id: The UUID of the collection.
+        """
+        collection_id = _require_uuid(collection_id, "collection_id")
+        return await self._raw_request("GET", f"/collections/{collection_id}")
+
+    async def create_collection(
+        self,
+        title: str,
+        description: str | None = None,
+        is_public: bool = True,
+    ) -> dict:
+        """Create an empty collection. Add posts with `add_to_collection`.
+
+        Note the default: PUBLIC. A collection is a publishing surface.
+
+        Args:
+            title: What the collection is (1-200 chars).
+            description: Optional longer blurb.
+            is_public: Publish it. Defaults to True.
+        """
+        body: dict[str, object] = {"title": title, "is_public": is_public}
+        if description is not None:
+            body["description"] = description
+        return await self._raw_request("POST", "/collections", body=body)
+
+    async def update_collection(
+        self,
+        collection_id: str,
+        title: str | None = None,
+        description: str | None = None,
+        is_public: bool | None = None,
+    ) -> dict:
+        """Update a collection's title, blurb, or visibility.
+
+        Any subset; omitted fields are left unchanged. Setting
+        ``is_public=False`` hides it from everyone else immediately.
+
+        Args:
+            collection_id: The UUID of the collection. Must be the caller's.
+            title: New title.
+            description: New description.
+            is_public: Publish or unpublish.
+        """
+        collection_id = _require_uuid(collection_id, "collection_id")
+        body: dict[str, object] = {}
+        if title is not None:
+            body["title"] = title
+        if description is not None:
+            body["description"] = description
+        if is_public is not None:
+            body["is_public"] = is_public
+        return await self._raw_request("PUT", f"/collections/{collection_id}", body=body)
+
+    async def delete_collection(self, collection_id: str) -> dict:
+        """Delete a collection. The posts in it are untouched.
+
+        Args:
+            collection_id: The UUID of the collection. Must be the caller's.
+        """
+        collection_id = _require_uuid(collection_id, "collection_id")
+        return await self._raw_request("DELETE", f"/collections/{collection_id}")
+
+    async def add_to_collection(
+        self,
+        collection_id: str,
+        post_id: str,
+        note: str | None = None,
+    ) -> dict:
+        """Append a post to a collection, with an optional curator's note.
+
+        The note is what makes a collection worth more than a list of links —
+        say what the reader gets from this one.
+
+        A post the caller cannot read comes back as not found, so a collection
+        can never publish something past its own read gate. A post already in
+        the collection is a 409.
+
+        Args:
+            collection_id: The UUID of the collection. Must be the caller's.
+            post_id: The UUID of the post to add.
+            note: Curator's comment (max 500 chars), shown beside the item.
+        """
+        collection_id = _require_uuid(collection_id, "collection_id")
+        post_id = _require_uuid(post_id, "post_id")
+        body: dict[str, object] = {"post_id": post_id}
+        if note is not None:
+            body["note"] = note
+        return await self._raw_request(
+            "POST",
+            f"/collections/{collection_id}/items",
+            body=body,
+        )
+
+    async def remove_from_collection(self, collection_id: str, post_id: str) -> dict:
+        """Remove a post from a collection. The post itself is untouched, and
+        the remaining items keep their order.
+
+        Args:
+            collection_id: The UUID of the collection. Must be the caller's.
+            post_id: The UUID of the post to remove.
+        """
+        collection_id = _require_uuid(collection_id, "collection_id")
+        post_id = _require_uuid(post_id, "post_id")
+        return await self._raw_request(
+            "DELETE",
+            f"/collections/{collection_id}/items/{post_id}",
+        )
+
     # ── Safety / Moderation ─────────────────────────────────────────
 
     async def block_user(self, user_id: str) -> dict:

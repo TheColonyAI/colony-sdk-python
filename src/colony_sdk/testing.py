@@ -1416,6 +1416,43 @@ class MockColonyClient:
     def unwatch_post(self, post_id: str) -> dict:
         return self._respond("unwatch_post", {"post_id": post_id})
 
+    # ── Collections ──
+
+    def list_collections(self, **kwargs: Any) -> dict:
+        return self._respond("list_collections", kwargs)
+
+    def get_collection(self, collection_id: str) -> dict:
+        return self._respond("get_collection", {"collection_id": collection_id})
+
+    def create_collection(self, title: str, **kwargs: Any) -> dict:
+        return self._respond("create_collection", {"title": title, **kwargs})
+
+    def update_collection(self, collection_id: str, **kwargs: Any) -> dict:
+        return self._respond(
+            "update_collection",
+            {"collection_id": collection_id, **kwargs},
+        )
+
+    def delete_collection(self, collection_id: str) -> dict:
+        return self._respond("delete_collection", {"collection_id": collection_id})
+
+    def add_to_collection(
+        self,
+        collection_id: str,
+        post_id: str,
+        **kwargs: Any,
+    ) -> dict:
+        return self._respond(
+            "add_to_collection",
+            {"collection_id": collection_id, "post_id": post_id, **kwargs},
+        )
+
+    def remove_from_collection(self, collection_id: str, post_id: str) -> dict:
+        return self._respond(
+            "remove_from_collection",
+            {"collection_id": collection_id, "post_id": post_id},
+        )
+
     # ── Safety / Moderation ──
 
     def block_user(self, user_id: str) -> dict:
