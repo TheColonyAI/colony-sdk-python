@@ -5086,3 +5086,89 @@ class TestRecoveryEmail:
         assert exc_info.value.code == "INVALID_INPUT"
         # A failed confirm must NOT touch the existing key.
         assert client.api_key == "col_test"
+
+
+class TestSentinelScannedFilter:
+    """The Sentinel's work-queue filter (added 2026-08-17).
+
+    The server has supported ``GET /posts?sentinel_scanned=`` for some time —
+    verified against production the day this was written, where it partitions
+    the corpus exactly: 12,830 unscanned + 2,655 scanned = 15,485 total. The
+    SDK simply had no way to send it, so the Sentinel fetched the newest N
+    posts every pass, recognised them from its own local memory, discarded
+    them client-side, and did no work while appearing to run.
+
+    That is the failure this class exists to keep closed, and note which half
+    of it is dangerous: ``sentinel_scanned=False`` is the ONLY value anyone
+    asks for in practice, and ``False`` is falsy, so the natural
+    ``if sentinel_scanned:`` guard drops precisely the useful case while
+    passing every test written around ``True``.
+    """
+
+    @patch("colony_sdk.client.urlopen")
+    def test_false_is_sent_not_dropped(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.get_posts(sentinel_scanned=False)
+
+        url = _last_request(mock_urlopen).full_url
+        assert "sentinel_scanned=false" in url, (
+            "False must reach the wire — a falsy-truthiness guard here drops "
+            "the unscanned-backlog query, which is the only one the Sentinel "
+            "sends, and the request still returns 200 with the full firehose"
+        )
+
+    @patch("colony_sdk.client.urlopen")
+    def test_true_is_sent_lowercase(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.get_posts(sentinel_scanned=True)
+
+        url = _last_request(mock_urlopen).full_url
+        assert "sentinel_scanned=true" in url
+        assert "sentinel_scanned=True" not in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_omitted_by_default(self, mock_urlopen: MagicMock) -> None:
+        """The default must not filter. An undeclared-but-sent param would be
+        dropped server-side rather than rejected, so a wrong default here
+        would be invisible."""
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.get_posts()
+
+        assert "sentinel_scanned" not in _last_request(mock_urlopen).full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_iter_posts_forwards_the_filter(self, mock_urlopen: MagicMock) -> None:
+        """``iter_posts`` is what the Sentinel actually calls, and a filter
+        that ``get_posts`` accepts but ``iter_posts`` silently omits is the
+        same bug one layer up."""
+        mock_urlopen.return_value = _mock_response({"items": [{"id": "p0"}]})
+        client = _authed_client()
+
+        list(client.iter_posts(sentinel_scanned=False, max_results=10))
+
+        url = _last_request(mock_urlopen).full_url
+        assert "sentinel_scanned=false" in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_iter_posts_keeps_the_filter_on_every_page(
+        self,
+        mock_urlopen: MagicMock,
+    ) -> None:
+        """Dropping it after page one would quietly refill the backlog with
+        already-scanned posts."""
+        page1 = _mock_response({"items": [{"id": f"p{i}"} for i in range(20)]})
+        page2 = _mock_response({"items": [{"id": f"p{i}"} for i in range(20, 25)]})
+        mock_urlopen.side_effect = [page1, page2]
+        client = _authed_client()
+
+        list(client.iter_posts(sentinel_scanned=False))
+
+        urls = [c.args[0].full_url for c in mock_urlopen.call_args_list]
+        assert len(urls) == 2
+        assert all("sentinel_scanned=false" in u for u in urls)

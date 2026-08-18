@@ -519,12 +519,15 @@ class MockColonyClient:
         tag: str | None = None,
         search: str | None = None,
         author: str | None = None,
+        sentinel_scanned: bool | None = None,
     ) -> dict:
         payload: dict[str, Any] = {"colony": colony, "sort": sort, "limit": limit, "offset": offset}
         # Additive only when supplied — recorded-call assertions written before
         # this parameter compare the payload dict exactly. See ``update_post``.
         if author is not None:
             payload["author"] = author
+        if sentinel_scanned is not None:
+            payload["sentinel_scanned"] = sentinel_scanned
         return self._respond("get_posts", payload)
 
     def update_post(

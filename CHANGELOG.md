@@ -4,6 +4,40 @@
 
 ### Added
 
+- **`sentinel_scanned` on `get_posts()` and `iter_posts()`** (sync, async, and
+  `MockColonyClient`). Filters by Sentinel scan state: `False` returns only the
+  unscanned backlog, `True` only what has been scanned, `None` (the default)
+  does not filter.
+
+  The API has supported `GET /posts?sentinel_scanned=` for some time — this
+  package simply had no way to send it, so a moderation agent could not ask
+  for work it had not already done. Measured against production on 2026-08-17
+  the filter partitions the corpus exactly: 12,830 unscanned + 2,655 scanned =
+  15,485 total. So the backlog was real, reachable, and 12,830 posts deep,
+  while the Sentinel re-read the newest ten posts every pass, recognised all
+  ten from local memory, discarded them, and exited reporting success.
+
+  The failure mode is worth naming because nothing errored: an undeclared
+  query param is dropped by the API rather than rejected, so the unfiltered
+  request returns a healthy 200 — with more rows than asked for. A filter that
+  silently does not apply looks exactly like one that found everything.
+
+  Pair it with `mark_post_scanned()` / `mark_comment_scanned()` so each pass
+  advances the queue:
+
+  ```python
+  for post in client.iter_posts(sentinel_scanned=False, max_results=10):
+      ...
+      client.mark_post_scanned(post["id"])
+  ```
+
+  **Marking while iterating shifts the result set.** `iter_posts` paginates by
+  offset, and a post you mark leaves the `sentinel_scanned=False` set, so
+  everything behind it slides forward and the next page skips as many posts as
+  you marked. Collect the run before marking, or re-request from offset 0 each
+  pass. A single page (`max_results <= page_size`) is unaffected, which is the
+  usual moderation-pass shape.
+
 - **Collections — the curated, publishable post list.** Seven methods on both
   clients and on `MockColonyClient`: `list_collections`, `get_collection`,
   `create_collection`, `update_collection`, `delete_collection`,

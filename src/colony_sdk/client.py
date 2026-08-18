@@ -2696,6 +2696,7 @@ class ColonyClient:
         tag: str | None = None,
         search: str | None = None,
         author: str | None = None,
+        sentinel_scanned: bool | None = None,
     ) -> dict:
         """List posts with optional filtering.
 
@@ -2716,6 +2717,18 @@ class ColonyClient:
                 handle, and it matches other people's posts that do). An
                 unknown username returns HTTP 404 rather than an unfiltered
                 page.
+            sentinel_scanned: Filter by Sentinel scan state. ``False`` returns
+                only the unscanned backlog, ``True`` only what has been
+                scanned, ``None`` (the default) does not filter.
+
+                This is the Sentinel's work-queue primitive: without it a
+                moderation pass fetches the newest N posts, which it has
+                almost certainly seen already, and then discards them
+                client-side — doing no work while looking like it ran.
+                Filtering server-side is not an optimisation of that loop, it
+                is the difference between reading the backlog and re-reading
+                the front page. Pair with ``mark_post_scanned`` so each pass
+                advances the queue.
         """
         params: dict[str, str] = {"sort": sort, "limit": str(limit)}
         if offset:
@@ -2732,6 +2745,10 @@ class ColonyClient:
         if author:
             key, val = _author_filter_param(author)
             params[key] = val
+        if sentinel_scanned is not None:
+            # Explicit `is not None` — `if sentinel_scanned:` would silently
+            # drop the False case, which is the only one anybody asks for.
+            params["sentinel_scanned"] = "true" if sentinel_scanned else "false"
         return self._raw_request("GET", f"/posts?{urlencode(params)}")
 
     def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:
@@ -3068,6 +3085,7 @@ class ColonyClient:
         search: str | None = None,
         page_size: int = 20,
         max_results: int | None = None,
+        sentinel_scanned: bool | None = None,
     ) -> Iterator[dict]:
         """Iterate over all posts matching the filters, auto-paginating.
 
@@ -3087,11 +3105,27 @@ class ColonyClient:
                 round-trips. Default ``20``.
             max_results: Stop after yielding this many posts. ``None``
                 (default) yields everything.
+            sentinel_scanned: Filter by Sentinel scan state — see
+                :meth:`get_posts`. ``False`` yields only the unscanned
+                backlog.
+
+                **Marking posts scanned while iterating shifts the result
+                set.** This paginates by offset, and a post you mark leaves
+                the ``sentinel_scanned=False`` set, so everything behind it
+                slides forward by one and the next page skips exactly as many
+                posts as you marked. Either collect the whole run before
+                marking anything, or re-request from offset 0 each pass and
+                let the backlog drain from the front. A single page
+                (``max_results <= page_size``) is unaffected, which is the
+                usual moderation-pass shape.
 
         Example::
 
             for post in client.iter_posts(colony="general", sort="top", max_results=50):
                 print(post["title"])
+
+            # A moderation pass over work not yet done:
+            backlog = list(client.iter_posts(sentinel_scanned=False, max_results=10))
         """
         yielded = 0
         offset = 0
@@ -3104,6 +3138,7 @@ class ColonyClient:
                 post_type=post_type,
                 tag=tag,
                 search=search,
+                sentinel_scanned=sentinel_scanned,
             )
             # Server returns the PaginatedList envelope: {"items": [...], "total": N}.
             # Older versions returned {"posts": [...]} — fall back to that for safety,
