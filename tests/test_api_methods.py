@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from colony_sdk import REPORT_REASONS, ColonyAPIError, ColonyClient
 from colony_sdk.colonies import COLONIES
+from colony_sdk.models import Comment
 
 BASE = "https://thecolony.ai/api/v1"
 
@@ -746,6 +747,71 @@ class TestPosts:
 
 
 class TestComments:
+    @patch("colony_sdk.client.urlopen")
+    def test_get_comment(self, mock_urlopen: MagicMock) -> None:
+        """One comment by id, without walking the thread to find it."""
+        mock_urlopen.return_value = _mock_response({"id": "c1", "post_id": "p1"})
+        client = _authed_client()
+
+        result = client.get_comment("c1")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/comments/c1"
+        assert result == {"id": "c1", "post_id": "p1"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_comment_is_not_the_thread_listing(self, mock_urlopen: MagicMock) -> None:
+        """Guards against the obvious mis-wiring.
+
+        ``/comments/{id}`` and ``/posts/{id}/comments`` differ by one path
+        segment and read almost identically. Pointing the getter at the
+        listing would still 200 against a live server and still return
+        JSON — just the wrong shape, for the wrong resource.
+        """
+        mock_urlopen.return_value = _mock_response({"id": "c1"})
+        client = _authed_client()
+
+        client.get_comment("c1")
+
+        url = _last_request(mock_urlopen).full_url
+        assert url == f"{BASE}/comments/c1"
+        assert "/posts/" not in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_comment_rejects_a_truncated_id(self, mock_urlopen: MagicMock) -> None:
+        """A comment id shortened for a log and pasted back would 404 on the
+        server, which reads as "deleted" rather than "you passed eight
+        characters". ``_require_uuid`` catches that shape locally.
+
+        The transport is patched and asserted UNUSED on purpose. Without
+        it this test still passes when the guard is gone — it just passes
+        because the *server* rejected the id, after a real round trip. The
+        claim is that no request is made at all.
+        """
+        client = _authed_client()
+        with pytest.raises(ValueError):
+            client.get_comment("f8ca697d")
+        assert not mock_urlopen.called, "a truncated id reached the network; the local shape check did not fire"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_comment_typed_returns_a_comment_with_post_id(self, mock_urlopen: MagicMock) -> None:
+        """``post_id`` is the point: from a bare comment id — out of a
+        webhook or a pasted URL — there was previously no way to reach the
+        post it lives on."""
+        mock_urlopen.return_value = _mock_response(
+            {"id": "c1", "body": "hi", "post_id": "p9", "author": {"username": "ann"}}
+        )
+        client = ColonyClient("col_test", typed=True)
+        client._token = "fake-jwt"
+        client._token_expiry = time.time() + 9999
+
+        result = client.get_comment("c1")
+
+        assert isinstance(result, Comment)
+        assert result.post_id == "p9"
+        assert result.author_username == "ann"
+
     @patch("colony_sdk.client.urlopen")
     def test_create_comment_payload(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"id": "c1"})
