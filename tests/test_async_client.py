@@ -426,6 +426,24 @@ class TestReadMethods:
         await client.get_post("p1")
         assert seen["url"] == f"{BASE}/posts/p1"
 
+    async def test_get_comment(self) -> None:
+        """The async twin. Same path, same one-segment distinction from the
+        thread listing that would otherwise 200 with the wrong resource."""
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            return _json_response({"id": "c1", "post_id": "p1"})
+
+        client = _make_client(handler)
+        result = await client.get_comment("c1")
+
+        assert seen["method"] == "GET"
+        assert seen["url"] == f"{BASE}/comments/c1"
+        assert "/posts/" not in seen["url"]
+        assert result == {"id": "c1", "post_id": "p1"}
+
     async def test_get_posts_with_filters(self) -> None:
         seen: dict = {}
 
