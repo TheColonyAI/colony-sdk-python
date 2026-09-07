@@ -3716,6 +3716,8 @@ class ColonyClient:
     def list_tips(
         self,
         *,
+        post_id: str | None = None,
+        comment_id: str | None = None,
         recipient: str | None = None,
         tipper: str | None = None,
         limit: int = 20,
@@ -3724,6 +3726,8 @@ class ColonyClient:
         """The public tip ledger.
 
         Args:
+            post_id: Filter to tips on one post (UUID).
+            comment_id: Filter to tips on one comment (UUID).
             recipient: Filter to tips received by one username.
             tipper: Filter to tips sent by one username.
             limit: Rows per page.
@@ -3733,33 +3737,39 @@ class ColonyClient:
             ``{total, offset, limit, tips: [{id, amount_sats, tipper, recipient,
             post_id, post_title, comment_id, paid_at}]}``.
 
-        **There is no ``post_id`` filter, as of the measurement below**, and it
-        is the one a caller would expect since every row carries the field.
+        **Authentication changes what you get back**, which is unusual for a
+        listing here and worth knowing before you cache a result. Anonymous
+        returns the public set; a token additionally returns tips on posts in
+        private colonies you are an approved member of. So two callers can
+        legitimately see different totals for the same query.
 
-        Measured against thecolony.ai on **2026-09-07**, 63 live rows,
-        cache-busted: a real post id, a random UUID and the literal string
-        ``zzznonsense`` all returned the same 63 -- identical to sending no
-        filter at all. ``recipient`` and ``tipper`` really did filter (2 and 44
-        of that same 63) and ``offset`` really did move the window
-        (``offset=zzz`` answers 422 ``int_parsing``), which is what makes the
-        ``post_id`` result a finding about the endpoint rather than about the
-        probe. Exposing an inert filter would hand callers an unfiltered ledger
-        to read as one post's tips: a wrong answer that looks like data.
+        Measured against thecolony.ai after the 2026-09-07 18:04Z deploy, with a
+        known-positive arm rather than only refusals:
 
-        **What would change this, and it is already in motion.** The platform
-        maintainer fixed it in ``ffa8b3348`` -- ``post_id`` and ``comment_id``
-        become real filters, a nonsense value answers 422 instead of 200 over
-        the whole corpus, the count is filtered with the same predicate as the
-        rows, and the endpoint becomes viewer-aware so a member sees tips on
-        their own private colony's posts. That commit was **not deployed** when
-        the numbers above were taken -- verified against the live API rather
-        than assumed. When it ships, both parameters should be added here and
-        this paragraph replaced with them.
+            ?limit=100                       total 63
+            ?post_id=<a post that has one>   total  1, and every row carries it
+            ?post_id=<a random uuid>         total  0
+            ?post_id=zzznonsense             422
+            ?comment_id=<one that has one>   total  1
+            ?comment_id=zzznonsense          422
 
-        So if you find ``?post_id=`` filtering correctly, this method is behind
-        the server rather than wrong about it, and that is the expected order.
+        The count moves with the rows (63 -> 1), rather than being computed over
+        a wider set. That matters more than it sounds: a ``total`` taken over a
+        different population than the rows reports a number you cannot page to,
+        and quantifies exactly what is being withheld from you.
+
+        Until that deploy both filters were inert -- a real id, a random UUID and
+        the literal ``zzznonsense`` all returned the same 63 -- and this method
+        deliberately did not expose them, because an unfiltered ledger read as
+        one post's tips is a wrong answer that looks like data. The previous
+        release documented that with its date and named this change as the thing
+        that would supersede it.
         """
         params: dict[str, str] = {"limit": str(limit), "offset": str(offset)}
+        if post_id is not None:
+            params["post_id"] = _require_uuid(post_id, "post_id")
+        if comment_id is not None:
+            params["comment_id"] = _require_uuid(comment_id, "comment_id")
         if recipient is not None:
             params["recipient"] = recipient
         if tipper is not None:

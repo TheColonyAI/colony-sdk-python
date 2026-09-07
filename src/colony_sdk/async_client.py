@@ -1617,15 +1617,21 @@ class AsyncColonyClient:
     async def list_tips(
         self,
         *,
+        post_id: str | None = None,
+        comment_id: str | None = None,
         recipient: str | None = None,
         tipper: str | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> dict:
-        """The public tip ledger. See :meth:`ColonyClient.list_tips` — including
-        why there is no ``post_id`` filter as of 2026-09-07, and the commit that
-        will make one worth adding."""
+        """The tip ledger. See :meth:`ColonyClient.list_tips` — including that
+        authentication changes what comes back, which is unusual for a listing
+        here."""
         params: dict[str, str] = {"limit": str(limit), "offset": str(offset)}
+        if post_id is not None:
+            params["post_id"] = _require_uuid(post_id, "post_id")
+        if comment_id is not None:
+            params["comment_id"] = _require_uuid(comment_id, "comment_id")
         if recipient is not None:
             params["recipient"] = recipient
         if tipper is not None:

@@ -20,11 +20,12 @@ What the MCP tools would have produced, had the shape been read off them:
 3. The tip route is ``/tips/post/{id}``, singular. ``/tips/posts/{id}``,
    ``/posts/{id}/tip`` and ``/posts/{id}/tips`` are all 404, and ``POST /tips``
    is 405.
-4. ``GET /tips`` accepted a ``post_id`` and **ignored it**, as of 2026-09-07.
-   See ``TestTheLedger`` — that one is not a naming difference, it is a filter
-   that silently returns everything. A fix is in the platform repo and was not
-   deployed when these numbers were taken, so this is the one claim in the file
-   with an expected expiry rather than a permanent contract.
+4. ``GET /tips`` accepted a ``post_id`` and **ignored it** — a filter that
+   silently returned everything, which is why this client refused to expose one.
+   **That expired at the 2026-09-07 18:04Z deploy**, exactly as the previous
+   revision of this file predicted it would; both filters are real now and
+   ``TestTheLedger`` asserts they are sent rather than that they are absent.
+   Nothing else in this file has an expiry.
 
 Measured contract, none of it inferred:
 
@@ -47,7 +48,6 @@ in the docstrings rather than guessed at here.
 
 from __future__ import annotations
 
-import inspect
 import json
 import sys
 import time
@@ -203,30 +203,45 @@ class TestTheLedger:
         q = _query(mock_urlopen)
         assert q == {"limit": "5", "offset": "10", "recipient": "colonist-one", "tipper": "jorwhol"}
 
-    def test_there_is_no_post_id_filter_to_pass(self) -> None:
-        """``post_id`` is on every row of the response, so it is the filter a
-        caller reaches for first — and as of 2026-09-07 the endpoint ignores it.
+    @patch("colony_sdk.client.urlopen")
+    def test_post_id_and_comment_id_are_sent(self, mock_urlopen: MagicMock) -> None:
+        """The successor to ``test_there_is_no_post_id_filter_to_pass``.
 
-        Measured against 63 live rows: a real post id, a random UUID and the
-        literal string ``zzznonsense`` all returned the same 63, identical to
-        sending nothing. ``recipient`` and ``tipper`` returned 2 and 44 of that
-        same 63 and ``offset=zzz`` answered 422, which is what makes this a fact
-        about the endpoint rather than about the probe.
-
-        Accepting it would hand callers an unfiltered ledger to read as one
-        post's tips: a wrong answer that looks like data and reports 200. The
-        signature is the guard, so a caller who tries gets a TypeError instead.
-
-        **This test has an expected expiry**, unlike the rest of the file. The
-        platform fixed the filter in ``ffa8b3348``, undeployed when the numbers
-        above were taken. When it ships, the parameter should be added and this
-        test replaced with one asserting it is sent — a failure here after that
-        point means the SDK is behind the server, not that the server broke.
+        That test asserted the parameter was *absent*, and said in its own
+        docstring that it had an expected expiry: when the platform shipped a
+        real filter, it should be replaced with one asserting the parameter is
+        sent. The deploy landed at 2026-09-07 18:04Z and the old test failed on
+        the next run — which is the SDK being behind the server, the direction
+        that test named in advance.
         """
-        assert "post_id" not in inspect.signature(ColonyClient.list_tips).parameters
-        assert "post_id" not in inspect.signature(AsyncColonyClient.list_tips).parameters
-        with pytest.raises(TypeError):
-            _authed_client().list_tips(post_id=POST)  # type: ignore[call-arg]
+        mock_urlopen.return_value = _mock_response({"total": 0, "tips": []})
+        _authed_client().list_tips(post_id=POST, comment_id=COMMENT)
+        q = _query(mock_urlopen)
+        assert q["post_id"] == POST
+        assert q["comment_id"] == COMMENT
+
+    @patch("colony_sdk.client.urlopen")
+    def test_omitting_them_sends_neither(self, mock_urlopen: MagicMock) -> None:
+        """A default of "" or None leaking into the query string would filter to
+        nothing rather than to everything, which is the opposite mistake and
+        just as quiet."""
+        mock_urlopen.return_value = _mock_response({"total": 0, "tips": []})
+        _authed_client().list_tips(limit=5)
+        q = _query(mock_urlopen)
+        assert "post_id" not in q
+        assert "comment_id" not in q
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_truncated_id_is_refused_before_the_request(self, mock_urlopen: MagicMock) -> None:
+        """Both filters take UUIDs, and the server answers 422 to anything else.
+        A truncated id would come back as a 422 that reads like a rejected
+        query rather than a mangled one."""
+        client = _authed_client()
+        with pytest.raises(ValueError):
+            client.list_tips(post_id=POST[:8])
+        with pytest.raises(ValueError):
+            client.list_tips(comment_id=COMMENT[:8])
+        mock_urlopen.assert_not_called()
 
 
 class TestAsyncParity:
@@ -267,6 +282,12 @@ class TestAsyncParity:
         assert q["tipper"] == "jorwhol"
         assert q["limit"] == "5"
 
+    async def test_async_sends_post_id_and_comment_id_too(self) -> None:
+        seen = await self._seen(lambda c: c.list_tips(post_id=POST, comment_id=COMMENT))
+        q = {k: v[0] for k, v in parse_qs(urlparse(str(seen[-1].url)).query).items()}
+        assert q["post_id"] == POST
+        assert q["comment_id"] == COMMENT
+
 
 class TestTheMock:
     def test_boost_status_records_both_ids(self) -> None:
@@ -275,6 +296,12 @@ class TestTheMock:
         mock = MockColonyClient(responses={"get_boost_status": {}})
         mock.get_boost_status(POST, BOOST)
         assert mock.calls[-1][1] == {"post_id": POST, "boost_id": BOOST}
+
+    def test_the_mock_records_the_new_filters(self) -> None:
+        mock = MockColonyClient(responses={"list_tips": {}})
+        mock.list_tips(post_id=POST, comment_id=COMMENT)
+        assert mock.calls[-1][1]["post_id"] == POST
+        assert mock.calls[-1][1]["comment_id"] == COMMENT
 
     def test_tips_record_the_amount_and_the_key(self) -> None:
         mock = MockColonyClient(responses={"tip_post": {}})
