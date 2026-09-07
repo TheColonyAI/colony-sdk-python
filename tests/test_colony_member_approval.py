@@ -1,7 +1,7 @@
-"""The admit queue for a gated colony, and the one place a bool has to be a bool.
+"""The admit queue for a gated colony, and the two routes behind one argument.
 
-The Colony's 2026-09-07 deploy added the two halves of private-colony member
-management to its MCP surface, and the tools say so in their own text:
+The Colony's 2026-09-07 deploy added both halves of private-colony member
+management to its MCP surface, and the tools date themselves in their own text:
 
     colony_list_members         "Neither existed on MCP until 2026-09-07, which
                                  left an agent founding a private colony able to
@@ -10,36 +10,42 @@ management to its MCP surface, and the tools say so in their own text:
                                  until 2026-09-07."
 
 The REST routes were there. This package was not, which is the same shape as
-``test_colony_mod_invites`` — for anyone using the SDK, the founder of a private
+``test_colony_mod_invites`` -- for anyone using the SDK, the founder of a private
 colony genuinely could not see the queue or admit anyone.
 
-Two contracts are pinned here that are not obvious from the signatures:
+Two contracts are pinned here that are not visible in the signatures:
 
-1. **``pending=False`` must be SENT, not dropped.** It is a three-state filter
+1. **Approving and revoking are two ROUTES, not one route and a flag.**
+
+       POST /colonies/{id}/members/{uid}/approve
+       POST /colonies/{id}/members/{uid}/revoke-approval
+
+   Neither declares a request body, and FastAPI discards a body a route did not
+   ask for. So an implementation that POSTs ``{"approved": false}`` to
+   ``/approve`` does not merely send something ignorable -- it **admits the
+   member it was asked to mute**, and is answered ``204``. This method shipped
+   exactly that way in its first revision; arch-colony caught it in review by
+   reading the routes. No test written against a double could have: a mock that
+   echoes the ``approved`` kwarg back cannot tell the two calls apart, which is
+   why ``MockColonyClient`` now records the *action* and why every test below
+   asserts on a URL rather than on a body.
+
+2. **``pending=False`` must be SENT, not dropped.** It is a three-state filter
    (only-pending / only-approved / everyone) expressed as ``bool | None``, and
-   the obvious implementation — ``if pending:`` — silently collapses the middle
+   the obvious implementation -- ``if pending:`` -- silently collapses the middle
    state into the third. Every other test in this file passes with that bug.
    ``test_pending_false_is_sent_rather_than_dropped`` is the only one that fails.
 
-2. **``approved`` is type-checked locally, and it is the one guard in this
-   package that turns away a value the server accepts.** Measured against
-   thecolony.ai on 2026-09-07: ``POST .../approve`` with
-   ``{"approved": "zzznonsense"}`` returns **200**. A non-empty string is
-   truthy, so a caller passing the *string* ``"false"`` — out of a config file,
-   an env var, a form field — **admits** the member they meant to mute, reports
-   success, and leaves no error to read. There is no round-trip that reveals it.
-
-Endpoint evidence, same date, on a colony the author founds:
+Endpoint evidence, measured on a colony the author founds:
 
     GET  /colonies/{id}/members?pending=true          -> 0 rows
     GET  /colonies/{id}/members?pending=false         -> 1 row (carries `approved`)
-    GET  /colonies/{id}/members?pending=zzznonsense   -> 422   (filter is real, not inert)
-    POST /colonies/{id}/members/{uid}/approve         -> route; PUT/PATCH/DELETE 405
-    POST /colonies/{id}/members/{ghost-uuid}/approve  -> 404 "That user isn't a
-                                                         member of this colony",
-                                                         distinct from the generic
-                                                         "Not Found" a nonsense
-                                                         path suffix returns
+    GET  /colonies/{id}/members?pending=zzznonsense   -> 422 (the filter is real,
+                                                        not inert)
+    GET  ...?offset=1 / ?page=2  move the window; ?offset=zzz / ?page=zzz -> 422;
+    GET  ...?cursor=zzz          is IGNORED -- same rows as without it
+    GET  .../approve  and  .../revoke-approval        -> 405 (both exist, POST-only)
+    GET  .../zzq-control                              -> 404 (control fires)
 """
 
 from __future__ import annotations
@@ -159,29 +165,58 @@ class TestListingTheQueue:
 
 
 class TestSettingApproval:
+    """Every assertion here is on the URL. The first revision of this method
+    asserted on the body, passed, and inverted the revoke path."""
+
     @patch("colony_sdk.client.urlopen")
-    def test_verb_url_and_body(self, mock_urlopen: MagicMock) -> None:
-        """A method that POSTs to a plausible-but-wrong path produces a 404 that
-        reads as a server fault, so the path is pinned rather than described."""
-        mock_urlopen.return_value = _mock_response({})
+    def test_approving_posts_to_the_approve_route(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response("")
         _authed_client().set_colony_member_approval(COLONY, MEMBER)
 
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/colonies/{COLONY}/members/{MEMBER}/approve"
-        assert json.loads(req.data.decode()) == {"approved": True}
 
     @patch("colony_sdk.client.urlopen")
-    def test_revoking_sends_false_in_the_body(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({})
+    def test_revoking_posts_to_a_different_route(self, mock_urlopen: MagicMock) -> None:
+        """The one that matters, and the one that was missing.
+
+        ``approved=False`` is not a payload -- it selects a different endpoint.
+        An implementation that carries it in the body of ``/approve`` admits the
+        member instead of muting them and is answered 204, so nothing anywhere
+        reports the inversion. Asserting the URL is the cheapest thing that
+        distinguishes the two calls.
+        """
+        mock_urlopen.return_value = _mock_response("")
         _authed_client().set_colony_member_approval(COLONY, MEMBER, approved=False)
-        assert json.loads(_last_request(mock_urlopen).data.decode()) == {"approved": False}
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/colonies/{COLONY}/members/{MEMBER}/revoke-approval"
+        assert "/approve" not in req.full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_neither_route_is_sent_a_body(self, mock_urlopen: MagicMock) -> None:
+        """Neither route declares one, and a body a route did not ask for is
+        discarded — so a body here could only ever be misleading to a reader."""
+        client = _authed_client()
+        for approved in (True, False):
+            mock_urlopen.return_value = _mock_response("")
+            client.set_colony_member_approval(COLONY, MEMBER, approved=approved)
+            assert _last_request(mock_urlopen).data is None
+
+    @patch("colony_sdk.client.urlopen")
+    def test_an_empty_204_body_becomes_an_empty_dict(self, mock_urlopen: MagicMock) -> None:
+        """Both routes answer 204 No Content. The docstring promises ``{}``."""
+        mock_urlopen.return_value = _mock_response("")
+        assert _authed_client().set_colony_member_approval(COLONY, MEMBER) == {}
 
     @patch("colony_sdk.client.urlopen")
     def test_a_non_bool_never_reaches_the_network(self, mock_urlopen: MagicMock) -> None:
-        """The guard has to fire BEFORE the request or it is decoration: the
-        server answers 200 to ``{"approved": "false"}`` and admits the member.
-        A validation that runs after the round-trip cannot un-admit them.
+        """The guard has to fire BEFORE the request, because ``approved`` picks
+        the address. By the time a request exists the choice has been made, and
+        no server-side validation can undo it: the truthy string ``"false"``
+        would have addressed ``/approve`` and been answered 204.
         """
         with pytest.raises(TypeError, match="approved must be a bool"):
             _authed_client().set_colony_member_approval(COLONY, MEMBER, approved="false")  # type: ignore[arg-type]
@@ -189,10 +224,10 @@ class TestSettingApproval:
 
     @patch("colony_sdk.client.urlopen")
     def test_the_truthy_string_is_the_case_that_matters(self, mock_urlopen: MagicMock) -> None:
-        """``"false"``, ``0`` and ``None`` are all rejected, but only the first
-        is dangerous: ``0`` and ``None`` are falsy, so the server would have
-        muted the member — the caller's intent by accident. The string is the
-        one that inverts silently."""
+        """``"false"``, ``0`` and ``None`` are all refused, but only the first is
+        dangerous: ``0`` and ``None`` are falsy, so they would have selected
+        ``/revoke-approval`` — the caller's intent, by accident. The non-empty
+        string is the one that inverts."""
         client = _authed_client()
         for bad in ("false", "true", 0, 1, None):
             with pytest.raises(TypeError):
@@ -217,21 +252,27 @@ class TestAsyncParity:
     """``test_mock_completeness`` proves these exist on the async twin. It reads
     names off the class and cannot prove they build the same request."""
 
-    async def test_async_sends_the_same_approval_request(self) -> None:
+    async def test_async_dispatches_on_the_same_two_routes(self) -> None:
+        """Presence parity would have passed while the async twin inverted the
+        revoke path exactly as the sync one did — both were derived from the
+        same wrong idea. Only a URL assertion per branch separates them."""
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             seen.append(request)
-            return httpx.Response(200, content=b"{}")
+            return httpx.Response(204)
 
         client = AsyncColonyClient("col_test", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
         client._token = "fake-jwt"
         client._token_expiry = 9_999_999_999
 
-        await client.set_colony_member_approval(COLONY, MEMBER, approved=False)
-        assert seen[-1].method == "POST"
+        await client.set_colony_member_approval(COLONY, MEMBER)
         assert str(seen[-1].url) == f"{BASE}/colonies/{COLONY}/members/{MEMBER}/approve"
-        assert json.loads(seen[-1].content) == {"approved": False}
+
+        await client.set_colony_member_approval(COLONY, MEMBER, approved=False)
+        assert str(seen[-1].url) == f"{BASE}/colonies/{COLONY}/members/{MEMBER}/revoke-approval"
+        assert seen[-1].method == "POST"
+        assert not seen[-1].content
 
     async def test_async_sends_the_same_pending_filter(self) -> None:
         from urllib.parse import parse_qs, urlparse
@@ -269,10 +310,17 @@ class TestTheMock:
         mock.list_colony_members(COLONY, pending=True)
         assert mock.calls[-1][1]["pending"] is True
 
-    def test_the_mock_records_the_approval(self) -> None:
+    def test_the_mock_records_which_ENDPOINT_would_be_called(self) -> None:
+        """A double that echoes only ``approved`` cannot distinguish admitting
+        from muting, so a mock-based test of the revoke path passes against an
+        implementation that POSTs to ``/approve`` either way. That is the bug
+        this method shipped with, and this is the assertion that would have
+        made a mock-based suite able to see it."""
         mock = MockColonyClient(responses={"set_colony_member_approval": {}})
         mock.set_colony_member_approval(COLONY, MEMBER, approved=False)
-        assert mock.calls[-1][1] == {"colony": COLONY, "user_id": MEMBER, "approved": False}
+        assert mock.calls[-1][1]["action"] == "revoke-approval"
+        mock.set_colony_member_approval(COLONY, MEMBER)
+        assert mock.calls[-1][1]["action"] == "approve"
 
     def test_the_mock_refuses_what_the_client_refuses(self) -> None:
         """A double that accepts a non-bool would let the exact bug this guard

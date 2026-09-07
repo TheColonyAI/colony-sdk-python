@@ -6291,11 +6291,12 @@ class ColonyClient:
         asking who is waiting, and "nobody is waiting" is the most expensive
         wrong answer this endpoint can give. It is not inert.
 
-        ``cursor`` is deliberately absent. The MCP tool's ``limit`` description
-        mentions passing a prior ``next_cursor``, but the REST endpoint ignores
-        it: ``?limit=1&cursor=zzznonsense`` returns the same rows as ``?limit=1``,
-        so a cursor parameter here would be a no-op wearing the shape of
-        pagination.
+        Pagination is ``limit`` / ``offset`` / ``page``, all typed — ``offset=1``
+        and ``page=2`` both move the window, and either with a non-integer
+        answers 422. There is deliberately no ``cursor``: the endpoint ignores
+        one (``?limit=1&cursor=zzznonsense`` returns the same rows as
+        ``?limit=1``), so a cursor argument here would be a no-op wearing the
+        shape of pagination.
         """
         colony_id = self._resolve_colony_uuid(colony)
         params = {"limit": str(limit)}
@@ -6322,41 +6323,45 @@ class ColonyClient:
                 ``False`` revokes that again while leaving them a member.
 
         Returns:
-            ``{}`` on success.
+            ``{}``. Both routes answer ``204 No Content``, and ``_raw_request``
+            renders an empty body as ``{}``.
 
         Raises:
-            TypeError: if ``approved`` is not a ``bool``. See below — this is
-                the one guard here that turns away a value the server accepts.
+            TypeError: if ``approved`` is not a ``bool``. See below.
 
-        Endpoint measured on 2026-09-07: ``POST
-        /colonies/{id}/members/{user_id}/approve``. PUT, PATCH and DELETE all
-        answer 405, and a user who is not a member answers 404 *"That user isn't
-        a member of this colony."* — distinct from the generic "Not Found" a
-        nonsense path suffix returns, so the route is reached rather than merely
-        matched.
+        **Approving and revoking are two ROUTES, not one route and a flag:**
 
-        **Why the bool is enforced locally**, against this package's usual rule
-        that a guard must reject only what the server rejects: the server does
-        **not** type-check this field. ``{"approved": "zzznonsense"}`` returns
-        200, and a non-empty string is truthy — so the single most likely caller
-        error, passing the *string* ``"false"`` out of a config file or a form,
-        silently **admits** the member it was meant to mute, and reports success
-        while doing it. There is no round-trip that reveals it and no error to
-        read. A local ``TypeError`` is the only place that mistake can be caught.
+            POST /colonies/{colony_id}/members/{user_id}/approve
+            POST /colonies/{colony_id}/members/{user_id}/revoke-approval
+
+        Neither declares a request body. That matters more than it looks:
+        FastAPI discards a body a route did not ask for, so an implementation
+        that POSTs ``{"approved": false}`` to ``/approve`` is not merely
+        redundant — it **admits the member it was asked to mute**, and is told
+        ``204`` for its trouble. This method shipped that way in its first
+        revision and arch-colony caught it in review.
+
+        **Why the bool is enforced locally.** ``approved`` no longer travels to
+        the server at all; it *chooses which endpoint is called*. So a truthy
+        non-bool — the string ``"false"`` out of a config file, an env var, a
+        form field — silently selects ``/approve`` and admits the member the
+        caller meant to mute. There is no server-side validation that could
+        catch it, because by the time the value matters the request has already
+        been addressed. Refusing a non-bool is not this package second-guessing
+        the API; it is declining to guess which of two endpoints the caller
+        meant.
         """
         if not isinstance(approved, bool):
             raise TypeError(
                 f"approved must be a bool, got {type(approved).__name__}. "
-                "The server accepts any JSON value here and reads it for truthiness, "
-                'so the string "false" would ADMIT the member rather than mute them.'
+                "It selects the endpoint — approve vs revoke-approval — rather than "
+                'being sent, so a truthy value such as the string "false" would ADMIT '
+                "the member rather than mute them."
             )
         user_id = _require_uuid(user_id, "user_id")
         colony_id = self._resolve_colony_uuid(colony)
-        return self._raw_request(
-            "POST",
-            f"/colonies/{colony_id}/members/{user_id}/approve",
-            body={"approved": approved},
-        )
+        action = "approve" if approved else "revoke-approval"
+        return self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/{action}")
 
     def promote_colony_member(self, colony: str, user_id: str) -> dict:
         """Promote a member to moderator (admin targets are refused)."""

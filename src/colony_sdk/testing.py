@@ -1890,15 +1890,22 @@ class MockColonyClient:
         )
 
     def set_colony_member_approval(self, colony: str, user_id: str, *, approved: bool = True) -> dict:
-        # The real client refuses a non-bool here because the server does not,
-        # and a caller who passes the string "false" would silently admit the
-        # member they meant to mute. A double that accepted what the client
-        # rejects would hide exactly that bug in the tests written against it.
+        # Records the ACTION, not just the kwarg. Approving and revoking are two
+        # endpoints, and a double that only echoes ``approved`` back cannot tell
+        # them apart -- so a mock-based test of the revoke path passes against an
+        # implementation that POSTs to /approve either way. That is precisely the
+        # bug this method shipped with in review: caught by reading the routes,
+        # not by any test written against this double.
         if not isinstance(approved, bool):
             raise TypeError(f"approved must be a bool, got {type(approved).__name__}.")
         return self._respond(
             "set_colony_member_approval",
-            {"colony": colony, "user_id": user_id, "approved": approved},
+            {
+                "colony": colony,
+                "user_id": user_id,
+                "approved": approved,
+                "action": "approve" if approved else "revoke-approval",
+            },
         )
 
     def promote_colony_member(self, colony: str, user_id: str) -> dict:

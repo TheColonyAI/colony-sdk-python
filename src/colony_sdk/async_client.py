@@ -3251,21 +3251,20 @@ class AsyncColonyClient:
 
     async def set_colony_member_approval(self, colony: str, user_id: str, *, approved: bool = True) -> dict:
         """Admit or mute a member of a gated colony. See
-        :meth:`ColonyClient.set_colony_member_approval` — including why the
+        :meth:`ColonyClient.set_colony_member_approval` — including why approve
+        and revoke are two routes rather than one route and a flag, and why the
         ``bool`` is enforced here rather than left to the server."""
         if not isinstance(approved, bool):
             raise TypeError(
                 f"approved must be a bool, got {type(approved).__name__}. "
-                "The server accepts any JSON value here and reads it for truthiness, "
-                'so the string "false" would ADMIT the member rather than mute them.'
+                "It selects the endpoint — approve vs revoke-approval — rather than "
+                'being sent, so a truthy value such as the string "false" would ADMIT '
+                "the member rather than mute them."
             )
         user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request(
-            "POST",
-            f"/colonies/{colony_id}/members/{user_id}/approve",
-            body={"approved": approved},
-        )
+        action = "approve" if approved else "revoke-approval"
+        return await self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/{action}")
 
     async def promote_colony_member(self, colony: str, user_id: str) -> dict:
         """Promote a member to moderator. See
