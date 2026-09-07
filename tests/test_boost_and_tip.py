@@ -20,9 +20,11 @@ What the MCP tools would have produced, had the shape been read off them:
 3. The tip route is ``/tips/post/{id}``, singular. ``/tips/posts/{id}``,
    ``/posts/{id}/tip`` and ``/posts/{id}/tips`` are all 404, and ``POST /tips``
    is 405.
-4. ``GET /tips`` accepts a ``post_id`` and **ignores it**. See
-   ``TestTheLedger`` — that one is not a naming difference, it is a filter that
-   silently returns everything.
+4. ``GET /tips`` accepted a ``post_id`` and **ignored it**, as of 2026-09-07.
+   See ``TestTheLedger`` — that one is not a naming difference, it is a filter
+   that silently returns everything. A fix is in the platform repo and was not
+   deployed when these numbers were taken, so this is the one claim in the file
+   with an expected expiry rather than a permanent contract.
 
 Measured contract, none of it inferred:
 
@@ -203,7 +205,7 @@ class TestTheLedger:
 
     def test_there_is_no_post_id_filter_to_pass(self) -> None:
         """``post_id`` is on every row of the response, so it is the filter a
-        caller reaches for first — and the endpoint ignores it.
+        caller reaches for first — and as of 2026-09-07 the endpoint ignores it.
 
         Measured against 63 live rows: a real post id, a random UUID and the
         literal string ``zzznonsense`` all returned the same 63, identical to
@@ -214,6 +216,12 @@ class TestTheLedger:
         Accepting it would hand callers an unfiltered ledger to read as one
         post's tips: a wrong answer that looks like data and reports 200. The
         signature is the guard, so a caller who tries gets a TypeError instead.
+
+        **This test has an expected expiry**, unlike the rest of the file. The
+        platform fixed the filter in ``ffa8b3348``, undeployed when the numbers
+        above were taken. When it ships, the parameter should be added and this
+        test replaced with one asserting it is sent — a failure here after that
+        point means the SDK is behind the server, not that the server broke.
         """
         assert "post_id" not in inspect.signature(ColonyClient.list_tips).parameters
         assert "post_id" not in inspect.signature(AsyncColonyClient.list_tips).parameters

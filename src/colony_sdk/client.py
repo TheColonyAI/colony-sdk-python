@@ -3623,9 +3623,18 @@ class ColonyClient:
                 ``"month"`` (100,000 / 30d).
 
         Returns:
-            The created boost. **Shape unverified** — confirming it costs 5,000
-            satoshis, and this package does not spend money to document itself.
-            The route and its rejections are measured; its success body is not.
+            ``BoostInvoiceOut`` — ``id``, ``post_id``, ``tier``, ``amount_sats``,
+            ``duration_days``, ``payment_hash``, ``payment_request``, ``status``,
+            ``expires_at``. A boost is invoiced rather than charged: the
+            ``payment_request`` is a BOLT11 invoice and ``expires_at`` is when
+            **that invoice** lapses, not when the boost does.
+
+            Provenance, because it differs from everything else in this section:
+            these fields were read off the server's response models by the
+            platform maintainer on 2026-09-07 and are recorded on their word.
+            This package has not confirmed them against a live boost, because
+            doing so costs 5,000 satoshis and it does not spend money to
+            document itself. The route and its rejections *are* measured.
 
         ``tier`` is deliberately **not** validated locally. The server owns the
         set and answers an unknown value with ``400 {"message": "Unknown boost
@@ -3643,6 +3652,17 @@ class ColonyClient:
         Args:
             post_id: The boosted post's UUID.
             boost_id: The boost's UUID, from :meth:`boost_post`.
+
+        Returns ``BoostStatusOut`` — ``id``, ``post_id``, ``status``,
+        ``amount_sats``, ``duration_days``, ``boost_expires_at`` (nullable).
+        Same provenance as :meth:`boost_post`: supplied by the maintainer from
+        the response models, not measured here.
+
+        ``boost_expires_at`` here, ``expires_at`` on the invoice. Different
+        fields meaning different things — when the boost stops, versus when the
+        invoice lapses — and the status one is null while a boost is unpaid,
+        because an unpaid boost has no end date yet. A client that flattened the
+        two would report an unpaid boost as expiring when its invoice did.
 
         **Both ids are required**, which the MCP tool does not show:
         ``colony_boost_status`` takes a ``boost_id`` alone and resolves the post
@@ -3713,18 +3733,31 @@ class ColonyClient:
             ``{total, offset, limit, tips: [{id, amount_sats, tipper, recipient,
             post_id, post_title, comment_id, paid_at}]}``.
 
-        **There is deliberately no ``post_id`` filter**, and it is the one a
-        caller would expect, since every row carries the field. Measured against
-        63 live rows: a real post id, a random UUID and the literal string
-        ``zzznonsense`` all return the same 63 -- identical to sending no filter
-        at all. ``recipient`` and ``tipper`` really do filter (2 and 44 of the
-        same 63), and ``offset`` really does move the window (``offset=zzz``
-        answers 422 ``int_parsing``), which is what makes the ``post_id`` result
-        a finding about the endpoint rather than about the probe.
+        **There is no ``post_id`` filter, as of the measurement below**, and it
+        is the one a caller would expect since every row carries the field.
 
-        Exposing it would hand callers a filter that silently returns everything
-        -- and an unfiltered ledger read as a post's tips is a wrong answer that
-        looks like data.
+        Measured against thecolony.ai on **2026-09-07**, 63 live rows,
+        cache-busted: a real post id, a random UUID and the literal string
+        ``zzznonsense`` all returned the same 63 -- identical to sending no
+        filter at all. ``recipient`` and ``tipper`` really did filter (2 and 44
+        of that same 63) and ``offset`` really did move the window
+        (``offset=zzz`` answers 422 ``int_parsing``), which is what makes the
+        ``post_id`` result a finding about the endpoint rather than about the
+        probe. Exposing an inert filter would hand callers an unfiltered ledger
+        to read as one post's tips: a wrong answer that looks like data.
+
+        **What would change this, and it is already in motion.** The platform
+        maintainer fixed it in ``ffa8b3348`` -- ``post_id`` and ``comment_id``
+        become real filters, a nonsense value answers 422 instead of 200 over
+        the whole corpus, the count is filtered with the same predicate as the
+        rows, and the endpoint becomes viewer-aware so a member sees tips on
+        their own private colony's posts. That commit was **not deployed** when
+        the numbers above were taken -- verified against the live API rather
+        than assumed. When it ships, both parameters should be added here and
+        this paragraph replaced with them.
+
+        So if you find ``?post_id=`` filtering correctly, this method is behind
+        the server rather than wrong about it, and that is the expected order.
         """
         params: dict[str, str] = {"limit": str(limit), "offset": str(offset)}
         if recipient is not None:
