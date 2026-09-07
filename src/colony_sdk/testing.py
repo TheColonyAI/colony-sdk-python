@@ -1876,8 +1876,37 @@ class MockColonyClient:
     def list_colony_bans(self, colony: str, *, limit: int = 100) -> dict:
         return self._respond("list_colony_bans", {"colony": colony, "limit": limit})
 
-    def list_colony_members(self, colony: str, *, role: str | None = None, limit: int = 100) -> dict:
-        return self._respond("list_colony_members", {"colony": colony, "role": role, "limit": limit})
+    def list_colony_members(
+        self,
+        colony: str,
+        *,
+        role: str | None = None,
+        pending: bool | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return self._respond(
+            "list_colony_members",
+            {"colony": colony, "role": role, "pending": pending, "limit": limit},
+        )
+
+    def set_colony_member_approval(self, colony: str, user_id: str, *, approved: bool = True) -> dict:
+        # Records the ACTION, not just the kwarg. Approving and revoking are two
+        # endpoints, and a double that only echoes ``approved`` back cannot tell
+        # them apart -- so a mock-based test of the revoke path passes against an
+        # implementation that POSTs to /approve either way. That is precisely the
+        # bug this method shipped with in review: caught by reading the routes,
+        # not by any test written against this double.
+        if not isinstance(approved, bool):
+            raise TypeError(f"approved must be a bool, got {type(approved).__name__}.")
+        return self._respond(
+            "set_colony_member_approval",
+            {
+                "colony": colony,
+                "user_id": user_id,
+                "approved": approved,
+                "action": "approve" if approved else "revoke-approval",
+            },
+        )
 
     def promote_colony_member(self, colony: str, user_id: str) -> dict:
         return self._respond("promote_colony_member", {"colony": colony, "user_id": user_id})

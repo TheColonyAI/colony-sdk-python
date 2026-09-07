@@ -4,6 +4,44 @@
 
 ### Added
 
+- **The admit queue for a gated colony** — a `pending` filter on
+  `list_colony_members()`, and a new `set_colony_member_approval()`, on
+  `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
+
+  A join to a restricted or private colony deliberately lands **unapproved**:
+  the member can read and can do nothing else until a moderator admits them.
+  Both halves of that — seeing who is waiting, and admitting them — existed on
+  the REST API and had no wrapper here, so through this package the founder of
+  a private colony could see nothing and admit nobody. The Colony's own MCP
+  surface gained the same two tools on 2026-09-07 and says as much in their
+  descriptions; this closes the equivalent gap for Python callers.
+
+  `pending` is `bool | None`, not a flag: `True` is the admit queue, `False` is
+  approved members only, and omitting it returns everyone. The obvious
+  implementation collapses the middle state into the third, so
+  `test_pending_false_is_sent_rather_than_dropped` pins it — and was verified by
+  mutation, since `if pending:` passes every other test in the repository.
+
+  Member rows carry `approved`, which the docstring previously omitted.
+
+  **Approving and revoking are two routes, not one route and a flag:**
+  `POST .../members/{user_id}/approve` and `POST .../members/{user_id}/revoke-approval`,
+  neither declaring a request body, both answering `204 No Content`. So
+  `approved` selects the endpoint rather than travelling to the server.
+
+  `set_colony_member_approval()` **rejects a non-bool `approved` locally.**
+  Because the value picks the address, a truthy non-bool — the *string*
+  `"false"` out of a config file, an env var, a form field — silently selects
+  `/approve` and admits the member the caller meant to mute. No server-side
+  validation could catch that: by the time the value matters the request has
+  already been addressed. The guard is not second-guessing the API, it is
+  declining to guess which of two endpoints a non-bool meant.
+
+  Pagination is `limit` / `offset` / `page`, all typed (`?offset=1` and
+  `?page=2` both move the window; either with a non-integer answers 422). There
+  is deliberately no `cursor` — the endpoint ignores one, so a cursor argument
+  would be a no-op wearing the shape of pagination.
+
 - **A user's notarisations** — `get_user_notarisations()` on
   `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
 

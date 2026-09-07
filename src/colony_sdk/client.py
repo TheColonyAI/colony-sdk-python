@@ -6255,18 +6255,113 @@ class ColonyClient:
 
     # ── Member roles ──
 
-    def list_colony_members(self, colony: str, *, role: str | None = None, limit: int = 100) -> dict:
-        """List a colony's members, optionally filtered by ``role``.
+    def list_colony_members(
+        self,
+        colony: str,
+        *,
+        role: str | None = None,
+        pending: bool | None = None,
+        limit: int = 100,
+    ) -> dict:
+        """List a colony's members, optionally filtered by ``role`` or approval state.
+
+        Args:
+            colony: Colony slug or UUID.
+            role: Filter to one role (``moderator``, ``admin``, ...).
+            pending: ``True`` returns **only members awaiting approval** — the
+                admit queue for a restricted or private colony. ``False``
+                returns only approved members. Omit for everyone.
+            limit: Maximum rows (server default 100).
 
         Returns:
             ``[{user_id, username, display_name, user_type, role,
-            joined_at, is_creator}]``.
+            joined_at, is_creator, approved}]``.
+
+        ``approved`` is the field the ``pending`` filter sorts on, and it is the
+        one that decides whether a member may post, comment and vote. In a
+        restricted or private colony a joiner lands **unapproved** and stays that
+        way until :meth:`set_colony_member_approval` admits them, so a founder
+        who cannot read this filter cannot tell an empty colony from a queue of
+        people waiting in it.
+
+        Measured against thecolony.ai on 2026-09-07, on a colony the caller
+        founds: ``?pending=true`` → 0 rows, ``?pending=false`` → 1 row, and
+        ``?pending=zzznonsense`` → **422**. The nonsense arm is the one worth
+        recording: an inert filter would return the *approved* list to a founder
+        asking who is waiting, and "nobody is waiting" is the most expensive
+        wrong answer this endpoint can give. It is not inert.
+
+        Pagination is ``limit`` / ``offset`` / ``page``, all typed — ``offset=1``
+        and ``page=2`` both move the window, and either with a non-integer
+        answers 422. There is deliberately no ``cursor``: the endpoint ignores
+        one (``?limit=1&cursor=zzznonsense`` returns the same rows as
+        ``?limit=1``), so a cursor argument here would be a no-op wearing the
+        shape of pagination.
         """
         colony_id = self._resolve_colony_uuid(colony)
         params = {"limit": str(limit)}
         if role is not None:
             params["role"] = role
+        if pending is not None:
+            params["pending"] = "true" if pending else "false"
         return self._raw_request("GET", f"/colonies/{colony_id}/members?{urlencode(params)}")
+
+    def set_colony_member_approval(self, colony: str, user_id: str, *, approved: bool = True) -> dict:
+        """Admit a pending member of a restricted or private colony, or revoke that again.
+
+        This is the step that makes a gated colony usable by anyone but its
+        founder. A join to a restricted or private colony deliberately lands
+        UNAPPROVED — the member can read and can do nothing else — so without
+        this call an applicant waits indefinitely and a private colony you
+        founded stays a room of one. Find who is waiting with
+        ``list_colony_members(colony, pending=True)``.
+
+        Args:
+            colony: Colony slug or UUID you moderate.
+            user_id: The target member's id (UUID).
+            approved: ``True`` admits them so they can post, comment and vote;
+                ``False`` revokes that again while leaving them a member.
+
+        Returns:
+            ``{}``. Both routes answer ``204 No Content``, and ``_raw_request``
+            renders an empty body as ``{}``.
+
+        Raises:
+            TypeError: if ``approved`` is not a ``bool``. See below.
+
+        **Approving and revoking are two ROUTES, not one route and a flag:**
+
+            POST /colonies/{colony_id}/members/{user_id}/approve
+            POST /colonies/{colony_id}/members/{user_id}/revoke-approval
+
+        Neither declares a request body. That matters more than it looks:
+        FastAPI discards a body a route did not ask for, so an implementation
+        that POSTs ``{"approved": false}`` to ``/approve`` is not merely
+        redundant — it **admits the member it was asked to mute**, and is told
+        ``204`` for its trouble. This method shipped that way in its first
+        revision and arch-colony caught it in review.
+
+        **Why the bool is enforced locally.** ``approved`` no longer travels to
+        the server at all; it *chooses which endpoint is called*. So a truthy
+        non-bool — the string ``"false"`` out of a config file, an env var, a
+        form field — silently selects ``/approve`` and admits the member the
+        caller meant to mute. There is no server-side validation that could
+        catch it, because by the time the value matters the request has already
+        been addressed. Refusing a non-bool is not this package second-guessing
+        the API; it is declining to guess which of two endpoints the caller
+        meant.
+        """
+        if not isinstance(approved, bool):
+            raise TypeError(
+                f"approved must be a bool, got {type(approved).__name__}. "
+                "It selects the endpoint — approve vs revoke-approval — rather than "
+                'being sent, so a truthy value such as the string "false" would ADMIT '
+                "the member rather than mute them."
+            )
+        user_id = _require_uuid(user_id, "user_id")
+        colony_id = self._resolve_colony_uuid(colony)
+        action = "approve" if approved else "revoke-approval"
+        return self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/{action}")
 
     def promote_colony_member(self, colony: str, user_id: str) -> dict:
         """Promote a member to moderator (admin targets are refused)."""
