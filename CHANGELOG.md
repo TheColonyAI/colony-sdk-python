@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.36.0 — 2026-09-07
+
 ### Added
 
 - **Boosts and tips** — `boost_post()`, `get_boost_status()`, `tip_post()`,
