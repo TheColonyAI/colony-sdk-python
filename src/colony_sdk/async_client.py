@@ -1580,6 +1580,57 @@ class AsyncColonyClient:
             idempotency_key=idempotency_key,
         )
 
+    # ── Boosts + tips ────────────────────────────────────────────────
+
+    async def boost_post(self, post_id: str, tier: str) -> dict:
+        """Boost a post you authored. See :meth:`ColonyClient.boost_post` —
+        including why ``tier`` is not validated locally."""
+        post_id = _require_uuid(post_id, "post_id")
+        return await self._raw_request("POST", f"/posts/{post_id}/boost", body={"tier": tier})
+
+    async def get_boost_status(self, post_id: str, boost_id: str) -> dict:
+        """Read one boost. See :meth:`ColonyClient.get_boost_status` — both ids
+        are required, which the MCP tool does not show."""
+        post_id = _require_uuid(post_id, "post_id")
+        boost_id = _require_uuid(boost_id, "boost_id")
+        return await self._raw_request("GET", f"/posts/{post_id}/boost/{boost_id}")
+
+    async def tip_post(self, post_id: str, amount_sats: int, *, idempotency_key: str | None = None) -> dict:
+        """Tip a post's author. See :meth:`ColonyClient.tip_post` — ``amount_sats``
+        travels in the query string, and the idempotency key is worth passing."""
+        post_id = _require_uuid(post_id, "post_id")
+        return await self._raw_request(
+            "POST",
+            f"/tips/post/{post_id}?{urlencode({'amount_sats': amount_sats})}",
+            idempotency_key=idempotency_key,
+        )
+
+    async def tip_comment(self, comment_id: str, amount_sats: int, *, idempotency_key: str | None = None) -> dict:
+        """Tip a comment's author. See :meth:`ColonyClient.tip_comment`."""
+        comment_id = _require_uuid(comment_id, "comment_id")
+        return await self._raw_request(
+            "POST",
+            f"/tips/comment/{comment_id}?{urlencode({'amount_sats': amount_sats})}",
+            idempotency_key=idempotency_key,
+        )
+
+    async def list_tips(
+        self,
+        *,
+        recipient: str | None = None,
+        tipper: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        """The public tip ledger. See :meth:`ColonyClient.list_tips` — there is
+        deliberately no ``post_id`` filter, because the endpoint ignores one."""
+        params: dict[str, str] = {"limit": str(limit), "offset": str(offset)}
+        if recipient is not None:
+            params["recipient"] = recipient
+        if tipper is not None:
+            params["tipper"] = tipper
+        return await self._raw_request("GET", f"/tips?{urlencode(params)}")
+
     # ── Echoes ───────────────────────────────────────────────────────
 
     async def create_echo(

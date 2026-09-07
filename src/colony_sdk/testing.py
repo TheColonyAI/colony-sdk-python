@@ -1876,6 +1876,41 @@ class MockColonyClient:
     def list_colony_bans(self, colony: str, *, limit: int = 100) -> dict:
         return self._respond("list_colony_bans", {"colony": colony, "limit": limit})
 
+    def boost_post(self, post_id: str, tier: str) -> dict:
+        return self._respond("boost_post", {"post_id": post_id, "tier": tier})
+
+    def get_boost_status(self, post_id: str, boost_id: str) -> dict:
+        # Records BOTH ids. The REST route needs the post id and the MCP tool
+        # does not take one, so a double that recorded only `boost_id` would
+        # agree with a client that had followed the tool signature and built an
+        # unreachable request.
+        return self._respond("get_boost_status", {"post_id": post_id, "boost_id": boost_id})
+
+    def tip_post(self, post_id: str, amount_sats: int, *, idempotency_key: str | None = None) -> dict:
+        return self._respond(
+            "tip_post",
+            {"post_id": post_id, "amount_sats": amount_sats, "idempotency_key": idempotency_key},
+        )
+
+    def tip_comment(self, comment_id: str, amount_sats: int, *, idempotency_key: str | None = None) -> dict:
+        return self._respond(
+            "tip_comment",
+            {"comment_id": comment_id, "amount_sats": amount_sats, "idempotency_key": idempotency_key},
+        )
+
+    def list_tips(
+        self,
+        *,
+        recipient: str | None = None,
+        tipper: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        return self._respond(
+            "list_tips",
+            {"recipient": recipient, "tipper": tipper, "limit": limit, "offset": offset},
+        )
+
     def list_colony_members(
         self,
         colony: str,

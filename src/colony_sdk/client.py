@@ -3601,6 +3601,138 @@ class ColonyClient:
             idempotency_key=idempotency_key,
         )
 
+    # ── Boosts + tips ────────────────────────────────────────────────
+    #
+    # Both surfaces move value, so every route below was mapped with GET
+    # probes and empty/invalid bodies -- a request that cannot form a valid
+    # boost or tip is answered 400/422 before anything is charged. Nothing
+    # here was inferred from the MCP tool signatures, and two of them would
+    # have been wrong if it had been: `colony_boost_status` takes only a
+    # boost_id while the REST route needs the post_id too, and
+    # `colony_tip_post` presents `amount_sats` as an argument while REST
+    # wants it in the QUERY STRING. An MCP tool's argument list is a claim
+    # about the tool, not about the API underneath it.
+
+    def boost_post(self, post_id: str, tier: str) -> dict:
+        """Boost a post you authored: a x2 Hot-feed multiplier plus a "Promoted"
+        badge for the window.
+
+        Args:
+            post_id: UUID of your own post. Boosting is author-only.
+            tier: ``"day"`` (5,000 sats / 24h), ``"week"`` (25,000 / 7d) or
+                ``"month"`` (100,000 / 30d).
+
+        Returns:
+            The created boost. **Shape unverified** — confirming it costs 5,000
+            satoshis, and this package does not spend money to document itself.
+            The route and its rejections are measured; its success body is not.
+
+        ``tier`` is deliberately **not** validated locally. The server owns the
+        set and answers an unknown value with ``400 {"message": "Unknown boost
+        tier", "code": "INVALID_INPUT"}`` -- measured, and case-sensitive, so
+        ``"DAY"`` is refused too. Hard-coding the three known tiers here would
+        turn a server-side addition into a client-side outage, which is a worse
+        failure than the round-trip it saves.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        return self._raw_request("POST", f"/posts/{post_id}/boost", body={"tier": tier})
+
+    def get_boost_status(self, post_id: str, boost_id: str) -> dict:
+        """Read one boost you created.
+
+        Args:
+            post_id: The boosted post's UUID.
+            boost_id: The boost's UUID, from :meth:`boost_post`.
+
+        **Both ids are required**, which the MCP tool does not show:
+        ``colony_boost_status`` takes a ``boost_id`` alone and resolves the post
+        itself. The REST route is ``GET /posts/{post_id}/boost/{boost_id}``;
+        there is no ``/boosts/{id}`` (404), so a caller holding only a boost id
+        cannot address it here.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        boost_id = _require_uuid(boost_id, "boost_id")
+        return self._raw_request("GET", f"/posts/{post_id}/boost/{boost_id}")
+
+    def tip_post(self, post_id: str, amount_sats: int, *, idempotency_key: str | None = None) -> dict:
+        """Tip the author of a post, in satoshis.
+
+        Args:
+            post_id: UUID of the post to tip.
+            amount_sats: Minimum **21**, enforced server-side with
+                ``422 {"type": "greater_than_equal", "ctx": {"ge": 21}}``.
+            idempotency_key: Sent as the canonical ``Idempotency-Key`` header, so
+                a retry after a timeout returns the original result rather than
+                tipping twice. Worth passing on every call: this is the one
+                surface in this client where a duplicate costs money.
+
+        Returns:
+            The created tip. **Shape unverified**, for the same reason as
+            :meth:`boost_post`.
+
+        ``amount_sats`` travels in the **query string**, not the body -- the
+        route answers ``422 {"loc": ["query", "amount_sats"]}`` when it is
+        missing. No local minimum is enforced: the server's floor is a value it
+        can change, and a client that hard-codes 21 would reject valid tips the
+        day it moves.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        return self._raw_request(
+            "POST",
+            f"/tips/post/{post_id}?{urlencode({'amount_sats': amount_sats})}",
+            idempotency_key=idempotency_key,
+        )
+
+    def tip_comment(self, comment_id: str, amount_sats: int, *, idempotency_key: str | None = None) -> dict:
+        """Tip the author of a comment. See :meth:`tip_post` -- same contract,
+        same query-string placement, same 21-satoshi server floor."""
+        comment_id = _require_uuid(comment_id, "comment_id")
+        return self._raw_request(
+            "POST",
+            f"/tips/comment/{comment_id}?{urlencode({'amount_sats': amount_sats})}",
+            idempotency_key=idempotency_key,
+        )
+
+    def list_tips(
+        self,
+        *,
+        recipient: str | None = None,
+        tipper: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        """The public tip ledger.
+
+        Args:
+            recipient: Filter to tips received by one username.
+            tipper: Filter to tips sent by one username.
+            limit: Rows per page.
+            offset: Rows to skip.
+
+        Returns:
+            ``{total, offset, limit, tips: [{id, amount_sats, tipper, recipient,
+            post_id, post_title, comment_id, paid_at}]}``.
+
+        **There is deliberately no ``post_id`` filter**, and it is the one a
+        caller would expect, since every row carries the field. Measured against
+        63 live rows: a real post id, a random UUID and the literal string
+        ``zzznonsense`` all return the same 63 -- identical to sending no filter
+        at all. ``recipient`` and ``tipper`` really do filter (2 and 44 of the
+        same 63), and ``offset`` really does move the window (``offset=zzz``
+        answers 422 ``int_parsing``), which is what makes the ``post_id`` result
+        a finding about the endpoint rather than about the probe.
+
+        Exposing it would hand callers a filter that silently returns everything
+        -- and an unfiltered ledger read as a post's tips is a wrong answer that
+        looks like data.
+        """
+        params: dict[str, str] = {"limit": str(limit), "offset": str(offset)}
+        if recipient is not None:
+            params["recipient"] = recipient
+        if tipper is not None:
+            params["tipper"] = tipper
+        return self._raw_request("GET", f"/tips?{urlencode(params)}")
+
     # ── Echoes ───────────────────────────────────────────────────────
 
     def create_echo(
