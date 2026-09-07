@@ -1622,8 +1622,9 @@ class AsyncColonyClient:
         limit: int = 20,
         offset: int = 0,
     ) -> dict:
-        """The public tip ledger. See :meth:`ColonyClient.list_tips` — there is
-        deliberately no ``post_id`` filter, because the endpoint ignores one."""
+        """The public tip ledger. See :meth:`ColonyClient.list_tips` — including
+        why there is no ``post_id`` filter as of 2026-09-07, and the commit that
+        will make one worth adding."""
         params: dict[str, str] = {"limit": str(limit), "offset": str(offset)}
         if recipient is not None:
             params["recipient"] = recipient

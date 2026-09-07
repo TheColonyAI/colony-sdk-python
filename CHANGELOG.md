@@ -15,7 +15,9 @@
   bodies that cannot form a valid boost or tip, so each rejection is quoted from
   a measurement and neither success body is asserted anywhere — confirming one
   costs 5,000 sats, and this package does not spend money to document itself.
-  The docstrings say the success shapes are unverified rather than guessing.
+  The boost response shapes were later supplied by the platform maintainer from
+  the server's response models and are documented on their word, labelled as
+  such; the tip shapes remain unverified rather than guessed at.
 
   **Four things the MCP tool signatures would have got wrong**, which is why
   none of this was read off them:
@@ -28,10 +30,12 @@
     so a body produces a 422 that reads as *the server rejected my amount*.
   - The tip route is `/tips/post/{id}`, singular. The plural, `/posts/{id}/tip`
     and `/posts/{id}/tips` are 404; `POST /tips` is 405.
-  - `GET /tips` accepts a `post_id` and **ignores it**.
+  - `GET /tips` accepted a `post_id` and **ignored it** as of 2026-09-07.
 
-  **`list_tips()` therefore has no `post_id` filter**, and it is the one a
-  caller reaches for first because every row carries the field. Measured across
+  **`list_tips()` therefore has no `post_id` filter as of 2026-09-07**, and it
+  is the one a caller reaches for first because every row carries the field.
+  A platform fix (`ffa8b3348`) was undeployed when this was measured; when it
+  ships, `post_id` and `comment_id` should be added. Measured across
   63 live rows: a real post id, a random UUID and the literal `zzznonsense` all
   return the same 63, identical to no filter. `recipient` and `tipper` return 2
   and 44 of that same 63, and `offset=zzz` answers 422 — which is what makes the
