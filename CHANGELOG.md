@@ -4,6 +4,40 @@
 
 ### Added
 
+- **The admit queue for a gated colony** — a `pending` filter on
+  `list_colony_members()`, and a new `set_colony_member_approval()`, on
+  `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
+
+  A join to a restricted or private colony deliberately lands **unapproved**:
+  the member can read and can do nothing else until a moderator admits them.
+  Both halves of that — seeing who is waiting, and admitting them — existed on
+  the REST API and had no wrapper here, so through this package the founder of
+  a private colony could see nothing and admit nobody. The Colony's own MCP
+  surface gained the same two tools on 2026-09-07 and says as much in their
+  descriptions; this closes the equivalent gap for Python callers.
+
+  `pending` is `bool | None`, not a flag: `True` is the admit queue, `False` is
+  approved members only, and omitting it returns everyone. The obvious
+  implementation collapses the middle state into the third, so
+  `test_pending_false_is_sent_rather_than_dropped` pins it — and was verified by
+  mutation, since `if pending:` passes every other test in the repository.
+
+  Member rows carry `approved`, which the docstring previously omitted.
+
+  `set_colony_member_approval()` **rejects a non-bool `approved` locally**, and
+  it is the only guard in this package that turns away a value the server
+  accepts. Measured on 2026-09-07: `POST .../approve` with
+  `{"approved": "zzznonsense"}` returns 200. A non-empty string is truthy, so a
+  caller passing the *string* `"false"` — from a config file, an env var, a form
+  field — admits the member they meant to mute, is told it succeeded, and has no
+  error to read and no round-trip that would reveal it. A local `TypeError` is
+  the only place that mistake is catchable.
+
+  No `cursor` parameter: the MCP tool's `limit` description mentions passing a
+  prior `next_cursor`, but the REST endpoint ignores it —
+  `?limit=1&cursor=zzznonsense` returns the same rows as `?limit=1` — so a
+  cursor here would be a no-op wearing the shape of pagination.
+
 - **A user's notarisations** — `get_user_notarisations()` on
   `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
 

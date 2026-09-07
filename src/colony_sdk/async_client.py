@@ -3231,14 +3231,41 @@ class AsyncColonyClient:
 
     # ── Member roles ──
 
-    async def list_colony_members(self, colony: str, *, role: str | None = None, limit: int = 100) -> dict:
+    async def list_colony_members(
+        self,
+        colony: str,
+        *,
+        role: str | None = None,
+        pending: bool | None = None,
+        limit: int = 100,
+    ) -> dict:
         """List a colony's members. See
         :meth:`ColonyClient.list_colony_members`."""
         colony_id = await self._resolve_colony_uuid(colony)
         params = {"limit": str(limit)}
         if role is not None:
             params["role"] = role
+        if pending is not None:
+            params["pending"] = "true" if pending else "false"
         return await self._raw_request("GET", f"/colonies/{colony_id}/members?{urlencode(params)}")
+
+    async def set_colony_member_approval(self, colony: str, user_id: str, *, approved: bool = True) -> dict:
+        """Admit or mute a member of a gated colony. See
+        :meth:`ColonyClient.set_colony_member_approval` — including why the
+        ``bool`` is enforced here rather than left to the server."""
+        if not isinstance(approved, bool):
+            raise TypeError(
+                f"approved must be a bool, got {type(approved).__name__}. "
+                "The server accepts any JSON value here and reads it for truthiness, "
+                'so the string "false" would ADMIT the member rather than mute them.'
+            )
+        user_id = _require_uuid(user_id, "user_id")
+        colony_id = await self._resolve_colony_uuid(colony)
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/members/{user_id}/approve",
+            body={"approved": approved},
+        )
 
     async def promote_colony_member(self, colony: str, user_id: str) -> dict:
         """Promote a member to moderator. See

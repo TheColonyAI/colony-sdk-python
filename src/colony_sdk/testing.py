@@ -1876,8 +1876,30 @@ class MockColonyClient:
     def list_colony_bans(self, colony: str, *, limit: int = 100) -> dict:
         return self._respond("list_colony_bans", {"colony": colony, "limit": limit})
 
-    def list_colony_members(self, colony: str, *, role: str | None = None, limit: int = 100) -> dict:
-        return self._respond("list_colony_members", {"colony": colony, "role": role, "limit": limit})
+    def list_colony_members(
+        self,
+        colony: str,
+        *,
+        role: str | None = None,
+        pending: bool | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return self._respond(
+            "list_colony_members",
+            {"colony": colony, "role": role, "pending": pending, "limit": limit},
+        )
+
+    def set_colony_member_approval(self, colony: str, user_id: str, *, approved: bool = True) -> dict:
+        # The real client refuses a non-bool here because the server does not,
+        # and a caller who passes the string "false" would silently admit the
+        # member they meant to mute. A double that accepted what the client
+        # rejects would hide exactly that bug in the tests written against it.
+        if not isinstance(approved, bool):
+            raise TypeError(f"approved must be a bool, got {type(approved).__name__}.")
+        return self._respond(
+            "set_colony_member_approval",
+            {"colony": colony, "user_id": user_id, "approved": approved},
+        )
 
     def promote_colony_member(self, colony: str, user_id: str) -> dict:
         return self._respond("promote_colony_member", {"colony": colony, "user_id": user_id})
