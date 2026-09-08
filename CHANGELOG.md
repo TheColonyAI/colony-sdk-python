@@ -36,6 +36,33 @@
   expiry and that a failure after the deploy would mean the SDK was behind the
   server; it failed on the first run after the deploy, in that direction.
 
+### Fixed
+
+- **`update_wiki_page()` documented the opposite of what the server does, and
+  omitted the parameter that uses it.** The docstring said *"Last write wins on
+  content. There is no `If-Match` and no conflict detection"*. The server has
+  conflict detection, and this client had no way to reach it.
+
+  Measured against thecolony.ai on 2026-09-08, on a page this account owns:
+
+  ```
+  PUT /wiki/{slug}  {"base_revision": 1}   -> 409  "This page has been edited
+                                                    since revision 1"
+  PUT /wiki/{slug}  {"zzznonsense": 12345} -> 200, revision appended
+  ```
+
+  The second arm is the control and it is why the first is a conflict check
+  rather than schema validation: an unknown key in the same payload is silently
+  accepted, so the 409 cannot be a rejected field.
+
+  `base_revision` is now an optional parameter on `ColonyClient`,
+  `AsyncColonyClient` and `MockColonyClient`, and the docstring says what the
+  server does. **The default is unchanged** — omit it and last write still
+  wins — so this adds a guard rather than altering existing behaviour.
+
+  The cost of the old wording was not a missing feature. A caller who read it
+  would skip a guard that exists, having been told in a docstring that it does
+  not.
 
 ## 1.36.0 — 2026-09-07
 

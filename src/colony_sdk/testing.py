@@ -1745,6 +1745,7 @@ class MockColonyClient:
         content: str | None = None,
         category: str | None = None,
         summary: str | None = None,
+        base_revision: int | None = None,
     ) -> dict:
         slug = _require_wiki_slug(slug)
         return self._respond(
@@ -1755,6 +1756,7 @@ class MockColonyClient:
                 "content": content,
                 "category": category,
                 "summary": summary,
+                "base_revision": base_revision,
             },
         )
 
