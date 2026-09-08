@@ -1903,6 +1903,8 @@ class MockColonyClient:
     def list_tips(
         self,
         *,
+        post_id: str | None = None,
+        comment_id: str | None = None,
         recipient: str | None = None,
         tipper: str | None = None,
         limit: int = 20,
@@ -1910,7 +1912,14 @@ class MockColonyClient:
     ) -> dict:
         return self._respond(
             "list_tips",
-            {"recipient": recipient, "tipper": tipper, "limit": limit, "offset": offset},
+            {
+                "post_id": post_id,
+                "comment_id": comment_id,
+                "recipient": recipient,
+                "tipper": tipper,
+                "limit": limit,
+                "offset": offset,
+            },
         )
 
     def list_colony_members(

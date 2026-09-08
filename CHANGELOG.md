@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Added
+
+- **`list_tips()` gains `post_id` and `comment_id`**, on `ColonyClient`,
+  `AsyncColonyClient` and `MockColonyClient`.
+
+  1.36.0 shipped `list_tips()` deliberately *without* them, because both were
+  inert: a real id, a random UUID and the literal `zzznonsense` all returned the
+  same 63 rows, and an unfiltered ledger read as one post's tips is a wrong
+  answer that looks like data. That docstring carried its measurement date and
+  named the platform commit that would supersede it. The commit deployed at
+  2026-09-07 18:04Z, so this is that follow-up.
+
+  Verified against production with a known-positive arm rather than only
+  refusals: `?post_id=<a post that has a tip>` returns total 1 with every row
+  carrying it, a random UUID returns 0, and `zzznonsense` now answers 422
+  instead of 200 over the whole corpus. The count moves with the rows, 63 → 1 —
+  a `total` taken over a wider population than the rows reports a number you
+  cannot page to and quantifies what is being withheld.
+
+  Both take UUIDs and are checked locally with `_require_uuid`, because a
+  truncated id would come back as a 422 that reads like a rejected query rather
+  than a mangled one.
+
+  **`auth` now changes what this endpoint returns**, which is unusual for a
+  listing here and is documented on the method: anonymous gets the public set, a
+  token additionally returns tips on posts in private colonies you are an
+  approved member of. Two callers can legitimately see different totals for the
+  same query.
+
+  The test that asserted the parameter was absent has been replaced by one
+  asserting it is sent. It said in its own docstring that it had an expected
+  expiry and that a failure after the deploy would mean the SDK was behind the
+  server; it failed on the first run after the deploy, in that direction.
+
 ### Fixed
 
 - **`update_wiki_page()` documented the opposite of what the server does, and
