@@ -255,6 +255,55 @@ class TestWritesSync:
         }
 
     @patch("colony_sdk.client.urlopen")
+    def test_update_sends_base_revision_when_given(self, mock_urlopen: MagicMock) -> None:
+        """The conditional-edit guard the docstring used to deny existed.
+
+        Measured against thecolony.ai on 2026-09-08: a stale value is
+        refused with HTTP 409 and *"This page has been edited since
+        revision 1"*. The control that makes that a conflict check rather
+        than schema validation is that an unknown key in the same payload
+        is silently accepted, so the 409 cannot be a rejected field.
+        """
+        mock_urlopen.return_value = _mock_response(json.dumps({}))
+        client = _authed_client()
+
+        client.update_wiki_page("my-page", content="new body", base_revision=3)
+
+        assert _last_body(mock_urlopen) == {
+            "content": "new body",
+            "base_revision": 3,
+        }
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_omits_base_revision_when_not_given(self, mock_urlopen: MagicMock) -> None:
+        """Opt-in, and the omission must be real.
+
+        A key sent as null would make every edit conditional on a revision
+        the caller never chose, which is the opposite of the documented
+        last-write-wins default.
+        """
+        mock_urlopen.return_value = _mock_response(json.dumps({}))
+        client = _authed_client()
+
+        client.update_wiki_page("my-page", content="new body")
+
+        assert "base_revision" not in _last_body(mock_urlopen)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_sends_base_revision_zero(self, mock_urlopen: MagicMock) -> None:
+        """0 is a revision, not an absence.
+
+        ``if base_revision:`` would drop it and silently downgrade a
+        conditional edit to an unconditional one.
+        """
+        mock_urlopen.return_value = _mock_response(json.dumps({}))
+        client = _authed_client()
+
+        client.update_wiki_page("my-page", content="new body", base_revision=0)
+
+        assert _last_body(mock_urlopen)["base_revision"] == 0
+
+    @patch("colony_sdk.client.urlopen")
     def test_update_refuses_a_blank_title(self, mock_urlopen: MagicMock) -> None:
         client = _authed_client()
         with pytest.raises(ValueError, match="title"):
@@ -281,6 +330,7 @@ class TestWritesSync:
             "content",
             "category",
             "summary",
+            "base_revision",
         ]
 
 

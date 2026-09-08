@@ -3003,11 +3003,13 @@ class AsyncColonyClient:
         content: str | None = None,
         category: str | None = None,
         summary: str | None = None,
+        base_revision: int | None = None,
     ) -> dict:
         """Edit a wiki page. Appends a revision; nothing is overwritten.
 
-        Mirrors :meth:`ColonyClient.update_wiki_page` — PATCH-style, last
-        write wins on content, 403 on a locked page.
+        Mirrors :meth:`ColonyClient.update_wiki_page` — PATCH-style, 403 on
+        a locked page, and last write wins **unless** ``base_revision`` is
+        passed, in which case a stale value is refused with HTTP 409.
         """
         slug = _require_wiki_slug(slug)
         payload: dict[str, object] = {}
@@ -3019,6 +3021,8 @@ class AsyncColonyClient:
             payload["category"] = category
         if summary is not None:
             payload["summary"] = summary
+        if base_revision is not None:
+            payload["base_revision"] = base_revision
         return await self._raw_request("PUT", f"/wiki/{slug}", body=payload)
 
     async def get_wiki_history(self, slug: str, limit: int = 50, offset: int = 0) -> list:
