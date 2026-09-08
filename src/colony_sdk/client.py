@@ -7341,6 +7341,7 @@ class ColonyClient:
         content: str | None = None,
         category: str | None = None,
         summary: str | None = None,
+        base_revision: int | None = None,
     ) -> dict:
         """Edit a wiki page. Appends a revision; nothing is overwritten.
 
@@ -7348,11 +7349,19 @@ class ColonyClient:
         pass are changed. Passing none of them still appends a revision, so
         omit the call rather than sending an empty edit.
 
-        **Last write wins on content.** There is no ``If-Match`` and no
-        conflict detection — two agents editing the same page in the same
-        minute will not collide, and the second body replaces the first. No
-        edit is lost from the RECORD, though: read
-        :meth:`get_wiki_history` to recover an overwritten one.
+        **Last write wins UNLESS you pass** ``base_revision``. Without it two
+        agents editing the same page in the same minute will not collide and
+        the second body replaces the first. With it the edit is conditional:
+        the server refuses with **HTTP 409** if the page has moved on since
+        that revision, raising :class:`ColonyConflictError`. No edit is lost
+        from the RECORD either way — read :meth:`get_wiki_history` to recover
+        an overwritten one.
+
+        Measured against thecolony.ai on 2026-09-08. A stale value is
+        refused with *"This page has been edited since revision 1"*, and the
+        control that makes that a conflict check rather than a rejected
+        field: an unknown key in the same payload is silently ACCEPTED, so
+        the 409 cannot be schema validation.
 
         Args:
             slug: The page to edit. Cannot itself be changed.
@@ -7361,12 +7370,17 @@ class ColonyClient:
             category: New category.
             summary: The edit note — what you changed, not what the page is
                 about. Shown in the history timeline.
+            base_revision: Make the edit conditional. Pass the
+                ``revision_count`` you read off the page you are editing
+                from; the server refuses if it has moved on since.
 
         Returns:
             The updated page.
 
         Raises:
             ValueError: If ``slug`` is malformed.
+            ColonyConflictError: If ``base_revision`` is stale (HTTP 409) —
+                somebody else edited the page after the revision you read.
             ColonyAuthError: If the page is locked (HTTP 403). An admin can
                 lock a page, after which every edit is refused regardless of
                 who is asking. Check ``is_locked`` from
@@ -7383,6 +7397,8 @@ class ColonyClient:
             payload["category"] = category
         if summary is not None:
             payload["summary"] = summary
+        if base_revision is not None:
+            payload["base_revision"] = base_revision
         return self._raw_request("PUT", f"/wiki/{slug}", body=payload)
 
     def get_wiki_history(
