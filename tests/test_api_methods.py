@@ -8,8 +8,12 @@ import io
 import json
 import sys
 import time
+import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -387,7 +391,7 @@ class TestPosts:
             offset=10,
             post_type="analysis",
             tag="ai",
-            search="test",
+            query="test",
         )
 
         req = _last_request(mock_urlopen)
@@ -398,7 +402,8 @@ class TestPosts:
         assert "offset=10" in url
         assert "post_type=analysis" in url
         assert "tag=ai" in url
-        assert "search=test" in url
+        assert "q=test" in url
+        assert "search=" not in url
 
     @patch("colony_sdk.client.urlopen")
     def test_get_posts_by_author_username(self, mock_urlopen: MagicMock) -> None:
@@ -617,7 +622,7 @@ class TestPosts:
         mock_urlopen.return_value = _mock_response({"id": "p2"})
         client = _authed_client()
 
-        client.crosspost("p1", colony_id="c9", title="Reframed")
+        client.crosspost("p1", colony="c9", title="Reframed")
 
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
@@ -629,7 +634,7 @@ class TestPosts:
         mock_urlopen.return_value = _mock_response({"id": "p2"})
         client = _authed_client()
 
-        client.crosspost("p1", colony_id="c9")
+        client.crosspost("p1", colony="c9")
 
         body = _last_body(mock_urlopen)
         assert body == {"colony_id": "c9"}
@@ -2905,14 +2910,14 @@ class TestIterPosts:
                 sort="top",
                 post_type="question",
                 tag="ai",
-                search="agents",
+                query="agents",
             )
         )
         url = _last_request(mock_urlopen).full_url
         assert "sort=top" in url
         assert "post_type=question" in url
         assert "tag=ai" in url
-        assert "search=agents" in url
+        assert "q=agents" in url
         assert f"colony_id={COLONIES['general']}" in url
 
     @patch("colony_sdk.client.urlopen")
@@ -5289,3 +5294,329 @@ class TestSentinelScannedFilter:
         urls = [c.args[0].full_url for c in mock_urlopen.call_args_list]
         assert len(urls) == 2
         assert all("sentinel_scanned=false" in u for u in urls)
+
+
+def _qs(mock_urlopen: MagicMock) -> dict[str, list[str]]:
+    return parse_qs(urlsplit(_last_request(mock_urlopen).full_url).query)
+
+
+@contextmanager
+def _no_warnings() -> Iterator[None]:
+    """Fail on ANY warning — the preferred names and positional calls must be silent."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        yield
+
+
+class TestRenamedKwargs:
+    """Kwargs renamed to match the platform's MCP tools (2026-09-14).
+
+    Each old name is a deprecated alias: it still works, warns naming the
+    replacement, and sends exactly what the new name sends. Conflicting values
+    raise before any request leaves (the platform 400s the same request), the
+    same value twice is allowed but still warns, and positional callers bind
+    as they always did — to the new name, without a warning.
+    """
+
+    # ── get_posts / iter_posts: search -> query, sent as `q` ──
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_posts_query_sends_q(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        with _no_warnings():
+            _authed_client().get_posts(query="agents")
+        qs = _qs(mock_urlopen)
+        assert qs["q"] == ["agents"]
+        assert "search" not in qs
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_posts_search_warns_and_sends_q(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        with pytest.warns(DeprecationWarning, match=r"get_posts\(search=\.\.\.\) is deprecated; use query="):
+            _authed_client().get_posts(search="agents")
+        qs = _qs(mock_urlopen)
+        assert qs["q"] == ["agents"]
+        assert "search" not in qs
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_posts_conflict_raises_before_the_request(self, mock_urlopen: MagicMock) -> None:
+        with pytest.raises(ValueError, match=r"query='a'.*search='b'"):
+            _authed_client().get_posts(query="a", search="b")
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_posts_same_value_twice_is_allowed_and_warns(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        with pytest.warns(DeprecationWarning, match="search"):
+            _authed_client().get_posts(query="agents", search="agents")
+        assert _qs(mock_urlopen)["q"] == ["agents"]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_posts_positional_still_binds(self, mock_urlopen: MagicMock) -> None:
+        """The 7th positional slot was ``search``; it is now ``query``."""
+        mock_urlopen.return_value = _mock_response({"items": []})
+        with _no_warnings():
+            _authed_client().get_posts(None, "new", 20, 0, None, None, "agents")
+        assert _qs(mock_urlopen)["q"] == ["agents"]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_iter_posts_query_and_search_send_q(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+        with _no_warnings():
+            list(client.iter_posts(query="agents"))
+        assert _qs(mock_urlopen)["q"] == ["agents"]
+
+        with pytest.warns(DeprecationWarning, match=r"iter_posts\(search=\.\.\.\) is deprecated; use query="):
+            list(client.iter_posts(search="agents"))
+        qs = _qs(mock_urlopen)
+        assert qs["q"] == ["agents"]
+        assert "search" not in qs
+
+    @patch("colony_sdk.client.urlopen")
+    def test_iter_posts_conflict_and_positional(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+        with pytest.raises(ValueError, match="different values"):
+            list(client.iter_posts(query="a", search="b"))
+        mock_urlopen.assert_not_called()
+
+        # The 5th positional slot was ``search``; it is now ``query``.
+        with _no_warnings():
+            list(client.iter_posts(None, "new", None, None, "agents"))
+        assert _qs(mock_urlopen)["q"] == ["agents"]
+
+    # ── get_wiki_pages / iter_wiki_pages: search -> query, sent as `q` ──
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_wiki_pages_query_and_search_send_q(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+        with _no_warnings():
+            client.get_wiki_pages(query="attestation")
+        assert _qs(mock_urlopen)["q"] == ["attestation"]
+
+        with pytest.warns(DeprecationWarning, match=r"get_wiki_pages\(search=\.\.\.\) is deprecated; use query="):
+            client.get_wiki_pages(search="attestation")
+        qs = _qs(mock_urlopen)
+        assert qs["q"] == ["attestation"]
+        assert "search" not in qs
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_wiki_pages_conflict_same_value_and_positional(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+        with pytest.raises(ValueError, match="different values"):
+            client.get_wiki_pages(query="a", search="b")
+        mock_urlopen.assert_not_called()
+
+        with pytest.warns(DeprecationWarning):
+            client.get_wiki_pages(query="ab", search="ab")
+        assert _qs(mock_urlopen)["q"] == ["ab"]
+
+        # The 2nd positional slot was ``search``; it is now ``query``.
+        with _no_warnings():
+            client.get_wiki_pages(None, "attestation")
+        assert _qs(mock_urlopen)["q"] == ["attestation"]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_iter_wiki_pages_aliases(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+        with _no_warnings():
+            list(client.iter_wiki_pages(None, "x1"))
+        assert _qs(mock_urlopen)["q"] == ["x1"]
+
+        with pytest.warns(DeprecationWarning, match=r"iter_wiki_pages\(search=\.\.\.\) is deprecated"):
+            list(client.iter_wiki_pages(search="x2"))
+        assert _qs(mock_urlopen)["q"] == ["x2"]
+
+        with pytest.raises(ValueError, match="different values"):
+            list(client.iter_wiki_pages(query="a", search="b"))
+
+    # ── search_group_messages: q -> query, wire stays `q` ──
+
+    @patch("colony_sdk.client.urlopen")
+    def test_search_group_messages_query_positional_and_keyword(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"hits": [], "total": 0})
+        client = _authed_client()
+        with _no_warnings():
+            client.search_group_messages(GROUP_ID, "hi")
+        assert _qs(mock_urlopen)["q"] == ["hi"]
+        with _no_warnings():
+            client.search_group_messages(GROUP_ID, query="yo")
+        assert _qs(mock_urlopen)["q"] == ["yo"]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_search_group_messages_q_warns_and_sends_q(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"hits": [], "total": 0})
+        with pytest.warns(DeprecationWarning, match=r"search_group_messages\(q=\.\.\.\) is deprecated; use query="):
+            _authed_client().search_group_messages(GROUP_ID, q="hi")
+        assert _last_request(mock_urlopen).full_url == (
+            f"{BASE}/messages/groups/{GROUP_ID}/search?q=hi&limit=50&offset=0"
+        )
+
+    @patch("colony_sdk.client.urlopen")
+    def test_search_group_messages_conflict_and_missing(self, mock_urlopen: MagicMock) -> None:
+        client = _authed_client()
+        with pytest.raises(ValueError, match="different values"):
+            client.search_group_messages(GROUP_ID, "a", q="b")
+        with pytest.raises(TypeError, match="query"):
+            client.search_group_messages(GROUP_ID)
+        mock_urlopen.assert_not_called()
+
+    # ── crosspost: colony_id -> colony, body field stays `colony_id` ──
+
+    @patch("colony_sdk.client.urlopen")
+    def test_crosspost_colony_positional_and_keyword(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "p2"})
+        client = _authed_client()
+        with _no_warnings():
+            client.crosspost("p1", "c9", "Reframed")
+        assert _last_body(mock_urlopen) == {"colony_id": "c9", "title": "Reframed"}
+        with _no_warnings():
+            client.crosspost("p1", colony="general")
+        assert _last_body(mock_urlopen) == {"colony_id": "general"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_crosspost_colony_id_warns_and_sends_the_same_body(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "p2"})
+        with pytest.warns(DeprecationWarning, match=r"crosspost\(colony_id=\.\.\.\) is deprecated; use colony="):
+            _authed_client().crosspost("p1", colony_id="c9")
+        assert _last_body(mock_urlopen) == {"colony_id": "c9"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_crosspost_conflict_same_value_and_missing(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "p2"})
+        client = _authed_client()
+        with pytest.raises(ValueError, match="different values"):
+            client.crosspost("p1", "a", colony_id="b")
+        with pytest.raises(TypeError, match="colony"):
+            client.crosspost("p1")
+        mock_urlopen.assert_not_called()
+
+        with pytest.warns(DeprecationWarning):
+            client.crosspost("p1", "c9", colony_id="c9")
+        assert _last_body(mock_urlopen) == {"colony_id": "c9"}
+
+    # ── get_mod_queue: page_size -> limit, queue_status -> status ──
+    # The wire names stay page_size / queue_status until the platform release
+    # that accepts limit / status is live.
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_mod_queue_new_names_map_onto_the_old_wire_names(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        with _no_warnings():
+            _authed_client().get_mod_queue("general", limit=10, status="resolved")
+        qs = _qs(mock_urlopen)
+        assert qs["page_size"] == ["10"]
+        assert qs["queue_status"] == ["resolved"]
+        assert qs["page"] == ["1"]
+        assert "limit" not in qs and "status" not in qs and "offset" not in qs
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_mod_queue_defaults_are_unchanged(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        with _no_warnings():
+            _authed_client().get_mod_queue("general")
+        qs = _qs(mock_urlopen)
+        assert qs["page_size"] == ["25"]
+        assert qs["queue_status"] == ["open"]
+
+    @pytest.mark.parametrize(
+        ("old", "new", "value", "wire"),
+        [("page_size", "limit", 10, "10"), ("queue_status", "status", "resolved", "resolved")],
+    )
+    @patch("colony_sdk.client.urlopen")
+    def test_get_mod_queue_old_names_warn_and_send_the_same(
+        self, mock_urlopen: MagicMock, old: str, new: str, value: object, wire: str
+    ) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        client = _authed_client()
+        with pytest.warns(DeprecationWarning, match=rf"get_mod_queue\({old}=\.\.\.\) is deprecated; use {new}="):
+            client.get_mod_queue("general", **{old: value})
+        assert _qs(mock_urlopen)[old] == [wire]
+
+        with pytest.warns(DeprecationWarning):
+            client.get_mod_queue("general", **{old: value, new: value})
+        assert _qs(mock_urlopen)[old] == [wire]
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{"limit": 10, "page_size": 20}, {"status": "open", "queue_status": "resolved"}],
+    )
+    @patch("colony_sdk.client.urlopen")
+    def test_get_mod_queue_conflict_raises(self, mock_urlopen: MagicMock, kwargs: dict) -> None:
+        with pytest.raises(ValueError, match="different values"):
+            _authed_client().get_mod_queue("general", **kwargs)
+        mock_urlopen.assert_not_called()
+
+    # ── the mock mirrors the contract ──
+
+    def test_mock_warns_raises_and_records_the_new_names(self) -> None:
+        from colony_sdk.testing import MockColonyClient
+
+        mock = MockColonyClient()
+        with pytest.warns(DeprecationWarning, match="colony_id"):
+            mock.crosspost("p1", colony_id="c9")
+        assert mock.calls[-1] == ("crosspost", {"post_id": "p1", "colony": "c9", "title": None})
+        with pytest.warns(DeprecationWarning, match="queue_status"):
+            mock.get_mod_queue("general", queue_status="resolved")
+        assert mock.calls[-1][1]["status"] == "resolved"
+        assert mock.calls[-1][1]["limit"] == 25
+        with pytest.raises(ValueError, match="different values"):
+            mock.get_posts(query="a", search="b")
+        with pytest.raises(ValueError, match="different values"):
+            mock.get_wiki_pages(query="a", search="b")
+        with pytest.warns(DeprecationWarning, match="q="):
+            mock.search_group_messages("g-1", q="hi")
+        assert mock.calls[-1][1]["query"] == "hi"
+
+
+class TestMemberColoniesOnColoniesAndSearch:
+    """``member_colonies`` on ``get_colonies()`` and ``search()`` — the same
+    filter ``get_posts()`` has, and the same falsy-``False`` trap."""
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_colonies_sends_both_values_and_omits_none(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response([])
+        client = _authed_client()
+        client.get_colonies(member_colonies=True)
+        assert _qs(mock_urlopen)["member_colonies"] == ["true"]
+        client.get_colonies(10, False)
+        qs = _qs(mock_urlopen)
+        assert qs["member_colonies"] == ["false"]
+        assert qs["limit"] == ["10"]
+        client.get_colonies()
+        assert "member_colonies" not in _qs(mock_urlopen)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_search_sends_both_values_and_omits_none(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "users": []})
+        client = _authed_client()
+        client.search("agents", member_colonies=True)
+        assert _qs(mock_urlopen)["member_colonies"] == ["true"]
+        client.search("agents", member_colonies=False)
+        assert _qs(mock_urlopen)["member_colonies"] == ["false"]
+        client.search("agents")
+        assert "member_colonies" not in _qs(mock_urlopen)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_search_colony_filter_is_unchanged(self, mock_urlopen: MagicMock) -> None:
+        """The platform's ``colony`` name on /search is not deployed yet."""
+        mock_urlopen.return_value = _mock_response({"items": [], "users": []})
+        _authed_client().search("agents", colony="general", member_colonies=True)
+        qs = _qs(mock_urlopen)
+        assert "colony" not in qs
+        assert "colony_id" in qs or "colony_name" in qs
+
+    def test_mock_records_it_only_when_supplied(self) -> None:
+        from colony_sdk.testing import MockColonyClient
+
+        mock = MockColonyClient()
+        mock.get_colonies(member_colonies=False)
+        mock.get_colonies()
+        mock.search("agents", member_colonies=True)
+        assert mock.calls[0] == ("get_colonies", {"limit": 50, "member_colonies": False})
+        assert mock.calls[1] == ("get_colonies", {"limit": 50})
+        assert mock.calls[2][1]["member_colonies"] is True

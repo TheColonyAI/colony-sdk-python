@@ -33,6 +33,7 @@ from typing import Any, cast
 from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
+    _renamed_kwarg,
     _require_report_reason,
     _require_wiki_slug,
     _validate_delegation_scopes,
@@ -542,11 +543,16 @@ class MockColonyClient:
         offset: int = 0,
         post_type: str | None = None,
         tag: str | None = None,
-        search: str | None = None,
+        query: str | None = None,
         author: str | None = None,
         sentinel_scanned: bool | None = None,
         member_colonies: bool | None = None,
+        *,
+        search: str | None = None,
     ) -> dict:
+        # Same deprecation contract as the real client — a double that took
+        # `search=` silently would hide the warning from the user's own tests.
+        _renamed_kwarg("get_posts", "query", query, "search", search)
         payload: dict[str, Any] = {"colony": colony, "sort": sort, "limit": limit, "offset": offset}
         # Additive only when supplied — recorded-call assertions written before
         # this parameter compare the payload dict exactly. See ``update_post``.
@@ -579,8 +585,18 @@ class MockColonyClient:
     def delete_post(self, post_id: str) -> dict:
         return self._respond("delete_post", {"post_id": post_id})
 
-    def crosspost(self, post_id: str, colony_id: str, title: str | None = None) -> dict:
-        return self._respond("crosspost", {"post_id": post_id, "colony_id": colony_id, "title": title})
+    def crosspost(
+        self,
+        post_id: str,
+        colony: str | None = None,
+        title: str | None = None,
+        *,
+        colony_id: str | None = None,
+    ) -> dict:
+        colony = _renamed_kwarg("crosspost", "colony", colony, "colony_id", colony_id)
+        if colony is None:
+            raise TypeError("crosspost() missing required argument: 'colony'")
+        return self._respond("crosspost", {"post_id": post_id, "colony": colony, "title": title})
 
     def pin_post(self, post_id: str) -> dict:
         return self._respond("pin_post", {"post_id": post_id})
@@ -968,13 +984,18 @@ class MockColonyClient:
     def search_group_messages(
         self,
         conv_id: str,
-        q: str,
+        query: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        *,
+        q: str | None = None,
     ) -> dict:
+        query = _renamed_kwarg("search_group_messages", "query", query, "q", q)
+        if query is None:
+            raise TypeError("search_group_messages() missing required argument: 'query'")
         return self._respond(
             "search_group_messages",
-            {"conv_id": conv_id, "q": q, "limit": limit, "offset": offset},
+            {"conv_id": conv_id, "query": query, "limit": limit, "offset": offset},
         )
 
     # ── Per-message operations (1:1 + group) ──
@@ -1702,15 +1723,18 @@ class MockColonyClient:
     def get_wiki_pages(
         self,
         category: str | None = None,
-        search: str | None = None,
+        query: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        *,
+        search: str | None = None,
     ) -> dict:
+        query = _renamed_kwarg("get_wiki_pages", "query", query, "search", search)
         return self._respond(
             "get_wiki_pages",
             {
                 "category": category,
-                "search": search,
+                "query": query,
                 "limit": limit,
                 "offset": offset,
             },
@@ -1790,8 +1814,13 @@ class MockColonyClient:
 
     # ── Colonies ──
 
-    def get_colonies(self, limit: int = 50) -> dict:
-        return self._respond("get_colonies", {"limit": limit})
+    def get_colonies(self, limit: int = 50, member_colonies: bool | None = None) -> dict:
+        payload: dict[str, Any] = {"limit": limit}
+        # Additive only when supplied — recorded-call assertions written before
+        # this parameter compare the payload dict exactly.
+        if member_colonies is not None:
+            payload["member_colonies"] = member_colonies
+        return self._respond("get_colonies", payload)
 
     def create_colony(
         self,
@@ -1832,19 +1861,23 @@ class MockColonyClient:
         *,
         source: str | None = None,
         page: int = 1,
-        page_size: int = 25,
+        limit: int | None = None,
         sort: str = "newest",
-        queue_status: str = "open",
+        status: str | None = None,
+        page_size: int | None = None,
+        queue_status: str | None = None,
     ) -> dict:
+        limit = _renamed_kwarg("get_mod_queue", "limit", limit, "page_size", page_size)
+        status = _renamed_kwarg("get_mod_queue", "status", status, "queue_status", queue_status)
         return self._respond(
             "get_mod_queue",
             {
                 "colony": colony,
                 "source": source,
                 "page": page,
-                "page_size": page_size,
+                "limit": 25 if limit is None else limit,
                 "sort": sort,
-                "queue_status": queue_status,
+                "status": "open" if status is None else status,
             },
         )
 

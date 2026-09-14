@@ -568,8 +568,9 @@ class TestReadMethods:
             return _json_response({"posts": []})
 
         client = _make_client(handler)
-        await client.get_posts(search="agents")
-        assert "search=agents" in seen["url"]
+        await client.get_posts(query="agents")
+        assert "q=agents" in seen["url"]
+        assert "search=" not in seen["url"]
 
     async def test_get_posts_by_author_username(self) -> None:
         seen: dict = {}
@@ -4492,3 +4493,173 @@ class TestEchoes:
             await client.create_echo("11111111-1111-1111-1111-111111111111", "worth reading")
         assert slept == []
         assert exc.value.retry_after == 86400
+
+
+def _recording_client(body: dict | list | None = None) -> tuple[AsyncColonyClient, list[httpx.Request]]:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return _json_response(body if body is not None else {"items": []})
+
+    return _make_client(handler), seen
+
+
+def _async_qs(request: httpx.Request) -> dict[str, list[str]]:
+    from urllib.parse import parse_qs
+
+    return parse_qs(request.url.query.decode())
+
+
+class TestAsyncRenamedKwargs:
+    """Async twin of ``test_api_methods.TestRenamedKwargs``: each old kwarg
+    still works, warns naming the new one and sends the same wire param;
+    conflicting values raise before a request leaves; positional calls bind
+    to the new name without a warning."""
+
+    async def test_get_posts(self) -> None:
+        import warnings
+
+        client, seen = _recording_client()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            await client.get_posts(query="agents")
+            await client.get_posts(None, "new", 20, 0, None, None, "positional")
+        assert _async_qs(seen[0])["q"] == ["agents"]
+        assert _async_qs(seen[1])["q"] == ["positional"]
+
+        with pytest.warns(DeprecationWarning, match=r"get_posts\(search=\.\.\.\) is deprecated; use query="):
+            await client.get_posts(search="agents")
+        qs = _async_qs(seen[2])
+        assert qs["q"] == ["agents"]
+        assert "search" not in qs
+
+        with pytest.warns(DeprecationWarning):
+            await client.get_posts(query="same", search="same")
+        assert _async_qs(seen[3])["q"] == ["same"]
+
+        with pytest.raises(ValueError, match=r"query='a'.*search='b'"):
+            await client.get_posts(query="a", search="b")
+        assert len(seen) == 4
+
+    async def test_iter_posts(self) -> None:
+        client, seen = _recording_client()
+        async for _ in client.iter_posts(None, "new", None, None, "positional"):
+            pass
+        assert _async_qs(seen[0])["q"] == ["positional"]
+
+        with pytest.warns(DeprecationWarning, match=r"iter_posts\(search=\.\.\.\) is deprecated; use query="):
+            async for _ in client.iter_posts(search="agents"):
+                pass
+        assert _async_qs(seen[1])["q"] == ["agents"]
+
+        with pytest.raises(ValueError, match="different values"):
+            async for _ in client.iter_posts(query="a", search="b"):
+                pass
+        assert len(seen) == 2
+
+    async def test_get_and_iter_wiki_pages(self) -> None:
+        client, seen = _recording_client()
+        await client.get_wiki_pages(None, "positional")
+        await client.get_wiki_pages(query="attestation")
+        assert _async_qs(seen[0])["q"] == ["positional"]
+        assert _async_qs(seen[1])["q"] == ["attestation"]
+
+        with pytest.warns(DeprecationWarning, match=r"get_wiki_pages\(search=\.\.\.\) is deprecated; use query="):
+            await client.get_wiki_pages(search="attestation")
+        qs = _async_qs(seen[2])
+        assert qs["q"] == ["attestation"]
+        assert "search" not in qs
+
+        with pytest.warns(DeprecationWarning, match=r"iter_wiki_pages\(search=\.\.\.\) is deprecated"):
+            async for _ in client.iter_wiki_pages(search="x2"):
+                pass
+        assert _async_qs(seen[3])["q"] == ["x2"]
+
+        with pytest.raises(ValueError, match="different values"):
+            await client.get_wiki_pages(query="a", search="b")
+        with pytest.raises(ValueError, match="different values"):
+            async for _ in client.iter_wiki_pages(query="a", search="b"):
+                pass
+        assert len(seen) == 4
+
+    async def test_search_group_messages(self) -> None:
+        client, seen = _recording_client({"hits": [], "total": 0})
+        await client.search_group_messages(_GROUP_ID, "hi")
+        await client.search_group_messages(_GROUP_ID, query="yo")
+        assert _async_qs(seen[0])["q"] == ["hi"]
+        assert _async_qs(seen[1])["q"] == ["yo"]
+
+        with pytest.warns(DeprecationWarning, match=r"search_group_messages\(q=\.\.\.\) is deprecated; use query="):
+            await client.search_group_messages(_GROUP_ID, q="hi")
+        assert str(seen[2].url) == f"{BASE}/messages/groups/{_GROUP_ID}/search?q=hi&limit=50&offset=0"
+
+        with pytest.raises(ValueError, match="different values"):
+            await client.search_group_messages(_GROUP_ID, "a", q="b")
+        with pytest.raises(TypeError, match="query"):
+            await client.search_group_messages(_GROUP_ID)
+        assert len(seen) == 3
+
+    async def test_crosspost(self) -> None:
+        client, seen = _recording_client({"id": _POST_ID})
+        await client.crosspost(_POST_ID, "general", "Retitled")
+        await client.crosspost(_POST_ID, colony="general")
+        assert json.loads(seen[0].content) == {"colony_id": "general", "title": "Retitled"}
+        assert json.loads(seen[1].content) == {"colony_id": "general"}
+
+        with pytest.warns(DeprecationWarning, match=r"crosspost\(colony_id=\.\.\.\) is deprecated; use colony="):
+            await client.crosspost(_POST_ID, colony_id="general")
+        assert json.loads(seen[2].content) == {"colony_id": "general"}
+
+        with pytest.raises(ValueError, match="different values"):
+            await client.crosspost(_POST_ID, "a", colony_id="b")
+        with pytest.raises(TypeError, match="colony"):
+            await client.crosspost(_POST_ID)
+        assert len(seen) == 3
+
+    async def test_get_mod_queue(self) -> None:
+        client, seen = _recording_client()
+        await client.get_mod_queue("general", limit=10, status="resolved")
+        qs = _async_qs(seen[0])
+        # Still the old wire names until the platform release is live.
+        assert qs["page_size"] == ["10"]
+        assert qs["queue_status"] == ["resolved"]
+        assert "limit" not in qs and "status" not in qs and "offset" not in qs
+
+        await client.get_mod_queue("general")
+        assert _async_qs(seen[1])["page_size"] == ["25"]
+        assert _async_qs(seen[1])["queue_status"] == ["open"]
+
+        with pytest.warns(DeprecationWarning, match=r"get_mod_queue\(page_size=\.\.\.\) is deprecated; use limit="):
+            await client.get_mod_queue("general", page_size=10)
+        assert _async_qs(seen[2])["page_size"] == ["10"]
+        with pytest.warns(DeprecationWarning, match=r"get_mod_queue\(queue_status=\.\.\.\) is deprecated; use status="):
+            await client.get_mod_queue("general", queue_status="resolved")
+        assert _async_qs(seen[3])["queue_status"] == ["resolved"]
+
+        with pytest.raises(ValueError, match="different values"):
+            await client.get_mod_queue("general", limit=10, page_size=20)
+        with pytest.raises(ValueError, match="different values"):
+            await client.get_mod_queue("general", status="open", queue_status="resolved")
+        assert len(seen) == 4
+
+
+class TestAsyncMemberColoniesOnColoniesAndSearch:
+    async def test_get_colonies(self) -> None:
+        client, seen = _recording_client([])
+        await client.get_colonies(member_colonies=True)
+        await client.get_colonies(10, False)
+        await client.get_colonies()
+        assert _async_qs(seen[0])["member_colonies"] == ["true"]
+        assert _async_qs(seen[1])["member_colonies"] == ["false"]
+        assert _async_qs(seen[1])["limit"] == ["10"]
+        assert "member_colonies" not in _async_qs(seen[2])
+
+    async def test_search(self) -> None:
+        client, seen = _recording_client({"items": [], "users": []})
+        await client.search("agents", member_colonies=True)
+        await client.search("agents", member_colonies=False)
+        await client.search("agents")
+        assert _async_qs(seen[0])["member_colonies"] == ["true"]
+        assert _async_qs(seen[1])["member_colonies"] == ["false"]
+        assert "member_colonies" not in _async_qs(seen[2])
