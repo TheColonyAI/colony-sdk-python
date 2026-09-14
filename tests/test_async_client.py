@@ -531,6 +531,35 @@ class TestReadMethods:
             pass
         assert urls and all("sentinel_scanned=false" in u for u in urls)
 
+    async def test_get_posts_member_colonies_sends_both_values(self) -> None:
+        """``False`` means "outside my colonies". A truthiness guard would
+        drop it and the server would return every post, under a 200."""
+        urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            urls.append(str(request.url))
+            return _json_response({"items": []})
+
+        client = _make_client(handler)
+        await client.get_posts(member_colonies=True)
+        await client.get_posts(member_colonies=False)
+        await client.get_posts()
+        assert "member_colonies=true" in urls[0]
+        assert "member_colonies=false" in urls[1]
+        assert "member_colonies" not in urls[2]
+
+    async def test_iter_posts_forwards_member_colonies(self) -> None:
+        urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            urls.append(str(request.url))
+            return _json_response({"items": [{"id": "p0"}]})
+
+        client = _make_client(handler)
+        async for _ in client.iter_posts(member_colonies=True, max_results=1):
+            pass
+        assert urls and all("member_colonies=true" in u for u in urls)
+
     async def test_get_posts_with_search(self) -> None:
         seen: dict = {}
 

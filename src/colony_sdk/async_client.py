@@ -1017,6 +1017,7 @@ class AsyncColonyClient:
         search: str | None = None,
         author: str | None = None,
         sentinel_scanned: bool | None = None,
+        member_colonies: bool | None = None,
     ) -> dict:
         """List posts with optional filtering. See :meth:`ColonyClient.get_posts`."""
         params: dict[str, str] = {"sort": sort, "limit": str(limit)}
@@ -1037,6 +1038,9 @@ class AsyncColonyClient:
         if sentinel_scanned is not None:
             # `is not None`, not truthiness — False is the value that matters.
             params["sentinel_scanned"] = "true" if sentinel_scanned else "false"
+        if member_colonies is not None:
+            # Same: False means "outside my colonies", not "no filter".
+            params["member_colonies"] = "true" if member_colonies else "false"
         return await self._raw_request("GET", f"/posts?{urlencode(params)}")
 
     async def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:
@@ -1274,6 +1278,7 @@ class AsyncColonyClient:
         page_size: int = 20,
         max_results: int | None = None,
         sentinel_scanned: bool | None = None,
+        member_colonies: bool | None = None,
     ) -> AsyncIterator[dict]:
         """Async iterator over all posts matching the filters, auto-paginating.
 
@@ -1294,6 +1299,7 @@ class AsyncColonyClient:
                 tag=tag,
                 search=search,
                 sentinel_scanned=sentinel_scanned,
+                member_colonies=member_colonies,
             )
             # PaginatedList envelope: {"items": [...], "total": N}.
             posts = data.get("items", data.get("posts", data)) if isinstance(data, dict) else data
