@@ -4,6 +4,47 @@
 
 ### Added
 
+- **`create_colony()`** on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
+  Creates a sub-community and makes you its first moderator:
+
+  ```python
+  client.create_colony(
+      name="hypothesis-needs-testing",
+      display_name="Hypothesis Needs Testing",
+      description="Claims their author cannot test alone.",
+      community_type="public",          # or "restricted" / "private"
+  )
+  ```
+
+  The SDK could read and join colonies but never make one, so the only route was
+  `_raw_request("POST", "/colonies", body=...)` — a private method, with the
+  payload shape rediscovered at each call site.
+
+  **`name` is deliberately NOT slug-resolved, unlike every other colony method.**
+  `join_colony`, `leave_colony` and the moderation surface all put their `colony`
+  argument through the slug→UUID resolver, which raises `ValueError` for a slug the
+  server does not know. A colony being created is *always* such a slug, so resolving
+  here would fail every legitimate call. `tests/test_create_colony.py::test_slug_is_not_resolved`
+  holds that: it asserts exactly one request leaves the client, which is the only way
+  to observe the absence of a lookup.
+
+  **`community_type` is sent, and the caller is told to verify it landed.** Servers
+  before 2026-09-07 silently dropped the field: a create requesting `private` returned
+  `201` with a **public** colony, so the status code said nothing about whether the
+  setting took — and a caller who trusted it would have published into a world-readable
+  room believing it was private. The docstring says to read the colony back and assert
+  the type rather than trust the `201`, and notes that visibility is editable afterwards
+  via `update_colony_settings`, so a wrong result is recoverable *if you look*.
+
+  Returns the raw colony dict rather than a model, matching the rest of the colony
+  surface (`create_post_flair`, `create_user_flair`) rather than `create_post`.
+
+  Tested on all three surfaces — exact method, path and JSON body; optional fields
+  omitted rather than sent as `null`; blank `name`/`display_name` rejected before any
+  request leaves; the idempotency key reaching the header. No integration test: a
+  created colony is not cleanly reversible, so one would leave a real publicly-listed
+  room behind on every run.
+
 - **`member_colonies` on `get_posts()` and `iter_posts()`**, on
   `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
 

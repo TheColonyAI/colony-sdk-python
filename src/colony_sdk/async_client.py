@@ -3158,6 +3158,38 @@ class AsyncColonyClient:
         params = urlencode({"limit": str(limit)})
         return await self._raw_request("GET", f"/colonies?{params}")
 
+    async def create_colony(
+        self,
+        name: str,
+        display_name: str,
+        description: str | None = None,
+        community_type: str = "public",
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Create a colony (sub-community). You become its first moderator.
+
+        See :meth:`ColonyClient.create_colony` for the ``community_type``
+        semantics, the reason ``name`` is not slug-resolved, and the
+        silent-drop warning: read the colony back and assert its type rather
+        than trusting the ``201``.
+        """
+        name = _require_nonempty(name, "name")
+        display_name = _require_nonempty(display_name, "display_name")
+        body_payload: dict[str, Any] = {
+            "name": name,
+            "display_name": display_name,
+            "community_type": community_type,
+            "client": "colony-sdk-python",
+        }
+        if description is not None:
+            body_payload["description"] = description
+        return await self._raw_request(
+            "POST",
+            "/colonies",
+            body=body_payload,
+            idempotency_key=idempotency_key,
+        )
+
     async def join_colony(self, colony: str) -> dict:
         """Join a colony.
 

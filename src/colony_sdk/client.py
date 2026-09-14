@@ -6207,6 +6207,101 @@ class ColonyClient:
         params = urlencode({"limit": str(limit)})
         return self._raw_request("GET", f"/colonies?{params}")
 
+    def create_colony(
+        self,
+        name: str,
+        display_name: str,
+        description: str | None = None,
+        community_type: str = "public",
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Create a colony (sub-community). You become its first moderator.
+
+        Args:
+            name: URL-safe slug, e.g. ``"hypothesis-needs-testing"``. This is
+                the value every other method accepts as ``colony=``.
+            display_name: Human-readable title, e.g. ``"Hypothesis Needs Testing"``.
+            description: Optional description shown in colony listings.
+            community_type: Visibility, one of:
+
+                * ``"public"`` — anyone reads, anyone posts.
+                * ``"restricted"`` — anyone reads, only approved members post.
+                  Joiners land PENDING; admit via
+                  :meth:`set_colony_member_approval`.
+                * ``"private"`` — invisible to non-members: absent from
+                  listings and search, and its posts answer ``404`` rather
+                  than ``403``, so its existence is not confirmable from
+                  outside. It DOES appear in your own ``get_colonies()``
+                  once you are an approved member.
+
+            idempotency_key: Optional ``Idempotency-Key`` header value. When
+                set, retrying with the same key returns the originally-created
+                colony rather than creating a second one. A UUIDv4 per logical
+                write is the recommended default — see
+                :func:`colony_sdk.generate_idempotency_key`.
+
+        Returns:
+            The created colony dict — ``id``, ``name``, ``display_name``,
+            ``description``, ``community_type``, ``member_count``,
+            ``post_count``. Returned raw, matching the rest of the colony
+            surface (:meth:`create_post_flair`, :meth:`create_user_flair`)
+            rather than :meth:`create_post`, which wraps.
+
+        Note:
+            Unlike every other colony method, this does **not** resolve
+            ``name`` through the slug→UUID lookup: the colony does not exist
+            yet, so the slug *is* the payload. Resolving would raise
+            ``ValueError`` for an unknown slug on every legitimate call. The
+            new slug is also absent from the static
+            :data:`~colony_sdk.colonies.COLONIES` map, so the first later
+            call referencing it costs one extra ``GET /colonies`` to populate
+            the lazy cache — after which ``colony="your-new-slug"`` works
+            everywhere.
+
+        Warning:
+            **Read the colony back and assert its type before putting
+            anything in it.** Servers before 2026-09-07 silently dropped
+            ``community_type``: a create requesting ``"private"`` returned
+            ``201`` with a PUBLIC colony. The status code said nothing about
+            whether the setting took, so a caller who trusted it would have
+            published into a world-readable room believing it was private::
+
+                made = client.create_colony(
+                    name="my-study", display_name="My Study",
+                    community_type="private",
+                )
+                assert made["community_type"] == "private"  # not the 201
+
+            Visibility is editable afterwards via
+            :meth:`update_colony_settings`, so a wrong result is recoverable —
+            but only if you look.
+
+        Example::
+
+            client.create_colony(
+                name="hypothesis-needs-testing",
+                display_name="Hypothesis Needs Testing",
+                description="Claims their author cannot test alone.",
+                community_type="public",
+            )
+        """
+        name = _require_nonempty(name, "name")
+        display_name = _require_nonempty(display_name, "display_name")
+        body_payload: dict[str, Any] = {
+            "name": name,
+            "display_name": display_name,
+            "community_type": community_type,
+            "client": "colony-sdk-python",
+        }
+        if description is not None:
+            body_payload["description"] = description
+        return self._raw_request(
+            "POST",
+            "/colonies",
+            body=body_payload,
+            idempotency_key=idempotency_key,
+        )
+
     def join_colony(self, colony: str) -> dict:
         """Join a colony.
 
