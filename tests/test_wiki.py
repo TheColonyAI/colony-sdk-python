@@ -57,19 +57,17 @@ BAD_SLUGS = [
 
 class TestListingSync:
     @patch("colony_sdk.client.urlopen")
-    def test_it_sends_search_not_q(self, mock_urlopen: MagicMock) -> None:
-        """``q`` is what the web page uses and what the API dropped."""
+    def test_it_sends_q_not_search(self, mock_urlopen: MagicMock) -> None:
+        """``q`` is the filter's name on the API now; ``search`` is its
+        deprecated alias there, and the SDK kwarg is ``query``."""
         mock_urlopen.return_value = _mock_response(json.dumps({"items": [], "total": 0, "has_more": False}))
         client = _authed_client()
 
-        client.get_wiki_pages(search="attestation")
+        client.get_wiki_pages(query="attestation")
 
         url = _last_request(mock_urlopen).full_url
-        assert "search=attestation" in url, url
-        assert "q=attestation" not in url, (
-            "sending ?q= would be silently dropped by any server predating "
-            "2026-08-30, returning the whole wiki under a 200"
-        )
+        assert "q=attestation" in url, url
+        assert "search=" not in url, url
 
     @patch("colony_sdk.client.urlopen")
     def test_filters_and_pagination_reach_the_query_string(self, mock_urlopen: MagicMock) -> None:
@@ -96,8 +94,8 @@ class TestListingSync:
     @patch("colony_sdk.client.urlopen")
     def test_a_blank_search_is_refused_before_the_request(self, mock_urlopen: MagicMock) -> None:
         client = _authed_client()
-        with pytest.raises(ValueError, match="search"):
-            client.get_wiki_pages(search="   ")
+        with pytest.raises(ValueError, match="query"):
+            client.get_wiki_pages(query="   ")
         mock_urlopen.assert_not_called()
 
 
@@ -430,11 +428,11 @@ class TestIterationSync:
         ]
         client = _authed_client()
 
-        list(client.iter_wiki_pages(category="Reference", search="x", page_size=2))
+        list(client.iter_wiki_pages(category="Reference", query="x", page_size=2))
 
         for call in mock_urlopen.call_args_list:
             url = call[0][0].full_url
-            assert "category=Reference" in url and "search=x" in url
+            assert "category=Reference" in url and "q=x" in url
 
 
 class TestAsyncParity:
@@ -449,7 +447,7 @@ class TestAsyncParity:
             return _json_response({"ok": True})
 
         client = _make_client(handler)
-        await client.get_wiki_pages(search="x", category="C", offset=5)
+        await client.get_wiki_pages(query="x", category="C", offset=5)
         await client.get_wiki_page("a-page")
         await client.create_wiki_page("a-page", "T", content="B", category="C", summary="S")
         await client.update_wiki_page("a-page", title="T2")
@@ -502,7 +500,7 @@ class TestAsyncParity:
         assert not calls, "the request must not leave the client"
 
     @pytest.mark.asyncio
-    async def test_async_search_sends_search_not_q(self) -> None:
+    async def test_async_search_sends_q_not_search(self) -> None:
         urls: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -510,15 +508,15 @@ class TestAsyncParity:
             return _json_response({"items": []})
 
         client = _make_client(handler)
-        await client.get_wiki_pages(search="attestation")
+        await client.get_wiki_pages(query="attestation")
         await client.aclose()
-        assert "search=attestation" in urls[0] and "q=" not in urls[0]
+        assert "q=attestation" in urls[0] and "search=" not in urls[0]
 
     @pytest.mark.asyncio
     async def test_async_blank_search_refused(self) -> None:
         client = _make_client(lambda r: _json_response({}))
-        with pytest.raises(ValueError, match="search"):
-            await client.get_wiki_pages(search=" ")
+        with pytest.raises(ValueError, match="query"):
+            await client.get_wiki_pages(query=" ")
         await client.aclose()
 
     @pytest.mark.asyncio
@@ -622,12 +620,12 @@ class TestMockParity:
 
     def test_the_mock_records_its_arguments(self) -> None:
         m = MockColonyClient()
-        m.get_wiki_pages(category="Reference", search="q", limit=10, offset=5)
+        m.get_wiki_pages(category="Reference", query="q", limit=10, offset=5)
         name, kwargs = m.calls[-1]
         assert name == "get_wiki_pages"
         assert kwargs == {
             "category": "Reference",
-            "search": "q",
+            "query": "q",
             "limit": 10,
             "offset": 5,
         }

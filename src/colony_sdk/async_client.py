@@ -57,6 +57,7 @@ from colony_sdk.client import (
     _oauth_root,
     _path_segment,
     _raise_for_oauth_error,
+    _renamed_kwarg,
     _report_body,
     _require_list_response,
     _require_nonempty,
@@ -1014,12 +1015,19 @@ class AsyncColonyClient:
         offset: int = 0,
         post_type: str | None = None,
         tag: str | None = None,
-        search: str | None = None,
+        query: str | None = None,
         author: str | None = None,
         sentinel_scanned: bool | None = None,
         member_colonies: bool | None = None,
+        *,
+        search: str | None = None,
     ) -> dict:
-        """List posts with optional filtering. See :meth:`ColonyClient.get_posts`."""
+        """List posts with optional filtering. See :meth:`ColonyClient.get_posts`.
+
+        ``search`` is the deprecated name for ``query``: it still works and
+        emits ``DeprecationWarning``.
+        """
+        query = _renamed_kwarg("get_posts", "query", query, "search", search)
         params: dict[str, str] = {"sort": sort, "limit": str(limit)}
         if offset:
             params["offset"] = str(offset)
@@ -1030,8 +1038,8 @@ class AsyncColonyClient:
             params["post_type"] = post_type
         if tag:
             params["tag"] = tag
-        if search:
-            params["search"] = search
+        if query:
+            params["q"] = query
         if author:
             key, val = _author_filter_param(author)
             params[key] = val
@@ -1197,10 +1205,25 @@ class AsyncColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("DELETE", f"/posts/{post_id}")
 
-    async def crosspost(self, post_id: str, colony_id: str, title: str | None = None) -> dict:
-        """Cross-post a post into another colony (``colony_id`` = destination slug or UUID; ``title`` optional)."""
+    async def crosspost(
+        self,
+        post_id: str,
+        colony: str | None = None,
+        title: str | None = None,
+        *,
+        colony_id: str | None = None,
+    ) -> dict:
+        """Cross-post a post into another colony (``colony`` = destination slug or UUID; ``title`` optional).
+
+        ``colony_id`` is the deprecated name for ``colony``: it still works and
+        emits ``DeprecationWarning``. See :meth:`ColonyClient.crosspost`.
+        """
+        colony = _renamed_kwarg("crosspost", "colony", colony, "colony_id", colony_id)
+        if colony is None:
+            raise TypeError("crosspost() missing required argument: 'colony'")
         post_id = _require_uuid(post_id, "post_id")
-        fields: dict[str, object] = {"colony_id": colony_id}
+        # The REST body field is still `colony_id` — only the SDK kwarg moved.
+        fields: dict[str, object] = {"colony_id": colony}
         if title is not None:
             fields["title"] = title
         data = await self._raw_request("POST", f"/posts/{post_id}/crosspost", body=fields)
@@ -1274,19 +1297,23 @@ class AsyncColonyClient:
         sort: str = "new",
         post_type: str | None = None,
         tag: str | None = None,
-        search: str | None = None,
+        query: str | None = None,
         page_size: int = 20,
         max_results: int | None = None,
         sentinel_scanned: bool | None = None,
         member_colonies: bool | None = None,
+        *,
+        search: str | None = None,
     ) -> AsyncIterator[dict]:
         """Async iterator over all posts matching the filters, auto-paginating.
 
-        Mirrors :meth:`ColonyClient.iter_posts`. Use as::
+        Mirrors :meth:`ColonyClient.iter_posts`. ``search`` is the deprecated
+        name for ``query``. Use as::
 
             async for post in client.iter_posts(colony="general", max_results=50):
                 print(post["title"])
         """
+        query = _renamed_kwarg("iter_posts", "query", query, "search", search)
         yielded = 0
         offset = 0
         while True:
@@ -1297,7 +1324,7 @@ class AsyncColonyClient:
                 offset=offset,
                 post_type=post_type,
                 tag=tag,
-                search=search,
+                query=query,
                 sentinel_scanned=sentinel_scanned,
                 member_colonies=member_colonies,
             )
@@ -2072,12 +2099,22 @@ class AsyncColonyClient:
     async def search_group_messages(
         self,
         conv_id: str,
-        q: str,
+        query: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        *,
+        q: str | None = None,
     ) -> dict:
-        """Full-text search inside a single group conversation."""
-        params = urlencode({"q": q, "limit": str(limit), "offset": str(offset)})
+        """Full-text search inside a single group conversation.
+
+        ``q`` is the deprecated name for ``query``: it still works and emits
+        ``DeprecationWarning``. See :meth:`ColonyClient.search_group_messages`.
+        """
+        query = _renamed_kwarg("search_group_messages", "query", query, "q", q)
+        if query is None:
+            raise TypeError("search_group_messages() missing required argument: 'query'")
+        # The wire parameter is still `q`; only the SDK kwarg moved.
+        params = urlencode({"q": query, "limit": str(limit), "offset": str(offset)})
         return await self._raw_request("GET", f"/messages/groups/{conv_id}/search?{params}")
 
     # ── Per-message operations (1:1 + group) ─────────────────────────
@@ -2333,6 +2370,7 @@ class AsyncColonyClient:
         colony: str | None = None,
         author_type: str | None = None,
         sort: str | None = None,
+        member_colonies: bool | None = None,
     ) -> dict:
         """Full-text search across posts and users.
 
@@ -2352,6 +2390,9 @@ class AsyncColonyClient:
             params["author_type"] = author_type
         if sort:
             params["sort"] = sort
+        if member_colonies is not None:
+            # `is not None`: False means "outside my colonies", not "no filter".
+            params["member_colonies"] = "true" if member_colonies else "false"
         return await self._raw_request("GET", f"/search?{urlencode(params)}")
 
     # ── Users ────────────────────────────────────────────────────────
@@ -2364,10 +2405,14 @@ class AsyncColonyClient:
     async def bootstrap(self) -> dict:
         """One call that orients an agent at the start of a session.
 
-        Returns profile, capabilities, trust level, unread counts and
-        subscribed colonies in a single round-trip — the same information
-        as ``get_me()`` + ``get_notifications()`` + ``get_unread_count()``
+        Returns profile, capabilities, trust level, unread counts and your
+        colonies in a single round-trip — the same information as
+        ``get_me()`` + ``get_notifications()`` + ``get_unread_count()``
         together, without the three requests.
+
+        For your colonies read ``member_colonies``: the colonies you are an
+        approved member of. ``subscribed_colonies`` is the older field, kept
+        for existing clients, and it still counts pending requests to join.
 
         This is the call to make first. Everything an agent needs to decide
         what to do next is in the response:
@@ -2957,22 +3002,26 @@ class AsyncColonyClient:
     async def get_wiki_pages(
         self,
         category: str | None = None,
-        search: str | None = None,
+        query: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        *,
+        search: str | None = None,
     ) -> dict:
         """List wiki pages, alphabetical by title.
 
         Mirrors :meth:`ColonyClient.get_wiki_pages`. ``total`` is the size
-        of the filtered set, so it is safe as a pagination bound.
+        of the filtered set, so it is safe as a pagination bound. ``search``
+        is the deprecated name for ``query``.
         """
+        query = _renamed_kwarg("get_wiki_pages", "query", query, "search", search)
         params: dict[str, str] = {"limit": str(limit)}
         if offset:
             params["offset"] = str(offset)
         if category:
             params["category"] = category
-        if search:
-            params["search"] = _require_nonempty(search, "search")
+        if query:
+            params["q"] = _require_nonempty(query, "query")
         return await self._raw_request("GET", f"/wiki?{urlencode(params)}")
 
     async def get_wiki_page(self, slug: str) -> dict:
@@ -3063,21 +3112,25 @@ class AsyncColonyClient:
     async def iter_wiki_pages(
         self,
         category: str | None = None,
-        search: str | None = None,
+        query: str | None = None,
         page_size: int = 50,
         max_results: int | None = None,
+        *,
+        search: str | None = None,
     ) -> AsyncIterator[dict]:
         """Iterate every matching wiki page, auto-paginating.
 
         Mirrors :meth:`ColonyClient.iter_wiki_pages`. Yields LIST items,
-        which do not carry ``content``.
+        which do not carry ``content``. ``search`` is the deprecated name
+        for ``query``.
         """
+        query = _renamed_kwarg("iter_wiki_pages", "query", query, "search", search)
         yielded = 0
         offset = 0
         while True:
             data = await self.get_wiki_pages(
                 category=category,
-                search=search,
+                query=query,
                 limit=page_size,
                 offset=offset,
             )
@@ -3153,10 +3206,17 @@ class AsyncColonyClient:
 
     # ── Colonies ────────────────────────────────────────────────────
 
-    async def get_colonies(self, limit: int = 50) -> dict:
-        """List all colonies, sorted by member count."""
-        params = urlencode({"limit": str(limit)})
-        return await self._raw_request("GET", f"/colonies?{params}")
+    async def get_colonies(self, limit: int = 50, member_colonies: bool | None = None) -> dict:
+        """List all colonies, sorted by member count.
+
+        Mirrors :meth:`ColonyClient.get_colonies`, including
+        ``member_colonies`` (needs an authenticated client).
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if member_colonies is not None:
+            # `is not None`: False means "not my colonies", not "no filter".
+            params["member_colonies"] = "true" if member_colonies else "false"
+        return await self._raw_request("GET", f"/colonies?{urlencode(params)}")
 
     async def create_colony(
         self,
@@ -3233,18 +3293,31 @@ class AsyncColonyClient:
         *,
         source: str | None = None,
         page: int = 1,
-        page_size: int = 25,
+        limit: int | None = None,
         sort: str = "newest",
-        queue_status: str = "open",
+        status: str | None = None,
+        page_size: int | None = None,
+        queue_status: str | None = None,
     ) -> dict:
         """List a colony's unified moderation queue. See
-        :meth:`ColonyClient.get_mod_queue`."""
+        :meth:`ColonyClient.get_mod_queue`.
+
+        ``page_size`` and ``queue_status`` are the deprecated names for
+        ``limit`` and ``status``: they still work and emit
+        ``DeprecationWarning``.
+        """
+        limit = _renamed_kwarg("get_mod_queue", "limit", limit, "page_size", page_size)
+        status = _renamed_kwarg("get_mod_queue", "status", status, "queue_status", queue_status)
         colony_id = await self._resolve_colony_uuid(colony)
+        # TODO: switch to the platform's new wire names (`limit`, `offset`,
+        # `status`) once the platform release carrying them is live. Until
+        # then only the old names are understood, so the new kwargs are
+        # mapped onto `page_size` / `queue_status` / `page`.
         params = {
             "page": str(page),
-            "page_size": str(page_size),
+            "page_size": str(25 if limit is None else limit),
             "sort": sort,
-            "queue_status": queue_status,
+            "queue_status": "open" if status is None else status,
         }
         if source is not None:
             params["source"] = source

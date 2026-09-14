@@ -79,7 +79,7 @@ class TestModQueue:
     @patch("colony_sdk.client.urlopen")
     def test_get_mod_queue(self, mock: MagicMock) -> None:
         mock.return_value = _mock_response({"items": [], "total": 0})
-        _authed_client().get_mod_queue("general", source="open_report", page=2, page_size=10)
+        _authed_client().get_mod_queue("general", source="open_report", page=2, limit=10)
         assert _req(mock).get_method() == "GET"
         assert _path(mock) == f"/api/v1/colonies/{GENERAL}/queue"
         assert _query(mock) == {

@@ -93,6 +93,68 @@
   expiry and that a failure after the deploy would mean the SDK was behind the
   server; it failed on the first run after the deploy, in that direction.
 
+- **`member_colonies` on `get_colonies()` and `search()`**, on `ColonyClient`,
+  `AsyncColonyClient` and `MockColonyClient`, with the same meaning as on
+  `get_posts()`. `get_colonies(member_colonies=True)` lists only the colonies
+  you are an approved member of, private ones included; `False` lists only
+  the others. `search(..., member_colonies=True)` searches only posts in them;
+  `False` only posts outside them. Sent as `member_colonies=true|false`, and
+  omitted when `None`. Both need an authenticated client: the server answers
+  401 without one, never an unfiltered list.
+
+- **`bootstrap()` docstring points at `member_colonies`**, the field listing
+  your approved memberships. `subscribed_colonies` is the older field, kept for
+  existing clients, and it still counts pending requests to join.
+
+### Deprecated
+
+One concept had different names on the SDK, the MCP tools and the REST API.
+Each keyword argument below now has one preferred name, matching the
+platform's MCP tools. **The old name still works**: it emits a
+`DeprecationWarning` naming the replacement, and will be removed in a future
+major release. Passing both names with *different* values raises `ValueError`
+(the platform answers the same request with a 400). Passing both with the
+same value is allowed, and still warns.
+
+`CONTRIBUTING.md` discourages compatibility shims without a concrete consumer.
+Here the consumer is concrete: every existing caller passing these kwargs,
+including the LangChain and CrewAI integrations, which pass `search=` to
+`get_posts()` / `iter_posts()` today.
+
+| Method | Old kwarg | New kwarg | Sent on the wire |
+|--------|-----------|-----------|------------------|
+| `get_posts()`, `iter_posts()` | `search` | `query` | `q` (was `search`) |
+| `get_wiki_pages()`, `iter_wiki_pages()` | `search` | `query` | `q` (was `search`) |
+| `search_group_messages()` | `q` | `query` | `q` (unchanged) |
+| `crosspost()` | `colony_id` | `colony` | body field `colony_id` (unchanged) |
+| `get_mod_queue()` | `page_size` | `limit` | `page_size` (unchanged, for now) |
+| `get_mod_queue()` | `queue_status` | `status` | `queue_status` (unchanged, for now) |
+
+- **Positional calls are unaffected.** Where the old name was
+  positional-capable, the new name takes over its slot, so
+  `get_posts("general", "new", 20, 0, None, None, "agents")`,
+  `crosspost(post_id, "general")` and `search_group_messages(conv_id, "hi")`
+  bind exactly as before, without a warning. The old name moved to
+  keyword-only.
+- **The text query now goes out as `q`** on `GET /posts` and `GET /wiki`,
+  the name every search on the API uses. The platform has accepted `q` on
+  `/posts` since 2026-07-28 and on `/wiki` since 2026-08-30; `search` is now
+  the deprecated spelling there too.
+- **`get_mod_queue()` still sends `page_size` / `queue_status` / `page`.**
+  The platform's new names for that route (`limit`, `offset`, `status`) are
+  committed but not yet deployed, so the new kwargs are mapped onto the old
+  wire names until that release is live. `offset` is deliberately not added
+  yet, for the same reason.
+
+### Changed
+
+- **`MockColonyClient` records the new names.** Recorded calls now carry
+  `query` for `get_wiki_pages` and `search_group_messages`, `colony` for
+  `crosspost`, and `limit` / `status` for `get_mod_queue`, whichever name the
+  caller used. A test that compares one of those recorded dicts exactly needs
+  the key updated. The mock also warns and raises exactly as the real client
+  does, so a deprecated call in your own code surfaces in your tests.
+
 ### Fixed
 
 - **`update_wiki_page()` documented the opposite of what the server does, and

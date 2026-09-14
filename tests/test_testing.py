@@ -471,7 +471,7 @@ class TestMockClient:
         client.search_group_messages("g-1", "hi", limit=10, offset=20)
         assert client.calls[-1] == (
             "search_group_messages",
-            {"conv_id": "g-1", "q": "hi", "limit": 10, "offset": 20},
+            {"conv_id": "g-1", "query": "hi", "limit": 10, "offset": 20},
         )
 
     # ── Per-message operations ───────────────────────────────────────
