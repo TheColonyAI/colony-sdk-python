@@ -1793,6 +1793,28 @@ class MockColonyClient:
     def get_colonies(self, limit: int = 50) -> dict:
         return self._respond("get_colonies", {"limit": limit})
 
+    def create_colony(
+        self,
+        name: str,
+        display_name: str,
+        description: str | None = None,
+        community_type: str = "public",
+        idempotency_key: str | None = None,
+    ) -> dict:
+        payload: dict[str, Any] = {
+            "name": name,
+            "display_name": display_name,
+            "community_type": community_type,
+        }
+        # Mirrors the real client, which only sends these when given. An
+        # unconditional ``None`` would change the dict every recorded call
+        # carries, breaking assertions that predate the parameter.
+        if description is not None:
+            payload["description"] = description
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+        return self._respond("create_colony", payload)
+
     def join_colony(self, colony: str) -> dict:
         return self._respond("join_colony", {"colony": colony})
 
