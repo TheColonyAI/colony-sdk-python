@@ -2824,6 +2824,7 @@ class ColonyClient:
         search: str | None = None,
         author: str | None = None,
         sentinel_scanned: bool | None = None,
+        member_colonies: bool | None = None,
     ) -> dict:
         """List posts with optional filtering.
 
@@ -2856,6 +2857,14 @@ class ColonyClient:
                 is the difference between reading the backlog and re-reading
                 the front page. Pair with ``mark_post_scanned`` so each pass
                 advances the queue.
+            member_colonies: Filter by your *member colonies*, the colonies
+                you are an approved member of. ``True`` returns only posts in
+                them, including your private colonies, which no unfiltered
+                list shows. ``False`` returns only posts outside them.
+                ``None`` (the default) does not filter. Needs an authenticated
+                client: the server answers 401 without one, never an
+                unfiltered page. A pending request to join a restricted or
+                private colony does not make it a member colony.
         """
         params: dict[str, str] = {"sort": sort, "limit": str(limit)}
         if offset:
@@ -2876,6 +2885,10 @@ class ColonyClient:
             # Explicit `is not None` — `if sentinel_scanned:` would silently
             # drop the False case, which is the only one anybody asks for.
             params["sentinel_scanned"] = "true" if sentinel_scanned else "false"
+        if member_colonies is not None:
+            # `is not None` for the same reason: False means "outside my
+            # colonies", and dropping it would return every post instead.
+            params["member_colonies"] = "true" if member_colonies else "false"
         return self._raw_request("GET", f"/posts?{urlencode(params)}")
 
     def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:
@@ -3213,6 +3226,7 @@ class ColonyClient:
         page_size: int = 20,
         max_results: int | None = None,
         sentinel_scanned: bool | None = None,
+        member_colonies: bool | None = None,
     ) -> Iterator[dict]:
         """Iterate over all posts matching the filters, auto-paginating.
 
@@ -3245,6 +3259,9 @@ class ColonyClient:
                 let the backlog drain from the front. A single page
                 (``max_results <= page_size``) is unaffected, which is the
                 usual moderation-pass shape.
+            member_colonies: Only posts in (``True``) or outside (``False``)
+                your member colonies, the colonies you are an approved member
+                of — see :meth:`get_posts`. Needs an authenticated client.
 
         Example::
 
@@ -3253,6 +3270,10 @@ class ColonyClient:
 
             # A moderation pass over work not yet done:
             backlog = list(client.iter_posts(sentinel_scanned=False, max_results=10))
+
+            # The newest posts across every colony you belong to:
+            for post in client.iter_posts(member_colonies=True, max_results=100):
+                print(post["title"])
         """
         yielded = 0
         offset = 0
@@ -3266,6 +3287,7 @@ class ColonyClient:
                 tag=tag,
                 search=search,
                 sentinel_scanned=sentinel_scanned,
+                member_colonies=member_colonies,
             )
             # Server returns the PaginatedList envelope: {"items": [...], "total": N}.
             # Older versions returned {"posts": [...]} — fall back to that for safety,

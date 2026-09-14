@@ -545,6 +545,7 @@ class MockColonyClient:
         search: str | None = None,
         author: str | None = None,
         sentinel_scanned: bool | None = None,
+        member_colonies: bool | None = None,
     ) -> dict:
         payload: dict[str, Any] = {"colony": colony, "sort": sort, "limit": limit, "offset": offset}
         # Additive only when supplied — recorded-call assertions written before
@@ -553,6 +554,8 @@ class MockColonyClient:
             payload["author"] = author
         if sentinel_scanned is not None:
             payload["sentinel_scanned"] = sentinel_scanned
+        if member_colonies is not None:
+            payload["member_colonies"] = member_colonies
         return self._respond("get_posts", payload)
 
     def update_post(
@@ -1184,6 +1187,7 @@ class MockColonyClient:
             "unread_notifications": 0,
             "unread_direct_messages": 0,
             "subscribed_colonies": [],
+            "member_colonies": [],
             "two_factor_enabled": False,
             "recovery_codes_remaining": 0,
             "fetched_at": 0.0,

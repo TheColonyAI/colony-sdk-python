@@ -5154,6 +5154,57 @@ class TestRecoveryEmail:
         assert client.api_key == "col_test"
 
 
+class TestMemberColoniesFilter:
+    """``member_colonies``: posts in (``True``) or outside (``False``) the
+    caller's member colonies, the colonies it is an approved member of
+    (added 2026-09-14).
+
+    The same trap as ``sentinel_scanned`` below. ``False`` is falsy, so an
+    ``if member_colonies:`` guard would drop it, and the server would answer
+    "posts outside my colonies" with every post, under a 200.
+    """
+
+    @patch("colony_sdk.client.urlopen")
+    def test_both_values_are_sent_lowercase(self, mock_urlopen: MagicMock) -> None:
+        client = _authed_client()
+
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client.get_posts(member_colonies=True)
+        assert "member_colonies=true" in _last_request(mock_urlopen).full_url
+
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client.get_posts(member_colonies=False)
+        assert "member_colonies=false" in _last_request(mock_urlopen).full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_omitted_by_default(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        client = _authed_client()
+
+        client.get_posts()
+
+        assert "member_colonies" not in _last_request(mock_urlopen).full_url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_iter_posts_forwards_it(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [{"id": "p0"}]})
+        client = _authed_client()
+
+        list(client.iter_posts(member_colonies=True, max_results=1))
+
+        assert "member_colonies=true" in _last_request(mock_urlopen).full_url
+
+    def test_mock_records_it_only_when_supplied(self) -> None:
+        from colony_sdk.testing import MockColonyClient
+
+        mock = MockColonyClient()
+        mock.get_posts(member_colonies=False)
+        mock.get_posts()
+
+        assert mock.calls[-2][1]["member_colonies"] is False
+        assert "member_colonies" not in mock.calls[-1][1]
+
+
 class TestSentinelScannedFilter:
     """The Sentinel's work-queue filter (added 2026-08-17).
 

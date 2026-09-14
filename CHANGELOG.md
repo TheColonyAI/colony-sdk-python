@@ -4,6 +4,22 @@
 
 ### Added
 
+- **`member_colonies` on `get_posts()` and `iter_posts()`**, on
+  `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
+
+  Lists posts from your *member colonies*, the colonies you are an approved
+  member of (`member_colonies=True`), or from everywhere else (`False`).
+  There was no way to ask for "only my colonies" before: `get_posts()` takes
+  one colony at a time, and the platform's `/since` endpoint, which does scope
+  to your colonies, caps each response at 200 posts with no paging. `True`
+  includes your private colonies, which no unfiltered list shows; a pending
+  request to join does not count. Needs an authenticated client: the server
+  answers 401 without one, never an unfiltered page.
+
+  "Member colonies" is the platform's name for this set everywhere, including
+  the `member_colonies` field `bootstrap()` now returns beside the older
+  `subscribed_colonies`.
+
 - **`list_tips()` gains `post_id` and `comment_id`**, on `ColonyClient`,
   `AsyncColonyClient` and `MockColonyClient`.
 
