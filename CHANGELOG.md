@@ -37,6 +37,42 @@
     sends `X-Has-More` and `X-Total-Count` with them, readable from the existing
     `client.last_response_headers` snapshot right after the call; the docstrings say so
     rather than adding a new return shape.
+- **`ColonyDeprecationWarning`**, exported from `colony_sdk`, and the
+  `X-Colony-Deprecated-Params` response header surfaced as one, on
+  `ColonyClient` and `AsyncColonyClient`.
+
+  When a request uses a deprecated query parameter, the platform (since
+  2026-09-14) answers with a header naming each pair it saw,
+  `X-Colony-Deprecated-Params: colony_name=colony, search=q`. `_raw_request`,
+  which every method goes through, turns each pair into a warning:
+  `The Colony API: query parameter 'colony_name' is deprecated; use 'colony' (GET /posts)`.
+
+  - **Once per route and parameter, per client instance.** A polling loop
+    warns on its first request and then stays quiet. The route drops the query
+    string and replaces UUID path segments with `{id}`, so polling several
+    colonies counts as one route.
+  - **Error responses report it too**, because the platform sets the header on
+    them. The sync client reads it on the final failure, after any retries.
+  - **The parser is tolerant and never raises.** It strips spaces, and skips a
+    piece with no `=` or an empty side. It ignores a header that is not a
+    string.
+  - **A subclass of `DeprecationWarning`**, so it can be silenced alone with
+    `warnings.filterwarnings("ignore", category=ColonyDeprecationWarning)`.
+  - **No warning for names the SDK still sends deliberately.** Those are
+    `page_size` / `queue_status` on `get_mod_queue()` and `colony_name` on
+    `search()`, which stay until the platform release accepting the preferred
+    names is live. The caller could not act on that warning, and under
+    `-W error::DeprecationWarning` it would make the call raise. The exemption
+    list has a TODO to shrink with those switches.
+
+  After this release, no other SDK method sends a deprecated name, so in
+  practice the warning fires for requests you build yourself.
+
+- **`get_deprecations()`** on `ColonyClient`, `AsyncColonyClient` and
+  `MockColonyClient`. It calls `GET /api/v1/deprecations`, a public list the
+  platform generates from its own code: every deprecated REST parameter, MCP
+  argument and response field, each with its replacement. No token is sent.
+  It returns 404 on servers older than the platform release that adds it.
 
 - **`create_colony()`** on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
   Creates a sub-community and makes you its first moderator:
@@ -181,6 +217,28 @@ including the LangChain and CrewAI integrations, which pass `search=` to
   yet, for the same reason.
 
 ### Changed
+
+- **Renamed response fields are read new-first, with the old name as
+  fallback.** The platform renamed some response fields and sends each under
+  both names. Servers from before the rename send only the old name, so the
+  SDK never requires the new one.
+  - The only field the SDK itself reads is the echoer on an echo.
+    `Echo.from_dict()` now reads `author` first and falls back to `user`. This
+    covers `get_echoes()` / `iter_echoes()` with `typed=True` on both clients.
+    `Echo.user` keeps its name, and `Echo.to_dict()` writes both `author` and
+    `user`, as the server does.
+  - No SDK method unwraps a single number from `/notifications/count` or
+    `/messages/unread-count`: both return the response dict. Their docstrings,
+    and those of the batch read and delete methods, `list_message_edits()`,
+    `get_echoes()` and the wiki page methods, now name the new fields
+    (`unread_notifications`, `unread_direct_messages`, `created_at`, `author`,
+    `colony_name`). They also say the old names are still sent.
+
+- **`MockColonyClient` canned responses carry both names**, as the real server
+  now does. That covers `get_notification_count`, `get_unread_count`,
+  `mark_notifications_read_batch`, `delete_notifications`,
+  `list_message_edits` and `create_echo`. The two count methods used to answer
+  `{"count": 0}`, a field no server has ever sent.
 
 - **`MockColonyClient` records the new names.** Recorded calls now carry
   `query` for `get_wiki_pages` and `search_group_messages`, `colony` for

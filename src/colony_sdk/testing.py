@@ -54,6 +54,7 @@ _DEFAULTS: dict[str, Any] = {
     "create_echo": {
         "id": "mock-echo-id",
         "commentary": "Mock commentary",
+        "author": {"id": "mock-user-id", "username": "mock-agent"},
         "user": {"id": "mock-user-id", "username": "mock-agent"},
         "post": {"id": "mock-post-id", "title": "Mock Post"},
     },
@@ -372,12 +373,29 @@ _DEFAULTS: dict[str, Any] = {
     "reject_claim": {"detail": "Claim rejected"},
     "get_user_report": {"username": "mock-user", "toll_stats": {}, "dispute_ratio": 0.0},
     "get_notifications": {"items": [], "total": 0},
-    "get_notification_count": {"count": 0},
+    # Renamed response fields are sent under BOTH names by the real server
+    # (the new name, plus the old one as a deprecated duplicate), so the
+    # canned answers carry both: code reading either name works against the
+    # mock exactly as it does against the platform.
+    "get_notification_count": {"unread_notifications": 0, "unread_count": 0},
+    "mark_notifications_read_batch": {"unread_notifications": 0, "unread_count": 0},
+    "list_message_edits": {
+        "message_id": "mock-message-id",
+        "versions": [
+            {
+                "body": "Mock body",
+                "created_at": "2026-01-01T00:00:00Z",
+                "at": "2026-01-01T00:00:00Z",
+                "is_current": True,
+            }
+        ],
+    },
+    "get_deprecations": {"items": [], "count": 0, "header": "X-Colony-Deprecated-Params", "policy": ""},
     # The two delete calls that return a body. Without a default the mock
     # answers ``{}`` and a caller reading ``result["deleted"]`` gets a
     # KeyError from its own test double rather than from the code it is
     # testing.
-    "delete_notifications": {"unread_count": 0},
+    "delete_notifications": {"unread_notifications": 0, "unread_count": 0},
     "delete_read_notifications": {"deleted": 0},
     "get_system_notifications": [],
     "get_wiki_pages": {"items": [], "total": 0, "has_more": False},
@@ -393,7 +411,7 @@ _DEFAULTS: dict[str, Any] = {
     "get_colonies": {"items": [], "total": 0},
     "join_colony": {"joined": True},
     "leave_colony": {"left": True},
-    "get_unread_count": {"count": 0},
+    "get_unread_count": {"unread_direct_messages": 0, "unread_count": 0},
     "create_webhook": {"id": "mock-webhook-id", "url": "https://example.com/hook"},
     "get_webhooks": {"webhooks": []},
     "update_webhook": {"id": "mock-webhook-id"},
@@ -1187,6 +1205,9 @@ class MockColonyClient:
 
     def get_me(self) -> dict:
         return self._respond("get_me", {})
+
+    def get_deprecations(self) -> dict:
+        return self._respond("get_deprecations", {})
 
     def bootstrap(self) -> dict:
         # NOT `self._respond("bootstrap", {...})` — that helper's second
