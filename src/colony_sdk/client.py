@@ -338,6 +338,96 @@ def _renamed_kwarg(method: str, new: str, new_value: _T | None, old: str, old_va
     return old_value
 
 
+class ColonyDeprecationWarning(DeprecationWarning):
+    """The Colony API reported that a request used a deprecated name.
+
+    Emitted when a response carries ``X-Colony-Deprecated-Params``, the
+    header the platform adds whenever a request sent a deprecated query
+    parameter. The old name still works; the warning names its replacement.
+    A subclass of :class:`DeprecationWarning`, so it can be filtered on its
+    own without hiding the SDK's other deprecation warnings::
+
+        warnings.filterwarnings("ignore", category=ColonyDeprecationWarning)
+    """
+
+
+#: Response header naming each deprecated query parameter a request used, as
+#: ``<sent>=<preferred>[, <sent>=<preferred>...]``. Lower-cased, because
+#: :attr:`ColonyClient.last_response_headers` is.
+_DEPRECATED_PARAMS_HEADER = "x-colony-deprecated-params"
+
+#: Deprecated wire names the SDK itself still sends ON PURPOSE, keyed by the
+#: normalised route. Warning about these would tell the caller to fix
+#: something only the SDK can change, and would make the call raise for
+#: anyone running with ``-W error::DeprecationWarning``.
+#:
+#: TODO: delete each entry once the platform release that accepts the
+#: preferred name is live and the method switches to it (see the TODO in
+#: ``get_mod_queue`` and the ``slug_param`` in ``search``).
+_SDK_SENT_DEPRECATED_PARAMS = frozenset(
+    {
+        ("GET /colonies/{id}/queue", "page_size"),
+        ("GET /colonies/{id}/queue", "queue_status"),
+        ("GET /search", "colony_name"),
+    }
+)
+
+_UUID_SEGMENT_RE = re.compile(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=/|$)", re.IGNORECASE)
+
+
+def _parse_deprecated_params(value: object) -> list[tuple[str, str]]:
+    """Parse an ``X-Colony-Deprecated-Params`` value into ``(sent, preferred)`` pairs.
+
+    Tolerant by design: surrounding spaces are stripped, and a piece without
+    ``=`` or with an empty side is skipped rather than failing the whole
+    header. Anything that is not a string (a missing header, a mocked one)
+    yields no pairs. Never raises.
+    """
+    if not isinstance(value, str):
+        return []
+    pairs: list[tuple[str, str]] = []
+    for piece in value.split(","):
+        sent, sep, preferred = piece.partition("=")
+        sent, preferred = sent.strip(), preferred.strip()
+        if sep and sent and preferred:
+            pairs.append((sent, preferred))
+    return pairs
+
+
+def _warn_deprecated_params(seen: set[tuple[str, str]], method: str, path: str, value: object) -> None:
+    """Warn once per (route, deprecated param) for an ``X-Colony-Deprecated-Params`` value.
+
+    ``seen`` is the client instance's record of pairs already reported, so a
+    polling loop warns on its first request and then stays quiet. The route
+    is ``METHOD /path`` with the query string dropped and UUID segments
+    replaced by ``{id}``, so polling several colonies' queues still counts as
+    one route.
+
+    Working out what to warn about never raises. The ``warnings.warn`` call
+    itself is outside that guarantee on purpose: under
+    ``-W error::DeprecationWarning`` it raises, which is what that flag asks
+    for.
+    """
+    pairs = _parse_deprecated_params(value)
+    if not pairs:
+        return
+    route = f"{method} {_UUID_SEGMENT_RE.sub('/{id}', path.split('?', 1)[0])}"
+    fresh: list[tuple[str, str]] = []
+    for sent, preferred in pairs:
+        key = (route, sent)
+        if key in seen or key in _SDK_SENT_DEPRECATED_PARAMS:
+            continue
+        seen.add(key)
+        fresh.append((sent, preferred))
+    for sent, preferred in fresh:
+        # helper -> _raw_request -> public method -> caller
+        warnings.warn(
+            f"The Colony API: query parameter {sent!r} is deprecated; use {preferred!r} ({route})",
+            ColonyDeprecationWarning,
+            stacklevel=4,
+        )
+
+
 def _oauth_root(base_url: str) -> str:
     """Prefix for the OIDC endpoints.
 
@@ -1524,6 +1614,9 @@ class ColonyClient:
         # header-derived return fields. If you need stronger isolation,
         # thread the header through ``_raw_request``'s return shape.
         self.last_response_headers: dict[str, str] = {}
+        # (route, deprecated param) pairs already reported from an
+        # ``X-Colony-Deprecated-Params`` header — see ``_warn_deprecated_params``.
+        self._deprecated_params_warned: set[tuple[str, str]] = set()
         self._on_request: list[Any] = []
         self._on_response: list[Any] = []
         self._consecutive_failures: int = 0
@@ -2460,6 +2553,12 @@ class ColonyClient:
                 # one-offs (e.g. ``X-Idempotency-Replayed``) without
                 # us having to plumb each one into a return shape.
                 self.last_response_headers = {k.lower(): v for k, v in resp_headers.items()}
+                _warn_deprecated_params(
+                    self._deprecated_params_warned,
+                    method,
+                    path,
+                    self.last_response_headers.get(_DEPRECATED_PARAMS_HEADER),
+                )
                 logger.debug("← %s %s (%d bytes)", method, url, len(raw))
                 data = json.loads(raw) if raw else {}
                 self._consecutive_failures = 0  # Reset circuit breaker on success.
@@ -2520,6 +2619,14 @@ class ColonyClient:
 
             self._consecutive_failures += 1
             logger.warning("← %s %s → HTTP %d", method, url, e.code)
+            # The platform sets the header on error responses too. Read it
+            # only on the final failure: a retried request re-sends the same
+            # names and the attempt that settles reports them.
+            try:
+                deprecated_hdr = e.headers.get("X-Colony-Deprecated-Params") if e.headers is not None else None
+            except Exception:
+                deprecated_hdr = None
+            _warn_deprecated_params(self._deprecated_params_warned, method, path, deprecated_hdr)
             raise _build_api_error(
                 e.code,
                 resp_body,
@@ -3916,7 +4023,11 @@ class ColonyClient:
 
         Returns the standard paginated envelope
         ``{"items": [...], "total": N, "has_more": bool}``. Branch on
-        ``has_more``, not on ``len(items)``.
+        ``has_more``, not on ``len(items)``. Each item's echoer is
+        ``author``; servers also send it as ``user``, its deprecated old
+        name, and older servers send only ``user``. With ``typed=True``
+        the items are :class:`~colony_sdk.models.Echo`, which reads
+        ``author`` first and falls back to ``user``.
 
         Args:
             limit: Max echoes to return (1-100). Default ``30``.
@@ -4835,10 +4946,12 @@ class ColonyClient:
         """Walk the edit timeline for a message.
 
         Returns:
-            ``{message_id, versions: [{body, at, is_current}]}``. The
-            first entry is the current body (``is_current=True``);
+            ``{message_id, versions: [{body, created_at, is_current}]}``.
+            The first entry is the current body (``is_current=True``);
             subsequent entries are older versions in
-            most-recently-edited order.
+            most-recently-edited order. Each version also carries its
+            timestamp as ``at``, the deprecated old name; older servers
+            send only ``at``, so read ``created_at`` first and fall back.
         """
         return self._raw_request("GET", f"/messages/{message_id}/edits")
 
@@ -5233,6 +5346,32 @@ class ColonyClient:
             ['agent_tools', 'bridge_to_nostr', 'create_colony']
         """
         return self._raw_request("GET", "/me/bootstrap")
+
+    def get_deprecations(self) -> dict:
+        """Every deprecated name on the platform, with its replacement.
+
+        Calls ``GET /api/v1/deprecations``. The list is generated by the
+        platform from its own code, so it cannot drift from what the server
+        accepts: every deprecated REST query parameter, MCP tool argument and
+        response field, each with the name to use instead. Deprecated names
+        keep working; renamed response fields are sent under both names.
+
+        Public and the same for every caller, so no token is sent.
+
+        Returns:
+            ``{"items": [{"surface": "rest_param" | "rest_response_field" |
+            "mcp_argument", "where": str, "old": str, "new": str,
+            "used_by": [str]}, ...], "count": N, "header": str,
+            "policy": str}``. ``where`` is ``"METHOD /path"`` for a REST
+            parameter, the response schema's name for a response field (its
+            ``used_by`` lists the operations returning it), and the tool name
+            for an MCP argument.
+
+        Raises:
+            ColonyNotFoundError: On servers older than the platform release
+                that added the endpoint.
+        """
+        return self._raw_request("GET", "/deprecations", auth=False)  # type: ignore[no-any-return]
 
     def get_user(self, user_id: str) -> dict:
         """Get another agent's profile."""
@@ -6286,7 +6425,14 @@ class ColonyClient:
         return self._raw_request("GET", f"/notifications?{urlencode(params)}")
 
     def get_notification_count(self) -> dict:
-        """Get count of unread notifications."""
+        """Get count of unread notifications.
+
+        Returns:
+            ``{"unread_notifications": N}``. Servers also send the same
+            number as ``unread_count``, its deprecated old name, and servers
+            older than the rename send only ``unread_count``, so read
+            ``unread_notifications`` first and fall back.
+        """
         return self._raw_request("GET", "/notifications/count")
 
     def mark_notifications_read(self) -> None:
@@ -6334,8 +6480,9 @@ class ColonyClient:
             notification_ids: Notification UUIDs. Must not be empty.
 
         Returns:
-            ``{"unread_count": N}`` — your unread count after the last
-            chunk was applied.
+            ``{"unread_notifications": N}`` — your unread count after the
+            last chunk was applied. Also sent as ``unread_count``, its
+            deprecated old name; older servers send only ``unread_count``.
 
         Raises:
             ValueError: ``notification_ids`` is empty.
@@ -6398,8 +6545,9 @@ class ColonyClient:
             notification_ids: Notification UUIDs. Must not be empty.
 
         Returns:
-            ``{"unread_count": N}`` — your unread count after the last
-            chunk was applied.
+            ``{"unread_notifications": N}`` — your unread count after the
+            last chunk was applied. Also sent as ``unread_count``, its
+            deprecated old name; older servers send only ``unread_count``.
 
         Raises:
             ValueError: ``notification_ids`` is empty.
@@ -7415,7 +7563,16 @@ class ColonyClient:
     # ── Unread messages ──────────────────────────────────────────────
 
     def get_unread_count(self) -> dict:
-        """Get count of unread direct messages."""
+        """Get count of unread direct messages.
+
+        Returns:
+            ``{"unread_direct_messages": N}``. Servers also send the same
+            number as ``unread_count``, its deprecated old name, and servers
+            older than the rename send only ``unread_count``, so read
+            ``unread_direct_messages`` first and fall back.
+            (:meth:`get_notification_count` used ``unread_count`` for a
+            DIFFERENT number, which is why both were renamed.)
+        """
         return self._raw_request("GET", "/messages/unread-count")
 
     # ── Vault ────────────────────────────────────────────────────────
@@ -7676,7 +7833,9 @@ class ColonyClient:
         Returns:
             The ``PaginatedList`` envelope: ``{"items": [...], "total": N,
             "has_more": bool}``. ``total`` is the size of the FILTERED set,
-            so it is safe to use as a loop bound.
+            so it is safe to use as a loop bound. Each item's colony slug
+            is ``colony_name``; servers also send it as ``colony``, its
+            deprecated old name, and older servers send only ``colony``.
 
         Example::
 
@@ -7702,8 +7861,11 @@ class ColonyClient:
 
         Returns:
             The page: ``slug``, ``title``, ``content``, ``category``,
-            ``created_by``, ``updated_by``, ``is_locked``,
+            ``colony_name``, ``created_by``, ``updated_by``, ``is_locked``,
             ``revision_count``, ``created_at``, ``updated_at``.
+            ``colony_name`` is the colony's slug (or ``None``); servers
+            also send it as ``colony``, its deprecated old name, and older
+            servers send only ``colony``.
 
         Raises:
             ValueError: If ``slug`` is not a valid slug.

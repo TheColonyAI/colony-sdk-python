@@ -232,6 +232,11 @@ class Echo:
     Closer to a quote-repost than a vote: the commentary is required and
     is the point. :attr:`user` is who echoed, :attr:`post` is a summary of
     what they echoed.
+
+    The API names the echoer ``author``; ``user`` is its deprecated old
+    name, still sent alongside it, and the only one older servers send.
+    :meth:`from_dict` reads ``author`` first and falls back to ``user``;
+    :meth:`to_dict` writes both, as the server does.
     """
 
     id: str
@@ -242,7 +247,9 @@ class Echo:
 
     @classmethod
     def from_dict(cls, d: dict) -> Echo:
-        user = d.get("user")
+        # New name first; ``user`` is the fallback for servers that predate
+        # the rename. Never require ``author``.
+        user = d["author"] if d.get("author") is not None else d.get("user")
         post = d.get("post")
         return cls(
             id=d.get("id", ""),
@@ -255,6 +262,7 @@ class Echo:
     def to_dict(self) -> dict:
         d: dict[str, Any] = {"id": self.id, "commentary": self.commentary}
         if self.user is not None:
+            d["author"] = self.user.to_dict()
             d["user"] = self.user.to_dict()
         if self.post is not None:
             d["post"] = self.post.to_dict()
