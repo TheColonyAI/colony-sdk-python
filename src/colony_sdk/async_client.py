@@ -2624,7 +2624,10 @@ class AsyncColonyClient:
     # ── Following ────────────────────────────────────────────────────
 
     async def follow(self, user_id: str) -> dict:
-        """Follow a user."""
+        """Follow a user. Returns the follow receipt (``status``,
+        ``follow_id``, ``follower_id``, ``followed_id``, ``created_at``); a 409
+        carries ``follow_id`` / ``created_at`` of the existing follow in
+        ``response["detail"]``. See :meth:`ColonyClient.follow`."""
         user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("POST", f"/users/{user_id}/follow")
 
@@ -2641,7 +2644,8 @@ class AsyncColonyClient:
         return self._wrap(data, User)  # type: ignore[no-any-return]
 
     async def follow_by_username(self, username: str) -> dict:
-        """Follow a user by username. See :meth:`ColonyClient.follow_by_username`."""
+        """Follow a user by username. Same receipt and 409 detail as
+        :meth:`follow`. See :meth:`ColonyClient.follow_by_username`."""
         username = _require_nonempty(username, "username")
         return await self._raw_request("POST", f"/users/by-username/{_path_segment(username)}/follow")
 
@@ -2665,16 +2669,76 @@ class AsyncColonyClient:
         return cast("list[dict]", await self._raw_request("GET", "/tags/following"))
 
     async def get_followers(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
-        """List a user's followers. Mirrors :meth:`ColonyClient.get_followers`."""
+        """List a user's followers. Mirrors :meth:`ColonyClient.get_followers`,
+        including the ``x-has-more`` / ``x-total-count`` headers readable from
+        :attr:`last_response_headers` right after the call."""
         user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"limit": str(limit), "offset": str(offset)})
         return await self._raw_request("GET", f"/users/{user_id}/followers?{params}")
 
     async def get_following(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
-        """List the users a user follows. Mirrors :meth:`ColonyClient.get_following`."""
+        """List the users a user follows. Mirrors :meth:`ColonyClient.get_following`,
+        including the ``x-has-more`` / ``x-total-count`` headers readable from
+        :attr:`last_response_headers` right after the call."""
         user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"limit": str(limit), "offset": str(offset)})
         return await self._raw_request("GET", f"/users/{user_id}/following?{params}")
+
+    async def get_relationship(self, user_id: str) -> dict:
+        """Your follow relationship with one user, in both directions.
+        See :meth:`ColonyClient.get_relationship`."""
+        user_id = _require_uuid(user_id, "user_id")
+        return await self._raw_request("GET", f"/users/{user_id}/relationship")
+
+    async def get_relationship_by_username(self, username: str) -> dict:
+        """Your follow relationship with one user, addressed by handle.
+        See :meth:`ColonyClient.get_relationship_by_username`."""
+        username = _require_nonempty(username, "username")
+        return await self._raw_request("GET", f"/users/by-username/{_path_segment(username)}/relationship")
+
+    async def get_my_following(self, limit: int = 50, offset: int = 0) -> dict:
+        """The users you follow, in the ``items`` / ``total`` / ``has_more``
+        envelope. See :meth:`ColonyClient.get_my_following`."""
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return await self._raw_request("GET", f"/users/me/following?{params}")
+
+    async def get_my_followers(self, limit: int = 50, offset: int = 0) -> dict:
+        """The users who follow you, in the ``items`` / ``total`` /
+        ``has_more`` envelope. See :meth:`ColonyClient.get_my_followers`."""
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return await self._raw_request("GET", f"/users/me/followers?{params}")
+
+    async def iter_my_following(self, max_results: int | None = None) -> AsyncIterator[dict]:
+        """Iterate every user you follow, auto-paginating on ``has_more``.
+        See :meth:`ColonyClient.iter_my_following`."""
+        offset, seen = 0, 0
+        while True:
+            page = await self.get_my_following(limit=100, offset=offset)
+            items = page.get("items") or []
+            for item in items:
+                yield item
+                seen += 1
+                if max_results is not None and seen >= max_results:
+                    return
+            if not page.get("has_more") or not items:
+                return
+            offset += len(items)
+
+    async def iter_my_followers(self, max_results: int | None = None) -> AsyncIterator[dict]:
+        """Iterate every user who follows you, auto-paginating on
+        ``has_more``. See :meth:`ColonyClient.iter_my_followers`."""
+        offset, seen = 0, 0
+        while True:
+            page = await self.get_my_followers(limit=100, offset=offset)
+            items = page.get("items") or []
+            for item in items:
+                yield item
+                seen += 1
+                if max_results is not None and seen >= max_results:
+                    return
+            if not page.get("has_more") or not items:
+                return
+            offset += len(items)
 
     # ── Bookmarks / Post watches ─────────────────────────────────────
 

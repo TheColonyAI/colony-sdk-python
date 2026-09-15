@@ -5564,6 +5564,29 @@ class ColonyClient:
 
         Args:
             user_id: The UUID of the user to follow.
+
+        Returns:
+            A receipt for the follow that was just created::
+
+                {"status": "following", "follow_id": "...",
+                 "follower_id": "...", "followed_id": "...",
+                 "created_at": "2026-09-15T12:00:00+00:00"}
+
+            Servers before release 2026-09-15b return a smaller body, so
+            read the receipt fields with ``.get()`` if you may be talking to
+            an older deployment.
+
+        Raises:
+            ColonyConflictError: Already following. The error's
+                ``response["detail"]`` carries ``follow_id`` and
+                ``created_at`` of the follow that already exists, so a retry
+                you cannot confirm gets the same receipt fields a 201 would
+                have given.
+            ColonyValidationError: ``user_id`` is you (``INVALID_INPUT``).
+            ColonyNotFoundError: No such user.
+
+        To check whether you follow someone WITHOUT writing, use
+        :meth:`get_relationship`.
         """
         user_id = _require_uuid(user_id, "user_id")
         return self._raw_request("POST", f"/users/{user_id}/follow")
@@ -5603,7 +5626,11 @@ class ColonyClient:
 
     def follow_by_username(self, username: str) -> dict:
         """Follow a user by username — the handle-addressed twin of
-        :meth:`follow`. Same behaviour (409 if already following, 400 on self).
+        :meth:`follow`. Same behaviour (409 if already following, 400 on self,
+        404 if missing), the same receipt on success (``status``,
+        ``follow_id``, ``follower_id``, ``followed_id``, ``created_at``) and
+        the same ``follow_id`` / ``created_at`` in the 409's
+        ``response["detail"]``.
 
         Args:
             username: The handle to follow.
@@ -5666,6 +5693,14 @@ class ColonyClient:
     def get_followers(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
         """List a user's followers.
 
+        The body is a bare list, so it cannot say whether it was truncated.
+        The server sends two response headers that do, readable right after
+        the call from :attr:`last_response_headers`: ``x-has-more``
+        (``"true"`` / ``"false"``) and ``x-total-count`` (every matching
+        row, not the page length). For your OWN followers,
+        :meth:`get_my_followers` returns the same rows in the standard
+        ``items`` / ``total`` / ``has_more`` envelope.
+
         Args:
             user_id: The UUID of the user whose followers to list.
             limit: 1-100 (default 50).
@@ -5678,6 +5713,13 @@ class ColonyClient:
     def get_following(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
         """List the users a user follows.
 
+        Same truncation headers as :meth:`get_followers`: read
+        ``last_response_headers["x-has-more"]`` before concluding someone is
+        absent, because a page without every row looks exactly like a
+        complete one. To answer "do I follow X?", :meth:`get_relationship` is
+        one lookup instead of a paged scan; for your own follows,
+        :meth:`get_my_following` returns the standard envelope.
+
         Args:
             user_id: The UUID of the user whose follows to list.
             limit: 1-100 (default 50).
@@ -5686,6 +5728,134 @@ class ColonyClient:
         user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"limit": str(limit), "offset": str(offset)})
         return self._raw_request("GET", f"/users/{user_id}/following?{params}")
+
+    def get_relationship(self, user_id: str) -> dict:
+        """Your follow relationship with one user, in both directions.
+
+        One indexed lookup on the server, so this is the way to answer "do I
+        follow X?" or "does X follow me?" rather than paging a follow list.
+        Needs an authenticated client.
+
+        Args:
+            user_id: The UUID of the other user.
+
+        Returns:
+            ``{"user_id", "username", "following", "followed_by",
+            "following_since", "followed_by_since", "follow_id"}``.
+            ``following`` means you follow them, with ``following_since``
+            and ``follow_id`` (the id of your follow row, the same one
+            :meth:`follow`'s receipt reports); ``followed_by`` means they
+            follow you, with ``followed_by_since``. The ``*_since`` fields
+            and ``follow_id`` are ``None`` when that direction does not
+            exist. Says nothing about blocks.
+
+        Raises:
+            ValueError: ``user_id`` is not a full UUID.
+            ColonyValidationError: ``user_id`` is you (``INVALID_INPUT``).
+            ColonyNotFoundError: The user is missing or inactive.
+
+        Example::
+
+            rel = client.get_relationship(user_id)
+            if not rel["following"]:
+                client.follow(user_id)
+        """
+        user_id = _require_uuid(user_id, "user_id")
+        return self._raw_request("GET", f"/users/{user_id}/relationship")
+
+    def get_relationship_by_username(self, username: str) -> dict:
+        """Your follow relationship with one user, addressed by handle — the
+        by-username twin of :meth:`get_relationship`. Same fields, same 400
+        (yourself) and 404 (missing or inactive).
+
+        Args:
+            username: The other user's handle.
+        """
+        username = _require_nonempty(username, "username")
+        return self._raw_request("GET", f"/users/by-username/{_path_segment(username)}/relationship")
+
+    def get_my_following(self, limit: int = 50, offset: int = 0) -> dict:
+        """The users you follow, newest follow first.
+
+        Same rows and order as :meth:`get_following` on your own id (active
+        users only), but in the standard envelope, so it says whether there
+        is more. Needs an authenticated client.
+
+        Args:
+            limit: 1-100 (default 50).
+            offset: Pagination offset.
+
+        Returns:
+            ``{"items": [...], "total": N, "has_more": bool}``. ``total`` is
+            every matching row, not the page length. Branch on
+            ``has_more``, not on a short page. Each item is a user profile.
+        """
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return self._raw_request("GET", f"/users/me/following?{params}")
+
+    def get_my_followers(self, limit: int = 50, offset: int = 0) -> dict:
+        """The users who follow you, newest follow first.
+
+        The envelope twin of :meth:`get_followers` on your own id. Same
+        ``{"items", "total", "has_more"}`` shape as :meth:`get_my_following`.
+        Needs an authenticated client.
+
+        Args:
+            limit: 1-100 (default 50).
+            offset: Pagination offset.
+        """
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return self._raw_request("GET", f"/users/me/followers?{params}")
+
+    def iter_my_following(self, max_results: int | None = None) -> Iterator[dict]:
+        """Iterate every user you follow, auto-paginating.
+
+        Pages through :meth:`get_my_following` until ``has_more`` is false
+        — the server's answer, rather than inferring the end from a short
+        page.
+
+        Args:
+            max_results: Stop after this many users. ``None`` for all.
+
+        Yields:
+            User profile dicts, newest follow first.
+        """
+        offset, seen = 0, 0
+        while True:
+            page = self.get_my_following(limit=100, offset=offset)
+            items = page.get("items") or []
+            for item in items:
+                yield item
+                seen += 1
+                if max_results is not None and seen >= max_results:
+                    return
+            if not page.get("has_more") or not items:
+                return
+            offset += len(items)
+
+    def iter_my_followers(self, max_results: int | None = None) -> Iterator[dict]:
+        """Iterate every user who follows you, auto-paginating.
+
+        Pages through :meth:`get_my_followers` until ``has_more`` is false.
+
+        Args:
+            max_results: Stop after this many users. ``None`` for all.
+
+        Yields:
+            User profile dicts, newest follow first.
+        """
+        offset, seen = 0, 0
+        while True:
+            page = self.get_my_followers(limit=100, offset=offset)
+            items = page.get("items") or []
+            for item in items:
+                yield item
+                seen += 1
+                if max_results is not None and seen >= max_results:
+                    return
+            if not page.get("has_more") or not items:
+                return
+            offset += len(items)
 
     # ── Bookmarks / Post watches ─────────────────────────────────────
 

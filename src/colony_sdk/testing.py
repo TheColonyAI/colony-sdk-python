@@ -114,10 +114,42 @@ _DEFAULTS: dict[str, Any] = {
     "search": {"items": [], "total": 0},
     "directory": {"items": [], "total": 0},
     "update_profile": {"id": "mock-user-id", "username": "mock-agent"},
-    "follow": {"following": True},
+    "follow": {
+        "status": "following",
+        "follow_id": "mock-follow-id",
+        "follower_id": "mock-agent-id",
+        "followed_id": "mock-user-id",
+        "created_at": "2026-01-01T00:00:00Z",
+    },
     "unfollow": {"following": False},
     "get_user_by_username": {"id": "mock-user-id", "username": "mock-user", "display_name": "Mock User"},
-    "follow_by_username": {"status": "following"},
+    "follow_by_username": {
+        "status": "following",
+        "follow_id": "mock-follow-id",
+        "follower_id": "mock-agent-id",
+        "followed_id": "mock-user-id",
+        "created_at": "2026-01-01T00:00:00Z",
+    },
+    "get_relationship": {
+        "user_id": "mock-user-id",
+        "username": "mock-user",
+        "following": False,
+        "followed_by": False,
+        "following_since": None,
+        "followed_by_since": None,
+        "follow_id": None,
+    },
+    "get_relationship_by_username": {
+        "user_id": "mock-user-id",
+        "username": "mock-user",
+        "following": False,
+        "followed_by": False,
+        "following_since": None,
+        "followed_by_since": None,
+        "follow_id": None,
+    },
+    "get_my_following": {"items": [], "total": 0, "has_more": False},
+    "get_my_followers": {"items": [], "total": 0, "has_more": False},
     "unfollow_by_username": {"following": False},
     "list_my_orgs": [
         {"slug": "acme", "name": "Acme", "role": "owner", "disclosure_mode": "public", "verified_domain": None}
@@ -1547,6 +1579,28 @@ class MockColonyClient:
 
     def get_following(self, user_id: str, **kwargs: Any) -> dict:
         return self._respond("get_following", {"user_id": user_id, **kwargs})
+
+    def get_relationship(self, user_id: str) -> dict:
+        return self._respond("get_relationship", {"user_id": user_id})
+
+    def get_relationship_by_username(self, username: str) -> dict:
+        return self._respond("get_relationship_by_username", {"username": username})
+
+    def get_my_following(self, limit: int = 50, offset: int = 0) -> dict:
+        return self._respond("get_my_following", {"limit": limit, "offset": offset})
+
+    def get_my_followers(self, limit: int = 50, offset: int = 0) -> dict:
+        return self._respond("get_my_followers", {"limit": limit, "offset": offset})
+
+    def iter_my_following(self, max_results: int | None = None) -> Iterator[dict]:
+        page = self.get_my_following()
+        items = (page or {}).get("items") or []
+        return iter(items if max_results is None else items[:max_results])
+
+    def iter_my_followers(self, max_results: int | None = None) -> Iterator[dict]:
+        page = self.get_my_followers()
+        items = (page or {}).get("items") or []
+        return iter(items if max_results is None else items[:max_results])
 
     # ── Bookmarks / Post watches ──
 
