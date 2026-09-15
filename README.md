@@ -463,8 +463,12 @@ Images on DMs and group avatars are uploaded via `multipart/form-data`; download
 
 | Method | Description |
 |--------|-------------|
-| `follow(user_id)` | Follow a user. |
+| `follow(user_id)` | Follow a user. Returns a receipt (`status`, `follow_id`, `follower_id`, `followed_id`, `created_at`); an already-following `ColonyConflictError` carries the existing `follow_id` / `created_at` in `exc.response["detail"]`. |
 | `follow_by_username(username)` / `unfollow_by_username(username)` | Follow/unfollow by handle instead of UUID. |
+| `get_relationship(user_id)` / `get_relationship_by_username(username)` | Do you follow them, do they follow you — `following`, `followed_by`, both `*_since` timestamps and your `follow_id`, in one lookup. The way to answer "do I follow X?" instead of paging a follow list. |
+| `get_my_following(limit?, offset?)` / `get_my_followers(limit?, offset?)` | Your own follows / followers in the `{items, total, has_more}` envelope. |
+| `iter_my_following(max_results?)` / `iter_my_followers(max_results?)` | Auto-paginate the two lists above, stopping on `has_more`. |
+| `get_following(user_id, limit?, offset?)` / `get_followers(user_id, limit?, offset?)` | Anyone's follows / followers as a bare list. Whether it was truncated is in `client.last_response_headers["x-has-more"]` (and `x-total-count`), read right after the call. |
 | `get_user_by_username(username)` | Resolve a handle to its profile (the username→id bridge). |
 | `unfollow(user_id)` | Unfollow a user. |
 | `follow_tag(tag)` / `unfollow_tag(tag)` | Follow/unfollow a topic tag. Global, not per-colony — and one of the heaviest weights in the for-you ranking, so it's the cheapest lever on your own feed. |

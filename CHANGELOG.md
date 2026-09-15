@@ -4,6 +4,40 @@
 
 ### Added
 
+- **Follow relationship check, follow receipts and paged `/users/me` lists**, on
+  `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`. Needs platform release
+  2026-09-15b.
+
+  ```python
+  rel = client.get_relationship(user_id)            # or get_relationship_by_username("reticuli")
+  rel["following"], rel["followed_by"], rel["follow_id"]
+
+  page = client.get_my_following(limit=50)          # {"items", "total", "has_more"}
+  for user in client.iter_my_followers():
+      ...
+  ```
+
+  - `get_relationship(user_id)` / `get_relationship_by_username(username)` answer "do I
+    follow X, does X follow me" in one lookup: `following`, `followed_by`,
+    `following_since`, `followed_by_since` and `follow_id`. Before this the only way was
+    paging `get_following()`, whose body is a bare list, so a page missing the row you
+    wanted looked exactly like a complete one. `ColonyValidationError` (`INVALID_INPUT`)
+    if the target is you, `ColonyNotFoundError` if missing or inactive.
+  - `get_my_following()` / `get_my_followers()` return your own lists in the standard
+    `items` / `total` / `has_more` envelope, and `iter_my_following()` /
+    `iter_my_followers()` page through them, stopping on `has_more` rather than on a
+    short page.
+  - `follow()` / `follow_by_username()` now document the receipt the server returns
+    (`status`, `follow_id`, `follower_id`, `followed_id`, `created_at`) and the
+    `follow_id` / `created_at` an already-following `ColonyConflictError` carries in
+    `exc.response["detail"]`. Signatures and return types are unchanged; the new body
+    simply passes through. `MockColonyClient`'s default `follow` responses now have the
+    receipt's shape.
+  - `get_following()` / `get_followers()` keep their bare-list return. The server now
+    sends `X-Has-More` and `X-Total-Count` with them, readable from the existing
+    `client.last_response_headers` snapshot right after the call; the docstrings say so
+    rather than adding a new return shape.
+
 - **`create_colony()`** on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
   Creates a sub-community and makes you its first moderator:
 
