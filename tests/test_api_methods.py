@@ -3750,10 +3750,25 @@ class TestGroupConversationsState:
         mock_urlopen.return_value = _mock_response({"muted": False, "muted_until": "2026-05-28T11:00:00Z"})
         client = _authed_client()
 
-        client.mute_group_conversation(GROUP_ID, until="1h")
+        client.mute_group_conversation(GROUP_ID, duration="1h")
 
         req = _last_request(mock_urlopen)
-        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/mute?until=1h"
+        assert req.full_url == f"{BASE}/messages/groups/{GROUP_ID}/mute?duration=1h"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mute_group_until_is_the_deprecated_name_for_duration(self, mock_urlopen: MagicMock) -> None:
+        """``until`` was deprecated on the wire because the value is a token,
+        not a timestamp. The old kwarg still works and now sends ``duration``."""
+        mock_urlopen.return_value = _mock_response({"muted": False, "muted_until": "2026-05-28T11:00:00Z"})
+        client = _authed_client()
+
+        with pytest.warns(DeprecationWarning, match=r"mute_group_conversation\(until=\.\.\.\) is deprecated"):
+            client.mute_group_conversation(GROUP_ID, until="1h")
+
+        assert _last_request(mock_urlopen).full_url == f"{BASE}/messages/groups/{GROUP_ID}/mute?duration=1h"
+
+        with pytest.raises(ValueError, match="different values"):
+            client.mute_group_conversation(GROUP_ID, duration="1h", until="8h")
 
     @patch("colony_sdk.client.urlopen")
     def test_unmute_group(self, mock_urlopen: MagicMock) -> None:
@@ -5500,19 +5515,20 @@ class TestRenamedKwargs:
         assert _last_body(mock_urlopen) == {"colony_id": "c9"}
 
     # ── get_mod_queue: page_size -> limit, queue_status -> status ──
-    # The wire names stay page_size / queue_status until the platform release
-    # that accepts limit / status is live.
+    # The kwargs were renamed first; the WIRE names followed on 2026-09-16,
+    # once platform release 2026-09-16a accepting limit / status was live.
 
     @patch("colony_sdk.client.urlopen")
-    def test_get_mod_queue_new_names_map_onto_the_old_wire_names(self, mock_urlopen: MagicMock) -> None:
+    def test_get_mod_queue_sends_the_preferred_wire_names(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"items": []})
         with _no_warnings():
             _authed_client().get_mod_queue("general", limit=10, status="resolved")
         qs = _qs(mock_urlopen)
-        assert qs["page_size"] == ["10"]
-        assert qs["queue_status"] == ["resolved"]
+        assert qs["limit"] == ["10"]
+        assert qs["status"] == ["resolved"]
+        # `page` is an accepted spelling of `offset` and is not deprecated.
         assert qs["page"] == ["1"]
-        assert "limit" not in qs and "status" not in qs and "offset" not in qs
+        assert "page_size" not in qs and "queue_status" not in qs
 
     @patch("colony_sdk.client.urlopen")
     def test_get_mod_queue_defaults_are_unchanged(self, mock_urlopen: MagicMock) -> None:
@@ -5520,8 +5536,8 @@ class TestRenamedKwargs:
         with _no_warnings():
             _authed_client().get_mod_queue("general")
         qs = _qs(mock_urlopen)
-        assert qs["page_size"] == ["25"]
-        assert qs["queue_status"] == ["open"]
+        assert qs["limit"] == ["25"]
+        assert qs["status"] == ["open"]
 
     @pytest.mark.parametrize(
         ("old", "new", "value", "wire"),
@@ -5535,11 +5551,14 @@ class TestRenamedKwargs:
         client = _authed_client()
         with pytest.warns(DeprecationWarning, match=rf"get_mod_queue\({old}=\.\.\.\) is deprecated; use {new}="):
             client.get_mod_queue("general", **{old: value})
-        assert _qs(mock_urlopen)[old] == [wire]
+        # The deprecated KWARG still works; what goes on the wire is the
+        # preferred name either way.
+        assert _qs(mock_urlopen)[new] == [wire]
+        assert old not in _qs(mock_urlopen)
 
         with pytest.warns(DeprecationWarning):
             client.get_mod_queue("general", **{old: value, new: value})
-        assert _qs(mock_urlopen)[old] == [wire]
+        assert _qs(mock_urlopen)[new] == [wire]
 
     @pytest.mark.parametrize(
         "kwargs",

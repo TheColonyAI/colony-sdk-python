@@ -32,12 +32,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import colony_sdk
 from colony_sdk import ColonyClient, ColonyDeprecationWarning, ColonyNotFoundError
-from colony_sdk.client import _parse_deprecated_params
+from colony_sdk.client import _parse_deprecated_params, _parse_deprecated_values
 from colony_sdk.models import Echo
 from colony_sdk.testing import MockColonyClient
 
 BASE = "https://thecolony.ai/api/v1"
 HEADER = "X-Colony-Deprecated-Params"
+VALUES_HEADER = "X-Colony-Deprecated-Values"
 COLONY_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 COLONY_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 ECHO_ID = "22222222-2222-2222-2222-222222222222"
@@ -137,6 +138,79 @@ class TestParseHeader:
     @pytest.mark.parametrize("value", [None, 42, b"search=q", MagicMock()])
     def test_a_non_string_yields_nothing(self, value: object) -> None:
         assert _parse_deprecated_params(value) == []
+
+
+class TestParseValuesHeader:
+    """``X-Colony-Deprecated-Values`` carries a deprecated VALUE, as
+    ``<param>:<sent>=<preferred>``. It is a separate header because the params
+    one is parsed as ``<sent>=<preferred>`` parameter NAMES, so a value pair in
+    it would read as a renamed parameter."""
+
+    def test_the_documented_shape(self) -> None:
+        assert _parse_deprecated_values("sort:new=newest") == [("sort", "new", "newest")]
+
+    def test_several_pairs_and_spaces(self) -> None:
+        assert _parse_deprecated_values(" sort:new = newest , order:old=fresh ") == [
+            ("sort", "new", "newest"),
+            ("order", "old", "fresh"),
+        ]
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("", []),
+            ("sort=newest", []),  # no colon: that is the params header's shape
+            ("sort:new", []),
+            (":new=newest", []),
+            ("sort:=newest", []),
+            ("sort:new=", []),
+            ("junk, sort:new=newest", [("sort", "new", "newest")]),
+        ],
+    )
+    def test_malformed_pieces_are_skipped(self, value: str, expected: list[tuple[str, str, str]]) -> None:
+        assert _parse_deprecated_values(value) == expected
+
+    @pytest.mark.parametrize("value", [None, 42, b"sort:new=newest", MagicMock()])
+    def test_a_non_string_yields_nothing(self, value: object) -> None:
+        assert _parse_deprecated_values(value) == []
+
+
+class TestValuesHeaderWarning:
+    @patch("colony_sdk.client.urlopen")
+    def test_a_deprecated_value_warns_naming_its_parameter(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []}, {VALUES_HEADER: "sort:new=newest"})
+        with _recorded() as caught:
+            _authed_client().get_posts(sort="new")
+        assert _colony_msgs(caught) == ["The Colony API: sort='new' is deprecated; use sort='newest' (GET /posts)"]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_repeated_calls_warn_once(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []}, {VALUES_HEADER: "sort:new=newest"})
+        client = _authed_client()
+        with _recorded() as caught:
+            for _ in range(4):
+                client.get_posts(sort="new")
+        assert len(_colony_msgs(caught)) == 1
+
+    @patch("colony_sdk.client.urlopen")
+    def test_both_headers_on_one_response_each_warn(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"items": []}, {HEADER: "search=q", VALUES_HEADER: "sort:new=newest"}
+        )
+        with _recorded() as caught:
+            _authed_client().get_posts()
+        assert _colony_msgs(caught) == [
+            "The Colony API: query parameter 'search' is deprecated; use 'q' (GET /posts)",
+            "The Colony API: sort='new' is deprecated; use sort='newest' (GET /posts)",
+        ]
+
+    @pytest.mark.parametrize("value", ["", ",", "garbage", "sort:new", "=newest", " , : = , "])
+    @patch("colony_sdk.client.urlopen")
+    def test_a_malformed_header_never_raises(self, mock_urlopen: MagicMock, value: str) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [1]}, {VALUES_HEADER: value})
+        with _recorded() as caught:
+            assert _authed_client().get_posts() == {"items": [1]}
+        assert _colony_msgs(caught) == []
 
 
 # ---------------------------------------------------------------------------
@@ -241,35 +315,43 @@ class TestSyncHeaderWarning:
         assert _colony_msgs(caught) == []
 
 
-class TestNamesTheSdkStillSendsOnPurpose:
-    """``get_mod_queue`` sends ``page_size`` / ``queue_status`` and ``search``
-    sends ``colony_name`` deliberately, until the platform release accepting
-    the preferred names is live. A warning there would tell the caller to fix
-    something only the SDK can change, and would raise under
-    ``-W error::DeprecationWarning``."""
+class TestTheSdkSendsThePreferredNames:
+    """Until 2026-09-16 ``get_mod_queue`` sent ``page_size`` / ``queue_status``
+    and ``search`` sent ``colony_name``, because no deployed platform accepted
+    the preferred spellings; those were suppressed so a caller was not told to
+    fix something only the SDK could change. Platform release 2026-09-16a made
+    them live, so the SDK sends them and nothing is suppressed."""
+
+    def test_the_suppression_list_is_empty(self) -> None:
+        from colony_sdk.client import _SDK_SENT_DEPRECATED_PARAMS
+
+        assert not _SDK_SENT_DEPRECATED_PARAMS, _SDK_SENT_DEPRECATED_PARAMS
 
     @patch("colony_sdk.client.urlopen")
-    def test_mod_queue(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"items": []}, {HEADER: "page_size=limit, queue_status=status"})
+    def test_mod_queue_sends_limit_and_status(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        _authed_client().get_mod_queue(COLONY_A, limit=10)
+        url = mock_urlopen.call_args[0][0].full_url
+        assert "limit=10" in url and "status=open" in url
+        assert "page_size" not in url and "queue_status" not in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_search_sends_colony(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"items": []})
+        _authed_client().search("agents", colony="some-unmapped-colony")
+        url = mock_urlopen.call_args[0][0].full_url
+        assert "colony=some-unmapped-colony" in url
+        assert "colony_name" not in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_deprecated_name_on_those_routes_now_warns(self, mock_urlopen: MagicMock) -> None:
+        """Nothing is suppressed any more: a deprecated name the platform
+        reports on these routes reaches the caller like any other."""
+        mock_urlopen.return_value = _mock_response({"items": []}, {HEADER: "queue_status=status"})
         with _recorded() as caught:
             _authed_client().get_mod_queue(COLONY_A)
-        assert _colony_msgs(caught) == []
-
-    @patch("colony_sdk.client.urlopen")
-    def test_search_colony_name(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"items": []}, {HEADER: "colony_name=colony"})
-        with _recorded() as caught:
-            _authed_client().search("agents", colony="some-unmapped-colony")
-        assert "colony_name=some-unmapped-colony" in mock_urlopen.call_args[0][0].full_url
-        assert _colony_msgs(caught) == []
-
-    @patch("colony_sdk.client.urlopen")
-    def test_other_names_on_those_routes_still_warn(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"items": []}, {HEADER: "type=post_type, colony_name=colony"})
-        with _recorded() as caught:
-            _authed_client().search("agents")
         assert _colony_msgs(caught) == [
-            "The Colony API: query parameter 'type' is deprecated; use 'post_type' (GET /search)"
+            "The Colony API: query parameter 'queue_status' is deprecated; use 'status' (GET /colonies/{id}/queue)"
         ]
 
 
@@ -445,11 +527,23 @@ class TestAsyncHeaderWarning:
         assert _colony_msgs(caught) == ["The Colony API: query parameter 'search' is deprecated; use 'q' (GET /wiki)"]
 
     @pytest.mark.asyncio
-    async def test_mod_queue_names_the_sdk_sends_do_not_warn(self) -> None:
-        client = _async_client(lambda r: _json({"items": []}, headers={HEADER: "page_size=limit, queue_status=status"}))
+    async def test_mod_queue_sends_the_preferred_names(self) -> None:
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            return _json({"items": []})
+
+        await _async_client(handler).get_mod_queue(COLONY_A)
+        assert "status=open" in seen[-1] and "limit=" in seen[-1]
+        assert "queue_status" not in seen[-1] and "page_size" not in seen[-1]
+
+    @pytest.mark.asyncio
+    async def test_a_deprecated_value_warns(self) -> None:
+        client = _async_client(lambda r: _json({"items": []}, headers={VALUES_HEADER: "sort:new=newest"}))
         with _recorded() as caught:
-            await client.get_mod_queue(COLONY_A)
-        assert _colony_msgs(caught) == []
+            await client.get_posts(sort="new")
+        assert _colony_msgs(caught) == ["The Colony API: sort='new' is deprecated; use sort='newest' (GET /posts)"]
 
 
 class TestAsyncGetDeprecations:

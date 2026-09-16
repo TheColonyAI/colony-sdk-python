@@ -588,7 +588,7 @@ class MockColonyClient:
     def get_posts(
         self,
         colony: str | None = None,
-        sort: str = "new",
+        sort: str = "newest",
         limit: int = 20,
         offset: int = 0,
         post_type: str | None = None,

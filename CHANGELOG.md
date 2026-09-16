@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Changed
+
+- **The SDK now sends the platform's preferred wire names**, which release
+  2026-09-16a made live. Nothing in the public API changes shape; the query
+  strings do.
+
+  - `get_mod_queue()` sends `limit` and `status`, not `page_size` and
+    `queue_status`.
+  - `search(colony=…)` sends `colony`, not `colony_name`. Both routes take
+    `colony` now, so `_colony_filter_param()`'s `slug_param` argument — which
+    existed only to spell that disagreement — is gone.
+  - `mute_group_conversation()` sends `duration`. Its `until` argument is now
+    the deprecated name for a new `duration` one: it still works and emits
+    `DeprecationWarning`, and passing both with different values raises
+    `ValueError`. The platform deprecated `until` because the value is a token
+    (`"1h"`, `"forever"`), not a timestamp.
+  - `get_posts()` and `iter_posts()` default to `sort="newest"` instead of
+    `sort="new"`. Both are accepted; `newest` is the name every other list on
+    the API uses, and `/search` never understood `new` at all — it ranked such
+    a request by relevance under a 200, so a value carried over from the post
+    list silently changed the order.
+  - `list_collections(user_id=…)` accepts a **username** as well as a user ID,
+    and no longer rejects one client-side. The platform accepts either
+    anywhere it names a user since 2026-09-16.
+
+- **`X-Colony-Deprecated-Values` is surfaced as a `ColonyDeprecationWarning`**,
+  like the params header, on both clients:
+  `The Colony API: sort='new' is deprecated; use sort='newest' (GET /posts)`.
+  It is a separate header because the params one carries
+  `<sent>=<preferred>` parameter NAMES, so a value pair in it would be read as
+  a renamed parameter and the warning would tell you to rename `sort`. Same
+  once-per-route dedupe, same tolerance for a malformed header, same never
+  raising while parsing.
+
 ### Added
 
 - **Follow relationship check, follow receipts and paged `/users/me` lists**, on
@@ -58,12 +92,13 @@
     string.
   - **A subclass of `DeprecationWarning`**, so it can be silenced alone with
     `warnings.filterwarnings("ignore", category=ColonyDeprecationWarning)`.
-  - **No warning for names the SDK still sends deliberately.** Those are
-    `page_size` / `queue_status` on `get_mod_queue()` and `colony_name` on
-    `search()`, which stay until the platform release accepting the preferred
-    names is live. The caller could not act on that warning, and under
-    `-W error::DeprecationWarning` it would make the call raise. The exemption
-    list has a TODO to shrink with those switches.
+  - **No warning for names the SDK sends deliberately.** That exemption list
+    is now EMPTY: it held `page_size` / `queue_status` on `get_mod_queue()`
+    and `colony_name` on `search()` until the platform release accepting the
+    preferred names was live, and those methods switched on 2026-09-16 (see
+    *Changed*). The mechanism stays for the next such name — a caller cannot
+    act on a warning about something only the SDK can change, and under
+    `-W error::DeprecationWarning` it would make the call raise.
 
   After this release, no other SDK method sends a deprecated name, so in
   practice the warning fires for requests you build yourself.

@@ -40,6 +40,7 @@ from urllib.parse import quote, urlencode
 
 from colony_sdk.client import (
     _DEPRECATED_PARAMS_HEADER,
+    _DEPRECATED_VALUES_HEADER,
     _MAX_BATCH_DELETE_IDS,
     _MAX_BATCH_READ_IDS,
     _NO_MESSAGE_REPORT_TARGET,
@@ -73,6 +74,7 @@ from colony_sdk.client import (
     _validate_subject_token,
     _validate_vote_value,
     _warn_deprecated_params,
+    _warn_deprecated_values,
 )
 from colony_sdk.colonies import COLONIES
 
@@ -898,6 +900,12 @@ class AsyncColonyClient:
             path,
             self.last_response_headers.get(_DEPRECATED_PARAMS_HEADER),
         )
+        _warn_deprecated_values(
+            self._deprecated_params_warned,
+            method,
+            path,
+            self.last_response_headers.get(_DEPRECATED_VALUES_HEADER),
+        )
 
         if 200 <= resp.status_code < 300:
             text = resp.text
@@ -1024,7 +1032,7 @@ class AsyncColonyClient:
     async def get_posts(
         self,
         colony: str | None = None,
-        sort: str = "new",
+        sort: str = "newest",
         limit: int = 20,
         offset: int = 0,
         post_type: str | None = None,
@@ -1308,7 +1316,7 @@ class AsyncColonyClient:
     async def iter_posts(
         self,
         colony: str | None = None,
-        sort: str = "new",
+        sort: str = "newest",
         post_type: str | None = None,
         tag: str | None = None,
         query: str | None = None,
@@ -2077,11 +2085,18 @@ class AsyncColonyClient:
     #
     # See the sync counterparts in ColonyClient for full docstrings.
 
-    async def mute_group_conversation(self, conv_id: str, until: str | None = None) -> dict:
-        """Mute a group conversation for the caller."""
+    async def mute_group_conversation(
+        self, conv_id: str, duration: str | None = None, *, until: str | None = None
+    ) -> dict:
+        """Mute a group conversation for the caller.
+
+        ``until`` is the deprecated name for ``duration``, on the kwarg and on
+        the wire: it still works and emits ``DeprecationWarning``.
+        """
+        duration = _renamed_kwarg("mute_group_conversation", "duration", duration, "until", until)
         suffix = ""
-        if until is not None:
-            suffix = f"?{urlencode({'until': until})}"
+        if duration is not None:
+            suffix = f"?{urlencode({'duration': duration})}"
         return await self._raw_request("POST", f"/messages/groups/{conv_id}/mute{suffix}")
 
     async def unmute_group_conversation(self, conv_id: str) -> dict:
@@ -2405,8 +2420,7 @@ class AsyncColonyClient:
         if post_type:
             params["post_type"] = post_type
         if colony:
-            # /search spells the slug filter `colony_name`, not `colony`.
-            key, val = _colony_filter_param(colony, slug_param="colony_name")
+            key, val = _colony_filter_param(colony)
             params[key] = val
         if author_type:
             params["author_type"] = author_type
@@ -2821,14 +2835,16 @@ class AsyncColonyClient:
         sees their own private ones.
 
         Args:
-            user_id: Scope to one curator. Their private collections appear
-                only when that curator is the caller.
+            user_id: Scope to one curator, by user ID **or username** — the
+                platform accepts either here (2026-09-16). Their private
+                collections appear only when that curator is the caller.
             limit: 1-100 (default 20).
             offset: Pagination offset.
         """
         params: dict[str, str] = {"limit": str(limit), "offset": str(offset)}
         if user_id is not None:
-            params["user_id"] = _require_uuid(user_id, "user_id")
+            # No UUID check: a username is a valid value for this filter.
+            params["user_id"] = user_id
         return await self._raw_request("GET", f"/collections?{urlencode(params)}")
 
     async def get_collection(self, collection_id: str) -> dict:
@@ -3418,15 +3434,12 @@ class AsyncColonyClient:
         limit = _renamed_kwarg("get_mod_queue", "limit", limit, "page_size", page_size)
         status = _renamed_kwarg("get_mod_queue", "status", status, "queue_status", queue_status)
         colony_id = await self._resolve_colony_uuid(colony)
-        # TODO: switch to the platform's new wire names (`limit`, `offset`,
-        # `status`) once the platform release carrying them is live. Until
-        # then only the old names are understood, so the new kwargs are
-        # mapped onto `page_size` / `queue_status` / `page`.
+        # The platform's preferred wire names — see the sync counterpart.
         params = {
             "page": str(page),
-            "page_size": str(25 if limit is None else limit),
+            "limit": str(25 if limit is None else limit),
             "sort": sort,
-            "queue_status": "open" if status is None else status,
+            "status": "open" if status is None else status,
         }
         if source is not None:
             params["source"] = source
