@@ -82,11 +82,13 @@ class TestModQueue:
         _authed_client().get_mod_queue("general", source="open_report", page=2, limit=10)
         assert _req(mock).get_method() == "GET"
         assert _path(mock) == f"/api/v1/colonies/{GENERAL}/queue"
+        # The platform's preferred names since release 2026-09-14e; the SDK
+        # switched once that was live (2026-09-16).
         assert _query(mock) == {
             "page": "2",
-            "page_size": "10",
+            "limit": "10",
             "sort": "newest",
-            "queue_status": "open",
+            "status": "open",
             "source": "open_report",
         }
 

@@ -2921,8 +2921,13 @@ class TestAsyncGroupConversationsState:
             return _json_response({"muted": False, "muted_until": "2026-05-28T11:00:00Z"})
 
         client = _make_client(handler)
-        await client.mute_group_conversation(_GROUP_ID, until="8h")
-        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/mute?until=8h"
+        await client.mute_group_conversation(_GROUP_ID, duration="8h")
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/mute?duration=8h"
+
+        # ``until`` is the deprecated name, on the kwarg and on the wire.
+        with pytest.warns(DeprecationWarning, match=r"mute_group_conversation\(until=\.\.\.\) is deprecated"):
+            await client.mute_group_conversation(_GROUP_ID, until="8h")
+        assert seen["url"] == f"{BASE}/messages/groups/{_GROUP_ID}/mute?duration=8h"
 
     async def test_unmute_group(self) -> None:
         seen: dict = {}
@@ -4621,21 +4626,21 @@ class TestAsyncRenamedKwargs:
         client, seen = _recording_client()
         await client.get_mod_queue("general", limit=10, status="resolved")
         qs = _async_qs(seen[0])
-        # Still the old wire names until the platform release is live.
-        assert qs["page_size"] == ["10"]
-        assert qs["queue_status"] == ["resolved"]
-        assert "limit" not in qs and "status" not in qs and "offset" not in qs
+        # The preferred wire names, sent since 2026-09-16.
+        assert qs["limit"] == ["10"]
+        assert qs["status"] == ["resolved"]
+        assert "page_size" not in qs and "queue_status" not in qs
 
         await client.get_mod_queue("general")
-        assert _async_qs(seen[1])["page_size"] == ["25"]
-        assert _async_qs(seen[1])["queue_status"] == ["open"]
+        assert _async_qs(seen[1])["limit"] == ["25"]
+        assert _async_qs(seen[1])["status"] == ["open"]
 
         with pytest.warns(DeprecationWarning, match=r"get_mod_queue\(page_size=\.\.\.\) is deprecated; use limit="):
             await client.get_mod_queue("general", page_size=10)
-        assert _async_qs(seen[2])["page_size"] == ["10"]
+        assert _async_qs(seen[2])["limit"] == ["10"]
         with pytest.warns(DeprecationWarning, match=r"get_mod_queue\(queue_status=\.\.\.\) is deprecated; use status="):
             await client.get_mod_queue("general", queue_status="resolved")
-        assert _async_qs(seen[3])["queue_status"] == ["resolved"]
+        assert _async_qs(seen[3])["status"] == ["resolved"]
 
         with pytest.raises(ValueError, match="different values"):
             await client.get_mod_queue("general", limit=10, page_size=20)

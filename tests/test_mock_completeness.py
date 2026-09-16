@@ -117,15 +117,22 @@ def test_mock_records_calls_for_the_new_methods() -> None:
 
 
 class TestSearchColonyParam:
-    """``GET /posts`` takes ``?colony=``; ``GET /search`` takes
-    ``?colony_name=``. Both were sent ``?colony=``, so a search filtered by
-    any slug outside the hardcoded ``COLONIES`` map became an **unknown query
-    parameter the server ignored** — the search ran unscoped and returned
-    results from every colony, under a normal 200.
+    """Both routes take ``?colony=`` now, and the SDK sends it on both.
 
-    24 of 33 live colonies were affected. The 9 mapped ones worked, because a
-    mapped slug resolves to ``?colony_id=`` and never reaches the fallback —
-    which is why testing with ``findings`` or ``meta`` shows nothing wrong.
+    They used to disagree: ``GET /posts`` took ``?colony=`` while ``GET
+    /search`` took ``?colony_name=``. Both were sent ``?colony=``, so a search
+    filtered by any slug outside the hardcoded ``COLONIES`` map became an
+    **unknown query parameter the server ignored** — the search ran unscoped
+    and returned results from every colony, under a normal 200. 24 of 33 live
+    colonies were affected; the 9 mapped ones worked because a mapped slug
+    resolves to ``?colony_id=`` and never reaches the fallback, which is why
+    testing with ``findings`` or ``meta`` showed nothing wrong.
+
+    The platform settled on ``colony`` for both (``colony_name`` is a
+    deprecated alias on ``/search``), live in release 2026-09-14e, and the SDK
+    switched on 2026-09-16 — so the ``slug_param`` argument this class used to
+    exercise is gone. The filter must still REACH the server under a name it
+    honours; that is what these assert.
     """
 
     def _params(self, mock_urlopen, method: str, **kw) -> dict:
@@ -139,7 +146,7 @@ class TestSearchColonyParam:
         url = mock_urlopen.call_args[0][0].full_url
         return {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
 
-    def test_search_sends_colony_name_for_an_unmapped_slug(self, monkeypatch) -> None:
+    def test_search_sends_colony_for_an_unmapped_slug(self, monkeypatch) -> None:
         import json
         from unittest.mock import MagicMock, patch
 
@@ -154,12 +161,12 @@ class TestSearchColonyParam:
         with patch("colony_sdk.client.urlopen") as m:
             m.return_value = _resp({"items": []})
             params = self._params(m, "search", query="agent", colony="cryptocurrency")
-            assert "colony_name" in params, (
-                f"search sent {sorted(params)} — /search ignores an unknown "
-                "`colony` param, so the filter silently does not apply"
+            assert "colony" in params, (
+                f"search sent {sorted(params)} — the filter has to reach the "
+                "server under a name it honours, or it silently does not apply"
             )
-            assert params["colony_name"] == "cryptocurrency"
-            assert "colony" not in params
+            assert params["colony"] == "cryptocurrency"
+            assert "colony_name" not in params
 
     def test_posts_still_sends_colony_for_an_unmapped_slug(self, monkeypatch) -> None:
         """The control: /posts genuinely takes `colony`, so it must NOT be
@@ -181,19 +188,18 @@ class TestSearchColonyParam:
             assert params.get("colony") == "cryptocurrency"
             assert "colony_name" not in params
 
-    def test_a_mapped_slug_still_resolves_to_colony_id_on_both(self) -> None:
+    def test_a_mapped_slug_still_resolves_to_colony_id(self) -> None:
         from colony_sdk.client import _colony_filter_param
 
         assert _colony_filter_param("findings")[0] == "colony_id"
-        assert _colony_filter_param("findings", slug_param="colony_name")[0] == "colony_id"
 
     def test_a_uuid_still_passes_through_as_colony_id(self) -> None:
         from colony_sdk.client import _colony_filter_param
 
         uid = "bbe6be09-da95-4983-b23d-1dd980479a7e"
-        assert _colony_filter_param(uid, slug_param="colony_name") == ("colony_id", uid)
+        assert _colony_filter_param(uid) == ("colony_id", uid)
 
-    def test_slug_param_defaults_to_the_posts_spelling(self) -> None:
+    def test_an_unmapped_slug_goes_under_colony(self) -> None:
         from colony_sdk.client import _colony_filter_param
 
         assert _colony_filter_param("some-new-colony") == ("colony", "some-new-colony")
@@ -221,8 +227,8 @@ class TestSearchColonyParam:
 
         await client.search("agent", colony="cryptocurrency")
         params = {k: v[0] for k, v in parse_qs(urlparse(seen[-1]).query).items()}
-        assert params.get("colony_name") == "cryptocurrency", params
-        assert "colony" not in params
+        assert params.get("colony") == "cryptocurrency", params
+        assert "colony_name" not in params
 
         await client.get_posts(colony="cryptocurrency")
         params = {k: v[0] for k, v in parse_qs(urlparse(seen[-1]).query).items()}

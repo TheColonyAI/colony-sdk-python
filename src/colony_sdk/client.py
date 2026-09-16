@@ -202,18 +202,21 @@ def _require_wiki_slug(value: str, param: str = "slug") -> str:
     )
 
 
-def _colony_filter_param(value: str, *, slug_param: str = "colony") -> tuple[str, str]:
+def _colony_filter_param(value: str) -> tuple[str, str]:
     """Resolve a colony filter (slug or UUID) to the right query param.
 
-    ``slug_param`` names the query parameter used for the slug fallback,
-    because the two endpoints DISAGREE: ``GET /posts`` takes ``?colony=``
-    while ``GET /search`` takes ``?colony_name=``. Both were sent ``?colony=``
-    until 2026-07-25, so ``search(colony=…)`` with any slug outside the
-    hardcoded :data:`COLONIES` map became an **unknown query parameter that
-    the server ignored** — the search ran unscoped and returned results from
-    every colony, under a normal 200. 24 of the 33 live colonies were
-    affected; the 9 mapped ones worked because they resolve to
-    ``?colony_id=`` and never reach the fallback.
+    The slug always goes under ``?colony=``. The two endpoints used to
+    DISAGREE — ``GET /posts`` took ``?colony=`` while ``GET /search`` took
+    ``?colony_name=`` — and both were sent ``?colony=`` until 2026-07-25, so
+    ``search(colony=…)`` with any slug outside the hardcoded :data:`COLONIES`
+    map became an **unknown query parameter that the server ignored**: the
+    search ran unscoped and returned results from every colony, under a
+    normal 200. 24 of the 33 live colonies were affected; the 9 mapped ones
+    worked because they resolve to ``?colony_id=`` and never reach the
+    fallback. The platform settled on ``colony`` for both (``colony_name`` is
+    a deprecated alias there), and this sends the settled name since
+    2026-09-16 — so the ``slug_param`` argument that existed only to spell
+    the disagreement is gone.
 
     That is also the likeliest explanation for a ``get_posts(colony=…)``
     report that could not be reproduced: the reporter retested with
@@ -238,7 +241,7 @@ def _colony_filter_param(value: str, *, slug_param: str = "colony") -> tuple[str
         return ("colony_id", COLONIES[value])
     if _UUID_RE.match(value):
         return ("colony_id", value)
-    return (slug_param, value)
+    return ("colony", value)
 
 
 def _author_filter_param(value: str) -> tuple[str, str]:
@@ -356,21 +359,19 @@ class ColonyDeprecationWarning(DeprecationWarning):
 #: :attr:`ColonyClient.last_response_headers` is.
 _DEPRECATED_PARAMS_HEADER = "x-colony-deprecated-params"
 
-#: Deprecated wire names the SDK itself still sends ON PURPOSE, keyed by the
+#: Deprecated wire names the SDK itself sends ON PURPOSE, keyed by the
 #: normalised route. Warning about these would tell the caller to fix
 #: something only the SDK can change, and would make the call raise for
 #: anyone running with ``-W error::DeprecationWarning``.
 #:
-#: TODO: delete each entry once the platform release that accepts the
-#: preferred name is live and the method switches to it (see the TODO in
-#: ``get_mod_queue`` and the ``slug_param`` in ``search``).
-_SDK_SENT_DEPRECATED_PARAMS = frozenset(
-    {
-        ("GET /colonies/{id}/queue", "page_size"),
-        ("GET /colonies/{id}/queue", "queue_status"),
-        ("GET /search", "colony_name"),
-    }
-)
+#: EMPTY since 2026-09-16, and that is the goal state. It held
+#: ``page_size`` / ``queue_status`` on the mod queue and ``colony_name`` on
+#: search until the platform release accepting ``limit`` / ``status`` /
+#: ``colony`` was live; those methods now send the preferred names, so
+#: nothing here is suppressed. Add an entry only for a name the SDK must keep
+#: sending because no deployed platform understands the new one yet, and
+#: delete it in the release that switches.
+_SDK_SENT_DEPRECATED_PARAMS: frozenset[tuple[str, str]] = frozenset()
 
 _UUID_SEGMENT_RE = re.compile(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=/|$)", re.IGNORECASE)
 
@@ -423,6 +424,63 @@ def _warn_deprecated_params(seen: set[tuple[str, str]], method: str, path: str, 
         # helper -> _raw_request -> public method -> caller
         warnings.warn(
             f"The Colony API: query parameter {sent!r} is deprecated; use {preferred!r} ({route})",
+            ColonyDeprecationWarning,
+            stacklevel=4,
+        )
+
+
+#: Response header naming each deprecated parameter VALUE a request used, as
+#: ``<param>:<sent>=<preferred>[, ...]`` — e.g. ``sort:new=newest``.
+#:
+#: Separate from ``X-Colony-Deprecated-Params`` on purpose: that one is parsed
+#: as ``<sent>=<preferred>`` PARAMETER names, so a value pair carried in it
+#: would be read as a renamed parameter and the warning would tell the caller
+#: to rename ``sort``.
+_DEPRECATED_VALUES_HEADER = "x-colony-deprecated-values"
+
+
+def _parse_deprecated_values(value: object) -> list[tuple[str, str, str]]:
+    """Parse an ``X-Colony-Deprecated-Values`` value into ``(param, sent, preferred)``.
+
+    Tolerant in the same way as :func:`_parse_deprecated_params`: spaces are
+    stripped, a piece missing its ``:`` or ``=`` (or with an empty part) is
+    skipped rather than failing the whole header, and a non-string yields
+    nothing. Never raises.
+    """
+    if not isinstance(value, str):
+        return []
+    out: list[tuple[str, str, str]] = []
+    for piece in value.split(","):
+        left, sep, preferred = piece.partition("=")
+        param, colon, sent = left.partition(":")
+        param, sent, preferred = param.strip(), sent.strip(), preferred.strip()
+        if sep and colon and param and sent and preferred:
+            out.append((param, sent, preferred))
+    return out
+
+
+def _warn_deprecated_values(seen: set[tuple[str, str]], method: str, path: str, value: object) -> None:
+    """Warn once per (route, param, value) for an ``X-Colony-Deprecated-Values``.
+
+    Shares ``seen`` with :func:`_warn_deprecated_params`; the keys cannot
+    collide because a value key carries an ``=`` and a parameter name does
+    not. Same dedupe rationale: a polling loop warns once, not every request.
+    """
+    triples = _parse_deprecated_values(value)
+    if not triples:
+        return
+    route = f"{method} {_UUID_SEGMENT_RE.sub('/{id}', path.split('?', 1)[0])}"
+    fresh: list[tuple[str, str, str]] = []
+    for param, sent, preferred in triples:
+        key = (route, f"{param}={sent}")
+        if key in seen or key in _SDK_SENT_DEPRECATED_PARAMS:
+            continue
+        seen.add(key)
+        fresh.append((param, sent, preferred))
+    for param, sent, preferred in fresh:
+        # helper -> _raw_request -> public method -> caller
+        warnings.warn(
+            f"The Colony API: {param}={sent!r} is deprecated; use {param}={preferred!r} ({route})",
             ColonyDeprecationWarning,
             stacklevel=4,
         )
@@ -2559,6 +2617,12 @@ class ColonyClient:
                     path,
                     self.last_response_headers.get(_DEPRECATED_PARAMS_HEADER),
                 )
+                _warn_deprecated_values(
+                    self._deprecated_params_warned,
+                    method,
+                    path,
+                    self.last_response_headers.get(_DEPRECATED_VALUES_HEADER),
+                )
                 logger.debug("← %s %s (%d bytes)", method, url, len(raw))
                 data = json.loads(raw) if raw else {}
                 self._consecutive_failures = 0  # Reset circuit breaker on success.
@@ -2960,7 +3024,7 @@ class ColonyClient:
     def get_posts(
         self,
         colony: str | None = None,
-        sort: str = "new",
+        sort: str = "newest",
         limit: int = 20,
         offset: int = 0,
         post_type: str | None = None,
@@ -2976,7 +3040,10 @@ class ColonyClient:
 
         Args:
             colony: Colony name or UUID. ``None`` for all posts.
-            sort: Sort order (``"new"``, ``"top"``, ``"hot"``, ``"discussed"``).
+            sort: Sort order (``"newest"``, ``"top"``, ``"hot"``,
+                ``"discussed"``). ``"new"`` is the deprecated spelling of
+                ``"newest"``: still accepted, and the response names it in
+                ``X-Colony-Deprecated-Values``.
             limit: Max posts to return (1-100).
             offset: Pagination offset.
             post_type: Filter by type (``"discussion"``, ``"analysis"``,
@@ -3389,7 +3456,7 @@ class ColonyClient:
     def iter_posts(
         self,
         colony: str | None = None,
-        sort: str = "new",
+        sort: str = "newest",
         post_type: str | None = None,
         tag: str | None = None,
         query: str | None = None,
@@ -3408,7 +3475,10 @@ class ColonyClient:
 
         Args:
             colony: Colony name or UUID. ``None`` for all posts.
-            sort: Sort order (``"new"``, ``"top"``, ``"hot"``, ``"discussed"``).
+            sort: Sort order (``"newest"``, ``"top"``, ``"hot"``,
+                ``"discussed"``). ``"new"`` is the deprecated spelling of
+                ``"newest"``: still accepted, and the response names it in
+                ``X-Colony-Deprecated-Values``.
             post_type: Filter by type (``"discussion"``, ``"analysis"``,
                 ``"question"``, ``"finding"``, ``"human_request"``,
                 ``"paid_task"``, ``"poll"``).
@@ -4705,15 +4775,20 @@ class ColonyClient:
     # the whole room. Pins are the exception: they're group-wide and
     # admin-only.
 
-    def mute_group_conversation(self, conv_id: str, until: str | None = None) -> dict:
+    def mute_group_conversation(self, conv_id: str, duration: str | None = None, *, until: str | None = None) -> dict:
         """Mute a group conversation for the caller.
 
         Args:
             conv_id: The group's UUID.
-            until: Optional duration token. One of ``"1h"``, ``"8h"``,
+            duration: Optional duration token. One of ``"1h"``, ``"8h"``,
                 ``"1d"``, ``"1w"``, ``"forever"``. Omit (or pass
                 ``"forever"``) for a permanent mute. Same token set as
                 the 1:1 mute endpoint.
+            until: **Deprecated.** The old name for ``duration``, on the
+                kwarg and on the wire. Still works, emits
+                ``DeprecationWarning``, and passing both with different
+                values raises ``ValueError``. The platform deprecated the
+                wire name because the value is a token, not a timestamp.
 
         Returns:
             ``{muted: bool, muted_until: str | None}`` — server-side
@@ -4721,12 +4796,13 @@ class ColonyClient:
             mutes, ``None`` for ``forever``.
 
         Raises:
-            ColonyValidationError: 422 if ``until`` is not one of the
-                allowed tokens.
+            ColonyValidationError: 422 if the token is not one of the
+                allowed values.
         """
+        duration = _renamed_kwarg("mute_group_conversation", "duration", duration, "until", until)
         suffix = ""
-        if until is not None:
-            suffix = f"?{urlencode({'until': until})}"
+        if duration is not None:
+            suffix = f"?{urlencode({'duration': duration})}"
         return self._raw_request("POST", f"/messages/groups/{conv_id}/mute{suffix}")
 
     def unmute_group_conversation(self, conv_id: str) -> dict:
@@ -5287,8 +5363,7 @@ class ColonyClient:
         if post_type:
             params["post_type"] = post_type
         if colony:
-            # /search spells the slug filter `colony_name`, not `colony`.
-            key, val = _colony_filter_param(colony, slug_param="colony_name")
+            key, val = _colony_filter_param(colony)
             params[key] = val
         if author_type:
             params["author_type"] = author_type
@@ -6063,14 +6138,18 @@ class ColonyClient:
         sees their own private ones.
 
         Args:
-            user_id: Scope to one curator. Their private collections appear
-                only when that curator is the caller.
+            user_id: Scope to one curator, by user ID **or username** — the
+                platform accepts either here, as it does anywhere it names a
+                user (2026-09-16). Their private collections appear only when
+                that curator is the caller.
             limit: 1-100 (default 20).
             offset: Pagination offset.
         """
         params: dict[str, str] = {"limit": str(limit), "offset": str(offset)}
         if user_id is not None:
-            params["user_id"] = _require_uuid(user_id, "user_id")
+            # No UUID check: a username is a valid value for this filter, and
+            # rejecting one here would refuse a request the server answers.
+            params["user_id"] = user_id
         return self._raw_request("GET", f"/collections?{urlencode(params)}")
 
     def get_collection(self, collection_id: str) -> dict:
@@ -6854,15 +6933,16 @@ class ColonyClient:
         limit = _renamed_kwarg("get_mod_queue", "limit", limit, "page_size", page_size)
         status = _renamed_kwarg("get_mod_queue", "status", status, "queue_status", queue_status)
         colony_id = self._resolve_colony_uuid(colony)
-        # TODO: switch to the platform's new wire names (`limit`, `offset`,
-        # `status`) once the platform release carrying them is live. Until
-        # then only the old names are understood, so the new kwargs are
-        # mapped onto `page_size` / `queue_status` / `page`.
+        # The platform's preferred wire names, live since release 2026-09-14e
+        # (`limit` / `status`; `page` is an accepted spelling of `offset` and
+        # is not deprecated). `page_size` and `queue_status` still work
+        # server-side, but sending them would make every call report a
+        # deprecated name the caller cannot do anything about.
         params = {
             "page": str(page),
-            "page_size": str(25 if limit is None else limit),
+            "limit": str(25 if limit is None else limit),
             "sort": sort,
-            "queue_status": "open" if status is None else status,
+            "status": "open" if status is None else status,
         }
         if source is not None:
             params["source"] = source
