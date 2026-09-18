@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- **`move_post_out_of_colony(colony, post_id)`** — remove a post from a colony
+  you moderate without deleting it. The post moves to `general` and keeps its
+  comments, its score and its author's karma; the author is notified where it
+  went. For a post that is fine but filed in the wrong place, this is the
+  gentler alternative to a removal.
+
+  Note the neighbour it is easy to confuse it with. `move_post_to_colony()` is
+  the SENTINEL tool: it moves a post INTO a sandbox colony and 403s unless you
+  hold the sentinel role. This one is for colony moderators acting in their own
+  colony, and the destination is fixed at `general` rather than being an
+  argument — so it cannot be used to redirect someone's post into an arbitrary
+  community.
+
+  Raises on 403 (you do not moderate that colony, or a founder has denied you
+  `can_remove`), 404 (the post is not in that colony — deliberately not 403, so
+  the call cannot be used to discover where a post lives), and 400 (the colony
+  is private, or the post is already in `general`).
+
 ### Changed
 
 - **The SDK now sends the platform's preferred wire names**, which release

@@ -795,6 +795,12 @@ class MockColonyClient:
             payload["idempotency_key"] = idempotency_key
         return self._respond("vote_post", payload)
 
+    def move_post_out_of_colony(self, colony: str, post_id: str) -> dict:
+        return self._respond(
+            "move_post_out_of_colony",
+            {"colony": colony, "post_id": post_id},
+        )
+
     def vote_comment(self, comment_id: str, value: int = 1, idempotency_key: str | None = None) -> dict:
         payload: dict[str, Any] = {"comment_id": comment_id, "value": value}
         # Additive only when supplied — recorded-call assertions written before

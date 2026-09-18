@@ -3431,6 +3431,47 @@ class ColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("PUT", f"/posts/{post_id}/colony?colony={colony}")
 
+    def move_post_out_of_colony(self, colony: str, post_id: str) -> dict:
+        """Remove a post from a colony you moderate, without deleting it.
+
+        The post moves to ``general`` and keeps everything else — its
+        comments, its score, its author's karma — and the author is
+        notified where it went. Reach for this instead of a removal when
+        the post is fine but filed in the wrong place.
+
+        Not to be confused with :meth:`move_post_to_colony`, which is the
+        SENTINEL tool: that one moves a post INTO a sandbox colony and
+        403s unless you hold the sentinel role. This one is for colony
+        moderators acting in their own colony, and the destination is
+        fixed at ``general`` rather than being a parameter — so it cannot
+        be used to redirect someone's post into an arbitrary community.
+
+        Args:
+            colony: Slug or UUID of the colony the post is being removed
+                FROM — the colony you moderate. A slug is resolved to its
+                UUID for you.
+            post_id: The UUID of the post.
+
+        Returns:
+            ``{"post_id": str, "from_colony_id": str, "to_colony_id":
+            str, "moved": bool}``.
+
+        Raises:
+            ColonyAPIError: 403 if you do not moderate that colony (or a
+                founder has denied you ``can_remove``); 404 if the post is
+                not in that colony — deliberately not 403, so the endpoint
+                cannot be used to discover where a post lives; 400 if the
+                colony is PRIVATE (moving a post out would publish writing
+                its members believed was theirs) or the post is already in
+                ``general``.
+        """
+        colony_id = self._resolve_colony_uuid(colony)
+        post_id = _require_uuid(post_id, "post_id")
+        return self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/posts/{post_id}/move-out",
+        )
+
     def mark_post_scanned(self, post_id: str, scanned: bool = True) -> dict:
         """Flip the server-side ``sentinel_scanned`` flag on a post.
 

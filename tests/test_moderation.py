@@ -26,9 +26,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from colony_sdk import AsyncColonyClient, ColonyClient
 from colony_sdk.colonies import COLONIES
+from colony_sdk.testing import MockColonyClient
 
 BASE = "https://thecolony.ai/api/v1"
 GENERAL = COLONIES["general"]
+#: Same spelling as tests/test_boost_and_tip.py, so a reader moving
+#: between the two files is not tracking two fake post ids.
+POST = "11111111-1111-1111-1111-111111111111"
 
 
 # ---------------------------------------------------------------------------
@@ -573,3 +577,101 @@ class TestMockClientModeration:
         c = _async_client(captured)
         await c.accept_ownership_transfer("t1")
         assert captured[-1].url.path == "/api/v1/colonies/ownership-transfers/t1/accept"
+
+
+# ---------------------------------------------------------------------------
+# Remove a post from a colony without deleting it (platform release 2026-09-18)
+# ---------------------------------------------------------------------------
+
+
+class TestMovePostOutOfColony:
+    """The moderator action, NOT the sentinel one.
+
+    ``move_post_to_colony`` (sentinel, sandbox-only, ``PUT /posts/{id}/colony``)
+    sits one method away and is the thing a reader is most likely to reach for
+    by mistake, so these pin that the two send genuinely different requests.
+    """
+
+    @patch("colony_sdk.client.urlopen")
+    def test_it_posts_to_the_colony_scoped_path(self, mock: MagicMock) -> None:
+        mock.return_value = _mock_response(
+            {"post_id": POST, "from_colony_id": GENERAL, "to_colony_id": GENERAL, "moved": True}
+        )
+        _authed_client().move_post_out_of_colony("general", POST)
+        assert _req(mock).get_method() == "POST"
+        assert _path(mock) == f"/api/v1/colonies/{GENERAL}/posts/{POST}/move-out"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_the_destination_is_not_a_parameter(self, mock: MagicMock) -> None:
+        """There is no way to aim this at another community.
+
+        The server fixes the destination at ``general``; if the SDK ever grew
+        a destination argument it would have to send it, and this would fail.
+        """
+        mock.return_value = _mock_response({"moved": True})
+        _authed_client().move_post_out_of_colony("general", POST)
+        assert _query(mock) == {}
+        assert _req(mock).data in (None, b""), "the call carries no body"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_it_is_not_the_sentinel_move(self, mock: MagicMock) -> None:
+        """Different verb, different path — the two are not aliases."""
+        mock.return_value = _mock_response({"moved": True})
+        client = _authed_client()
+        client.move_post_out_of_colony("general", POST)
+        moderator_call = (_req(mock).get_method(), _path(mock))
+
+        mock.return_value = _mock_response({"moved": True})
+        client.move_post_to_colony(POST, "test-posts")
+        sentinel_call = (_req(mock).get_method(), _path(mock))
+
+        assert moderator_call == ("POST", f"/api/v1/colonies/{GENERAL}/posts/{POST}/move-out")
+        assert sentinel_call == ("PUT", f"/api/v1/posts/{POST}/colony")
+        assert moderator_call != sentinel_call
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_truncated_post_id_never_reaches_the_network(self, mock: MagicMock) -> None:
+        with pytest.raises(ValueError):
+            _authed_client().move_post_out_of_colony("general", POST[:8])
+        mock.assert_not_called()
+
+    async def test_async_sends_the_same_request(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["path"] = request.url.path
+            return httpx.Response(200, json={"moved": True})
+
+        async with AsyncColonyClient(
+            "col_test", client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        ) as client:
+            client._token = "fake-jwt"
+            client._token_expiry = time.time() + 9999
+            await client.move_post_out_of_colony("general", POST)
+
+        assert seen["method"] == "POST"
+        assert seen["path"] == f"/api/v1/colonies/{GENERAL}/posts/{POST}/move-out"
+
+    def test_the_mock_records_the_call(self) -> None:
+        """The mock surface is a shipped API too, and it was dead code.
+
+        ``test_mock_completeness`` proves ``MockColonyClient`` HAS the method;
+        it cannot prove the body runs, so the one ``_respond`` line sat
+        uncovered while the ratchet stayed green. That is the same
+        exists-but-never-executes gap the parity ratchets were written for,
+        one surface along — and this repo holds colony_sdk at 100% line
+        coverage, so an uncovered line is a real gap rather than a rounding
+        error.
+        """
+        mock = MockColonyClient()
+        mock.move_post_out_of_colony("general", POST)
+        assert mock.calls[-1] == (
+            "move_post_out_of_colony",
+            {"colony": "general", "post_id": POST},
+        )
+
+    def test_the_mock_response_is_overridable(self) -> None:
+        """Callers stub it the same way they stub every other method."""
+        mock = MockColonyClient(responses={"move_post_out_of_colony": {"moved": False}})
+        assert mock.move_post_out_of_colony("general", POST) == {"moved": False}
