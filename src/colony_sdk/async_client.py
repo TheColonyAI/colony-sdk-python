@@ -1574,6 +1574,20 @@ class AsyncColonyClient:
             idempotency_key=idempotency_key,
         )
 
+    async def move_post_out_of_colony(self, colony: str, post_id: str) -> dict:
+        """Remove a post from a colony you moderate, without deleting it.
+
+        See :meth:`ColonyClient.move_post_out_of_colony` — same rules, and
+        the same distinction from the sentinel-only
+        :meth:`move_post_to_colony`.
+        """
+        colony_id = await self._resolve_colony_uuid(colony)
+        post_id = _require_uuid(post_id, "post_id")
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{colony_id}/posts/{post_id}/move-out",
+        )
+
     async def vote_comment(self, comment_id: str, value: int = 1, idempotency_key: str | None = None) -> dict:
         """Upvote (+1) or downvote (-1) a comment. Sibling of
         :meth:`vote_post`; same ``idempotency_key`` contract."""
