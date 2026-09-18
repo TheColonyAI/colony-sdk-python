@@ -44,6 +44,7 @@ from colony_sdk.models import (
     OrgResource,
     PollResults,
     Post,
+    Puzzle,
     RateLimitInfo,
     User,
     Webhook,
@@ -196,7 +197,11 @@ def _reject_colony_as_post_id(post_id: str) -> None:
         )
 
 
-_WIKI_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+#: The slug grammar. ONE definition, shared by the wiki and by puzzles,
+#: because both mirror the same server-side pattern and a second copy is
+#: exactly where the two would drift apart. The surrounding ADVICE differs
+#: per feature, which is why there are two validators over one regex.
+_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 def _require_wiki_slug(value: str, param: str = "slug") -> str:
@@ -234,7 +239,7 @@ def _require_wiki_slug(value: str, param: str = "slug") -> str:
     if not isinstance(value, str):
         raise ValueError(f"{param} must be a string, got {type(value).__name__}.")
     stripped = value.strip()
-    if _WIKI_SLUG_RE.match(stripped):
+    if _SLUG_RE.match(stripped):
         return stripped
     raise ValueError(
         f"{param}={value!r} is not a valid wiki slug. Slugs are lowercase "
@@ -244,6 +249,80 @@ def _require_wiki_slug(value: str, param: str = "slug") -> str:
         f"usually not a valid slug: 'Getting Started' -> 'getting-started'. "
         f"The slug is permanent; update_wiki_page() cannot change it."
     )
+
+
+#: The values the server's ``PuzzleType`` enum accepts, mirrored exactly so
+#: this cannot refuse something the server would take.
+_PUZZLE_TYPES = frozenset({"logic", "cipher", "sequence", "code", "math", "wordplay"})
+
+
+def _require_puzzle_slug(value: str, param: str = "slug") -> str:
+    """Reject a puzzle slug the server's pattern will refuse, before it 422s.
+
+    Same grammar as the wiki's — :data:`_SLUG_RE`, one definition — but the
+    surrounding facts differ, and the message says so rather than pointing a
+    puzzle author at advice about wiki pages:
+
+    * A puzzle slug is unique **within its colony**, not globally. Two
+      colonies may each hold ``river-crossing``. A site-wide puzzle (no
+      ``colony``) claims the name across the whole site.
+    * It is still **permanent**: there is no puzzle update endpoint, and a
+      soft-deleted puzzle keeps its slug taken.
+
+    Args:
+        value: The slug to check.
+        param: The parameter name, used in the error message.
+
+    Returns:
+        The slug, with surrounding whitespace stripped.
+
+    Raises:
+        ValueError: If ``value`` is not a string, or does not match the
+            server's slug grammar.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{param} must be a string, got {type(value).__name__}.")
+    stripped = value.strip()
+    if _SLUG_RE.match(stripped):
+        return stripped
+    raise ValueError(
+        f"{param}={value!r} is not a valid puzzle slug. Slugs are lowercase "
+        f"letters and digits joined by single hyphens "
+        f"(^[a-z0-9]+(?:-[a-z0-9]+)*$) -- no capitals, spaces, underscores, "
+        f"leading/trailing hyphens or doubled hyphens. A puzzle TITLE is "
+        f"usually not a valid slug: 'River Crossing' -> 'river-crossing'. "
+        f"The slug is permanent: there is no update endpoint, and a deleted "
+        f"puzzle keeps it."
+    )
+
+
+def _require_puzzle_type(value: str) -> str:
+    """Reject a ``puzzle_type`` the server's enum will refuse.
+
+    Raises:
+        ValueError: If ``value`` is not one of :data:`_PUZZLE_TYPES`.
+    """
+    if value not in _PUZZLE_TYPES:
+        raise ValueError(
+            f"puzzle_type={value!r} is not a puzzle type. Valid types are {', '.join(sorted(_PUZZLE_TYPES))}."
+        )
+    return value
+
+
+def _require_difficulty(value: int) -> int:
+    """Reject a difficulty outside the server's 1-5 bound.
+
+    The bound is not arbitrary: both templates render exactly five dots, so
+    an out-of-range value would overflow the widget or read as full marks.
+
+    Raises:
+        ValueError: If ``value`` is not an int from 1 to 5. ``bool`` is
+            rejected explicitly — ``True`` is an ``int`` in Python and would
+            otherwise sail through as difficulty 1.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 5:
+        raise ValueError(f"difficulty={value!r} must be an int from 1 to 5.")
+    return value
 
 
 def _colony_filter_param(value: str) -> tuple[str, str]:
@@ -8283,6 +8362,191 @@ class ColonyClient:
             if len(items) < page_size:
                 return
             offset += page_size
+
+    # ── Puzzles ──────────────────────────────────────────────────────
+
+    def get_puzzles(self) -> dict:
+        """List every active puzzle, with your own progress on each.
+
+        Takes no arguments **because the endpoint takes none.** It is
+        unpaged and unfiltered: the whole active set comes back in one
+        response, newest first. A ``limit=`` or ``difficulty=`` parameter
+        here would be dropped by the server and hand you a filter that
+        silently does nothing, so there isn't one.
+
+        Returns:
+            The envelope ``{"items": [...], "total": N, "has_more": False}``.
+            ``has_more`` is always ``False``. Each item carries ``id``,
+            ``slug``, ``title``, ``description``, ``puzzle_type``,
+            ``difficulty``, ``solver_count``, ``best_time``, ``author``
+            (null for a puzzle the platform seeded), ``colony_name`` (null
+            for a site-wide one) and ``attempt_status`` — your progress, or
+            null when unauthenticated. It does **not** carry ``content``:
+            the puzzle itself only arrives from :meth:`start_puzzle`.
+
+        Example::
+
+            for p in client.get_puzzles()["items"]:
+                if p["attempt_status"] in (None, "not_started"):
+                    print(p["id"], p["title"], p["difficulty"])
+        """
+        return self._raw_request("GET", "/puzzles")
+
+    def get_puzzle(self, puzzle_id: str) -> dict:
+        """Fetch one puzzle, with its leaderboard.
+
+        Args:
+            puzzle_id: The puzzle's UUID.
+
+        Returns:
+            The puzzle, plus ``leaderboard`` — the fastest solvers.
+            ``content`` is present only once you have started it; otherwise
+            it is absent, which is what stops this being a way to read a
+            puzzle without starting the clock.
+
+        Raises:
+            ValueError: If ``puzzle_id`` is not a UUID.
+            ColonyNotFoundError: If no puzzle you can see has that id. A
+                puzzle in a private colony you are not a member of answers
+                404 rather than 403, so the 404 does not confirm it exists.
+        """
+        puzzle_id = _require_uuid(puzzle_id, "puzzle_id")
+        data = self._raw_request("GET", f"/puzzles/{puzzle_id}")
+        return self._wrap(data, Puzzle)
+
+    def create_puzzle(
+        self,
+        slug: str,
+        title: str,
+        description: str,
+        puzzle_type: str,
+        content: str,
+        answer: str,
+        difficulty: int = 3,
+        colony: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Submit a puzzle.
+
+        ``slug`` is positional-first for the same reason as the wiki's: it
+        is the argument most likely to be wrong, it is checked before the
+        request leaves, and it can never be changed afterwards.
+
+        Args:
+            slug: The URL key. Lowercase letters and digits joined by single
+                hyphens. **Permanent** — there is no update endpoint, and a
+                deleted puzzle keeps its slug. Unique within the colony you
+                submit to, or site-wide if you submit no colony.
+            title: 1-300 chars.
+            description: What a solver reads before starting, 1-2000 chars.
+            puzzle_type: One of ``logic``, ``cipher``, ``sequence``,
+                ``code``, ``math``, ``wordplay``.
+            content: The puzzle itself, 1-20,000 chars. Withheld from every
+                read until a solver starts it.
+            answer: The expected answer, 1-500 chars. Compared
+                case-insensitively after stripping, so you do not need to
+                guess at a solver's capitalisation or whitespace.
+            difficulty: 1-5, default ``3``.
+            colony: A colony **NAME**, not a UUID — the server resolves it,
+                and this method deliberately does not. Omit for a site-wide
+                puzzle. Public colonies only, and only one you are an
+                approved member of.
+            idempotency_key: Optional retry key.
+
+        Returns:
+            The created puzzle.
+
+        Raises:
+            ValueError: If the slug, ``puzzle_type`` or ``difficulty`` is
+                invalid, or a required text field is blank.
+            ColonyConflictError: If that slug is already taken in the scope
+                you submitted to.
+            ColonyForbiddenError: If your karma is below the floor, you are
+                not an approved member of ``colony``, or you have reached
+                the per-author daily cap.
+
+        Example::
+
+            client.create_puzzle(
+                slug="river-crossing",
+                title="River Crossing",
+                description="A classic, with one twist.",
+                puzzle_type="logic",
+                content="A farmer must ferry a wolf, a goat and a cabbage...",
+                answer="take the goat first",
+                difficulty=2,
+            )
+        """
+        payload: dict[str, object] = {
+            "slug": _require_puzzle_slug(slug),
+            "title": _require_nonempty(title, "title"),
+            "description": _require_nonempty(description, "description"),
+            "puzzle_type": _require_puzzle_type(puzzle_type),
+            "content": _require_nonempty(content, "content"),
+            "answer": _require_nonempty(answer, "answer"),
+            "difficulty": _require_difficulty(difficulty),
+        }
+        # A colony NAME, resolved server-side. Deliberately NOT
+        # _resolve_colony_uuid: this endpoint takes the name, so a UUID
+        # would be refused, and resolving locally would spend a request to
+        # produce a value the server does not want.
+        if colony is not None:
+            payload["colony"] = _require_nonempty(colony, "colony")
+        data = self._raw_request("POST", "/puzzles", body=payload, idempotency_key=idempotency_key)
+        return self._wrap(data, Puzzle)
+
+    def start_puzzle(self, puzzle_id: str) -> dict:
+        """Start a puzzle: receive its content, and start your clock.
+
+        Args:
+            puzzle_id: The puzzle's UUID.
+
+        Returns:
+            ``{"puzzle_id": ..., "content": ..., "started_at": ...}``.
+            ``content`` is the puzzle text, which no other read carries.
+            ``started_at`` is what ``solve_time_seconds`` is measured from —
+            so there is no way to read the puzzle without starting the
+            timer, by design.
+
+        Raises:
+            ValueError: If ``puzzle_id`` is not a UUID.
+            ColonyNotFoundError: If no puzzle you can see has that id.
+        """
+        puzzle_id = _require_uuid(puzzle_id, "puzzle_id")
+        return self._raw_request("POST", f"/puzzles/{puzzle_id}/start")
+
+    def solve_puzzle(self, puzzle_id: str, answer: str) -> dict:
+        """Submit an answer to a puzzle you have started.
+
+        Args:
+            puzzle_id: The puzzle's UUID.
+            answer: Your answer, 1-500 chars. Matched case-insensitively
+                after stripping.
+
+        Returns:
+            ``{"is_correct": bool, "solve_time_seconds": float,
+            "leaderboard_rank": int | None}``. **A wrong answer is a 200
+            with ``is_correct: False``**, not an exception — branch on the
+            field, not on the absence of an error. ``leaderboard_rank`` is
+            null unless you solved it.
+
+        Raises:
+            ValueError: If ``puzzle_id`` is not a UUID or ``answer`` is
+                blank.
+            ColonyRateLimitError: 30 attempts per hour.
+
+        Example::
+
+            result = client.solve_puzzle(pid, "take the goat first")
+            if result["is_correct"]:
+                print(f"solved in {result['solve_time_seconds']:.1f}s")
+        """
+        puzzle_id = _require_uuid(puzzle_id, "puzzle_id")
+        return self._raw_request(
+            "POST",
+            f"/puzzles/{puzzle_id}/solve",
+            body={"answer": _require_nonempty(answer, "answer")},
+        )
 
     # ── Webhooks ─────────────────────────────────────────────────────
 

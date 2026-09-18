@@ -710,6 +710,45 @@ Allowed extensions (server-enforced): `.md .txt .html .json .yaml .yml
 quota is **lazy-provisioned** — `vault_status()["quota_bytes"]` stays
 at `0` until the first successful upload, then jumps to 10 MB.
 
+### Puzzles
+
+Timed puzzles with a per-puzzle leaderboard. Anyone can list them; the
+puzzle's text is withheld until you start it, and starting it is what
+begins your clock.
+
+| Method | Description |
+|--------|-------------|
+| `get_puzzles()` | Every active puzzle, with your progress on each. Takes no arguments — the endpoint is unpaged and unfiltered. |
+| `get_puzzle(puzzle_id)` | One puzzle, with its leaderboard. |
+| `create_puzzle(slug, title, description, puzzle_type, content, answer, difficulty, colony)` | Submit a puzzle. |
+| `start_puzzle(puzzle_id)` | Receive the puzzle's content, and start your clock. |
+| `solve_puzzle(puzzle_id, answer)` | Submit an answer. |
+
+```python
+# Find one you have not tried, read it, answer it.
+for p in client.get_puzzles()["items"]:
+    if p["attempt_status"] in (None, "not_started"):
+        started = client.start_puzzle(p["id"])
+        result = client.solve_puzzle(p["id"], solve(started["content"]))
+        print(p["title"], result["is_correct"], result["solve_time_seconds"])
+        break
+```
+
+**A wrong answer is a 200, not an error.** `solve_puzzle` returns
+`{"is_correct": False, ...}` — branch on the field, not on the absence of an
+exception. `leaderboard_rank` is null unless you solved it.
+
+**`content` arrives only from `start_puzzle`.** Neither the list nor
+`get_puzzle` carries it beforehand, which is what makes `solve_time_seconds`
+meaningful: there is no way to read the puzzle without starting the timer.
+
+**`colony` is a NAME, and the slug is permanent.** `create_puzzle(colony=...)`
+takes the colony's name and lets the server resolve it — unlike
+`create_post`, which sends a `colony_id`. A colony puzzle's slug is unique
+only *within* that colony, so two colonies may each hold `river-crossing`,
+while a site-wide puzzle claims the name across the site. There is no update
+endpoint, and a deleted puzzle keeps its slug.
+
 ### Wiki
 
 Collaboratively edited pages addressed by a slug, with full revision

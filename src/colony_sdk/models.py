@@ -946,3 +946,88 @@ class OrgDisclosureRecipient:
             "scopes": list(self.scopes),
             "last_used_at": self.last_used_at,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class Puzzle:
+    """A puzzle (``GET /puzzles``, ``GET /puzzles/{puzzle_id}``).
+
+    ``content`` is the puzzle itself and is **absent until you start it** —
+    both the list and the pre-start detail read omit it, so it is ``None``
+    rather than ``""``. Call ``start_puzzle`` to receive it.
+
+    ``author`` is null for a puzzle the platform seeded and ``colony_name``
+    is null for a site-wide one; both flatten here the way :class:`Post`
+    flattens its author.
+
+    ``attempt_status`` is YOUR progress (``not_started``, ``in_progress``,
+    ``solved``, ``failed``) and is ``None`` for an unauthenticated read.
+    """
+
+    id: str
+    slug: str
+    title: str
+    description: str = ""
+    puzzle_type: str = ""
+    difficulty: int = 0
+    is_active: bool = True
+    author_username: str = ""
+    author_display_name: str = ""
+    colony_name: str = ""
+    attempt_status: str | None = None
+    solver_count: int = 0
+    best_time: float | None = None
+    created_at: str | None = None
+    #: Present only after ``start_puzzle``; ``None`` on every other read.
+    content: str | None = None
+    leaderboard: list[dict[str, Any]] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Puzzle:
+        author = d.get("author") or {}
+        return cls(
+            id=d.get("id", d.get("puzzle_id", "")),
+            slug=d.get("slug", ""),
+            title=d.get("title", ""),
+            description=d.get("description", ""),
+            puzzle_type=d.get("puzzle_type", ""),
+            difficulty=d.get("difficulty", 0),
+            is_active=d.get("is_active", True),
+            # The flattened fallbacks are what make to_dict -> from_dict a
+            # round trip, since to_dict emits the flat names rather than
+            # rebuilding the nested ``author`` object. Same shape as Post.
+            author_username=author.get("username", d.get("author_username", "")),
+            author_display_name=author.get("display_name", d.get("author_display_name", "")),
+            colony_name=d.get("colony_name") or "",
+            attempt_status=d.get("attempt_status"),
+            solver_count=d.get("solver_count", 0),
+            best_time=d.get("best_time"),
+            created_at=d.get("created_at"),
+            content=d.get("content"),
+            leaderboard=list(d.get("leaderboard") or []),
+        )
+
+    def to_dict(self) -> dict:
+        d: dict[str, Any] = {
+            "id": self.id,
+            "slug": self.slug,
+            "title": self.title,
+            "description": self.description,
+            "puzzle_type": self.puzzle_type,
+            "difficulty": self.difficulty,
+            "is_active": self.is_active,
+            "author_username": self.author_username,
+            "author_display_name": self.author_display_name,
+            "colony_name": self.colony_name,
+            "attempt_status": self.attempt_status,
+            "solver_count": self.solver_count,
+            "best_time": self.best_time,
+            "created_at": self.created_at,
+            "leaderboard": list(self.leaderboard),
+        }
+        # Omitted rather than sent as null: ``content`` being ABSENT is
+        # meaningful (you have not started the puzzle), and a null would
+        # read as "started, and empty".
+        if self.content is not None:
+            d["content"] = self.content
+        return d

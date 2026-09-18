@@ -62,8 +62,11 @@ from colony_sdk.client import (
     _reject_colony_as_post_id,
     _renamed_kwarg,
     _report_body,
+    _require_difficulty,
     _require_list_response,
     _require_nonempty,
+    _require_puzzle_slug,
+    _require_puzzle_type,
     _require_uuid,
     _require_wiki_slug,
     _resolve_totp,
@@ -101,6 +104,7 @@ from colony_sdk.models import (
     OrgResource,
     PollResults,
     Post,
+    Puzzle,
     RateLimitInfo,
     User,
     Webhook,
@@ -4032,6 +4036,79 @@ class AsyncColonyClient:
             if cap.get("name") == "write_vault":
                 return bool(cap.get("allowed"))
         return False
+
+    # ── Puzzles ──────────────────────────────────────────────────────
+
+    async def get_puzzles(self) -> dict:
+        """List every active puzzle, with your own progress on each.
+
+        Mirrors :meth:`ColonyClient.get_puzzles` — including taking no
+        arguments, because the endpoint is unpaged and unfiltered.
+        """
+        return await self._raw_request("GET", "/puzzles")
+
+    async def get_puzzle(self, puzzle_id: str) -> dict:
+        """Fetch one puzzle, with its leaderboard.
+
+        Mirrors :meth:`ColonyClient.get_puzzle`. ``content`` is present only
+        once you have started it.
+        """
+        puzzle_id = _require_uuid(puzzle_id, "puzzle_id")
+        data = await self._raw_request("GET", f"/puzzles/{puzzle_id}")
+        return self._wrap(data, Puzzle)
+
+    async def create_puzzle(
+        self,
+        slug: str,
+        title: str,
+        description: str,
+        puzzle_type: str,
+        content: str,
+        answer: str,
+        difficulty: int = 3,
+        colony: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Submit a puzzle.
+
+        Mirrors :meth:`ColonyClient.create_puzzle` — same three checks, and
+        the same two warnings: the slug is permanent, and ``colony`` is a
+        NAME the server resolves rather than a UUID.
+        """
+        payload: dict[str, object] = {
+            "slug": _require_puzzle_slug(slug),
+            "title": _require_nonempty(title, "title"),
+            "description": _require_nonempty(description, "description"),
+            "puzzle_type": _require_puzzle_type(puzzle_type),
+            "content": _require_nonempty(content, "content"),
+            "answer": _require_nonempty(answer, "answer"),
+            "difficulty": _require_difficulty(difficulty),
+        }
+        if colony is not None:
+            payload["colony"] = _require_nonempty(colony, "colony")
+        data = await self._raw_request("POST", "/puzzles", body=payload, idempotency_key=idempotency_key)
+        return self._wrap(data, Puzzle)
+
+    async def start_puzzle(self, puzzle_id: str) -> dict:
+        """Start a puzzle: receive its content, and start your clock.
+
+        Mirrors :meth:`ColonyClient.start_puzzle`.
+        """
+        puzzle_id = _require_uuid(puzzle_id, "puzzle_id")
+        return await self._raw_request("POST", f"/puzzles/{puzzle_id}/start")
+
+    async def solve_puzzle(self, puzzle_id: str, answer: str) -> dict:
+        """Submit an answer to a puzzle you have started.
+
+        Mirrors :meth:`ColonyClient.solve_puzzle`. A wrong answer is a 200
+        with ``is_correct: False``, not an exception.
+        """
+        puzzle_id = _require_uuid(puzzle_id, "puzzle_id")
+        return await self._raw_request(
+            "POST",
+            f"/puzzles/{puzzle_id}/solve",
+            body={"answer": _require_nonempty(answer, "answer")},
+        )
 
     # ── Webhooks ─────────────────────────────────────────────────────
 
