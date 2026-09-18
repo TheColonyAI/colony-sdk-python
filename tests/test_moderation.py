@@ -597,7 +597,7 @@ class TestMovePostOutOfColony:
         mock.return_value = _mock_response(
             {"post_id": POST, "from_colony_id": GENERAL, "to_colony_id": GENERAL, "moved": True}
         )
-        _authed_client().move_post_out_of_colony("general", POST)
+        _authed_client().move_post_out_of_colony(POST, "general")
         assert _req(mock).get_method() == "POST"
         assert _path(mock) == f"/api/v1/colonies/{GENERAL}/posts/{POST}/move-out"
 
@@ -609,7 +609,7 @@ class TestMovePostOutOfColony:
         a destination argument it would have to send it, and this would fail.
         """
         mock.return_value = _mock_response({"moved": True})
-        _authed_client().move_post_out_of_colony("general", POST)
+        _authed_client().move_post_out_of_colony(POST, "general")
         assert _query(mock) == {}
         assert _req(mock).data in (None, b""), "the call carries no body"
 
@@ -618,7 +618,7 @@ class TestMovePostOutOfColony:
         """Different verb, different path — the two are not aliases."""
         mock.return_value = _mock_response({"moved": True})
         client = _authed_client()
-        client.move_post_out_of_colony("general", POST)
+        client.move_post_out_of_colony(POST, "general")
         moderator_call = (_req(mock).get_method(), _path(mock))
 
         mock.return_value = _mock_response({"moved": True})
@@ -632,8 +632,84 @@ class TestMovePostOutOfColony:
     @patch("colony_sdk.client.urlopen")
     def test_a_truncated_post_id_never_reaches_the_network(self, mock: MagicMock) -> None:
         with pytest.raises(ValueError):
-            _authed_client().move_post_out_of_colony("general", POST[:8])
+            _authed_client().move_post_out_of_colony(POST[:8], "general")
         mock.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_the_argument_order_matches_the_sentinel_neighbour(self, mock: MagicMock) -> None:
+        """(post_id, colony) on BOTH, so moving between them cannot swap them.
+
+        This is the whole reason the signature does not mirror the API path,
+        which reads /colonies/{colony}/posts/{post}. The two methods sit one
+        line apart and are the pair most likely to be confused, so they read
+        the same way round; the path shape is an implementation detail.
+        """
+        import inspect
+
+        from colony_sdk import AsyncColonyClient, ColonyClient
+
+        def params(fn: object) -> list[str]:
+            return [p for p in inspect.signature(fn).parameters if p != "self"]  # type: ignore[arg-type]
+
+        assert params(ColonyClient.move_post_out_of_colony) == ["post_id", "colony"]
+        assert params(ColonyClient.move_post_to_colony) == ["post_id", "colony"]
+        assert params(AsyncColonyClient.move_post_out_of_colony) == ["post_id", "colony"]
+        assert params(MockColonyClient.move_post_out_of_colony) == ["post_id", "colony"]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_reversed_arguments_never_reach_the_network(self, mock: MagicMock) -> None:
+        """The swap fails locally instead of being answered.
+
+        Without this check the reversed call is well-formed all the way to the
+        wire — `_resolve_colony_uuid` hands back a UUID-shaped value unchanged
+        and `_require_uuid` passes non-hex strings through for fixtures — so it
+        reaches the server and is answered 404. On THIS endpoint a 404 means
+        "the post is not in that colony", chosen over 403 so it cannot be used
+        to discover where a post lives. The swap would therefore come back as a
+        specific, believable claim about the post's location.
+        """
+        with pytest.raises(ValueError, match="names a colony"):
+            _authed_client().move_post_out_of_colony("general", POST)
+        mock.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_colony_uuid_as_post_id_is_also_caught(self, mock: MagicMock) -> None:
+        """The swap is just as likely to carry a resolved UUID as a slug."""
+        with pytest.raises(ValueError, match="names a colony"):
+            _authed_client().move_post_out_of_colony(GENERAL, "general")
+        mock.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_the_check_does_not_reject_opaque_fixture_ids(self, mock: MagicMock) -> None:
+        """No false positives: an opaque id still passes through as before.
+
+        `_require_uuid` deliberately allows ids like "p1" so suites running
+        against a mocked transport keep working. The reversed-argument check
+        must not quietly take that away.
+        """
+        mock.return_value = _mock_response({"moved": True})
+        _authed_client().move_post_out_of_colony("my-fixture", "general")
+        assert _path(mock) == f"/api/v1/colonies/{GENERAL}/posts/my-fixture/move-out"
+
+    def test_the_check_is_documented_as_incomplete(self) -> None:
+        """A custom colony slug is NOT caught, and the docstring must say so.
+
+        A colony reference is a known slug, a UUID, or an unknown slug. Only
+        the first is decidable locally — a colony UUID is indistinguishable
+        from a post UUID, and an unknown slug from an opaque fixture id. This
+        pins the honesty of the docstring rather than the behaviour, because
+        the gap is the kind a later reader would otherwise assume closed.
+        """
+        from colony_sdk.client import _reject_colony_as_post_id
+
+        # A custom colony slug passes straight through — by construction.
+        _reject_colony_as_post_id("some-custom-colony")
+
+        # Normalised: the docstring is wrapped, so phrases span line breaks.
+        doc = " ".join((_reject_colony_as_post_id.__doc__ or "").split())
+        assert "deliberately incomplete" in doc
+        assert "custom colony" in doc
+        assert "no false positives" in doc
 
     async def test_async_sends_the_same_request(self) -> None:
         seen: dict = {}
@@ -648,7 +724,7 @@ class TestMovePostOutOfColony:
         ) as client:
             client._token = "fake-jwt"
             client._token_expiry = time.time() + 9999
-            await client.move_post_out_of_colony("general", POST)
+            await client.move_post_out_of_colony(POST, "general")
 
         assert seen["method"] == "POST"
         assert seen["path"] == f"/api/v1/colonies/{GENERAL}/posts/{POST}/move-out"
@@ -665,13 +741,13 @@ class TestMovePostOutOfColony:
         error.
         """
         mock = MockColonyClient()
-        mock.move_post_out_of_colony("general", POST)
+        mock.move_post_out_of_colony(POST, "general")
         assert mock.calls[-1] == (
             "move_post_out_of_colony",
-            {"colony": "general", "post_id": POST},
+            {"post_id": POST, "colony": "general"},
         )
 
     def test_the_mock_response_is_overridable(self) -> None:
         """Callers stub it the same way they stub every other method."""
         mock = MockColonyClient(responses={"move_post_out_of_colony": {"moved": False}})
-        assert mock.move_post_out_of_colony("general", POST) == {"moved": False}
+        assert mock.move_post_out_of_colony(POST, "general") == {"moved": False}

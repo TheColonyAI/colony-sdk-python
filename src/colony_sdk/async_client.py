@@ -59,6 +59,7 @@ from colony_sdk.client import (
     _oauth_root,
     _path_segment,
     _raise_for_oauth_error,
+    _reject_colony_as_post_id,
     _renamed_kwarg,
     _report_body,
     _require_list_response,
@@ -1574,15 +1575,16 @@ class AsyncColonyClient:
             idempotency_key=idempotency_key,
         )
 
-    async def move_post_out_of_colony(self, colony: str, post_id: str) -> dict:
+    async def move_post_out_of_colony(self, post_id: str, colony: str) -> dict:
         """Remove a post from a colony you moderate, without deleting it.
 
-        See :meth:`ColonyClient.move_post_out_of_colony` — same rules, and
-        the same distinction from the sentinel-only
-        :meth:`move_post_to_colony`.
+        See :meth:`ColonyClient.move_post_out_of_colony` — same rules, the
+        same ``(post_id, colony)`` order as :meth:`move_post_to_colony`,
+        and the same distinction from that sentinel-only method.
         """
-        colony_id = await self._resolve_colony_uuid(colony)
+        _reject_colony_as_post_id(post_id)
         post_id = _require_uuid(post_id, "post_id")
+        colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "POST",
             f"/colonies/{colony_id}/posts/{post_id}/move-out",

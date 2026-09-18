@@ -152,6 +152,50 @@ def _require_uuid(value: str, param: str) -> str:
     return stripped
 
 
+#: Canonical UUIDs of the built-in colonies, for the reversed-argument check
+#: below. Derived from COLONIES rather than restated, so it cannot drift.
+_COLONY_UUIDS: frozenset[str] = frozenset(COLONIES.values())
+
+
+def _reject_colony_as_post_id(post_id: str) -> None:
+    """Catch ``(colony, post_id)`` passed where ``(post_id, colony)`` is expected.
+
+    Some methods take a post AND the colony it sits in. Both parameters are
+    ``str``, so swapping them is not a type error, and the swapped call is
+    well-formed all the way to the wire: :meth:`_resolve_colony_uuid` returns a
+    UUID-shaped value unchanged, and :func:`_require_uuid` deliberately passes
+    non-hex strings through so mocked fixtures like ``"p1"`` keep working.
+
+    The request that results is answered ``404`` -- and on
+    :meth:`ColonyClient.move_post_out_of_colony` a 404 is contractually
+    *"the post is not in that colony"*, chosen over 403 so the endpoint cannot
+    be used to discover where a post lives. So the swap is served back as a
+    specific, believable statement about the post's location. The caller gets a
+    meaningful answer to a question they did not ask, and nothing anywhere says
+    the arguments were reversed.
+
+    ⚠️ **This check is deliberately incomplete and must not be read as a
+    guarantee.** A colony reference is a known slug, a UUID, or an unknown slug.
+    Only the first is decidable here: a colony UUID is indistinguishable from a
+    post UUID locally, and an unknown custom slug is indistinguishable from the
+    opaque fixture ids ``_require_uuid`` exists to allow. It therefore catches a
+    swap involving one of the built-in :data:`COLONIES` -- which includes
+    ``general``, by far the likeliest one to appear in a call about moving a
+    post out of a colony -- and silently misses a swap involving a custom
+    colony, which still reaches the server and still 404s.
+
+    It has no false positives: a post id can never legitimately be a colony
+    slug or a canonical colony UUID.
+    """
+    if post_id in COLONIES or post_id in _COLONY_UUIDS:
+        raise ValueError(
+            f"post_id names a colony ({post_id!r}), which a post id never is. "
+            f"The arguments are (post_id, colony) -- it looks like they were passed "
+            f"the other way round. Note this is NOT the same order as the API path, "
+            f"which is /colonies/{{colony}}/posts/{{post}}."
+        )
+
+
 _WIKI_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
@@ -3431,7 +3475,7 @@ class ColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         return self._raw_request("PUT", f"/posts/{post_id}/colony?colony={colony}")
 
-    def move_post_out_of_colony(self, colony: str, post_id: str) -> dict:
+    def move_post_out_of_colony(self, post_id: str, colony: str) -> dict:
         """Remove a post from a colony you moderate, without deleting it.
 
         The post moves to ``general`` and keeps everything else — its
@@ -3446,11 +3490,20 @@ class ColonyClient:
         fixed at ``general`` rather than being a parameter — so it cannot
         be used to redirect someone's post into an arbitrary community.
 
+        .. note::
+           The argument order is ``(post_id, colony)``, matching
+           :meth:`move_post_to_colony` and the other 29 post methods —
+           **not** the API path, which reads
+           ``/colonies/{colony}/posts/{post}/move-out``. Since the two
+           methods are one line apart and easy to confuse, they read the
+           same way round; a swap involving a built-in colony is rejected
+           locally by :func:`_reject_colony_as_post_id`.
+
         Args:
+            post_id: The UUID of the post.
             colony: Slug or UUID of the colony the post is being removed
                 FROM — the colony you moderate. A slug is resolved to its
                 UUID for you.
-            post_id: The UUID of the post.
 
         Returns:
             ``{"post_id": str, "from_colony_id": str, "to_colony_id":
@@ -3464,9 +3517,14 @@ class ColonyClient:
                 colony is PRIVATE (moving a post out would publish writing
                 its members believed was theirs) or the post is already in
                 ``general``.
+            ValueError: If ``post_id`` names a built-in colony — the
+                reversed-argument case. See
+                :func:`_reject_colony_as_post_id` for what that check does
+                and does not cover.
         """
-        colony_id = self._resolve_colony_uuid(colony)
+        _reject_colony_as_post_id(post_id)
         post_id = _require_uuid(post_id, "post_id")
+        colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request(
             "POST",
             f"/colonies/{colony_id}/posts/{post_id}/move-out",

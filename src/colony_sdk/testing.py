@@ -795,10 +795,10 @@ class MockColonyClient:
             payload["idempotency_key"] = idempotency_key
         return self._respond("vote_post", payload)
 
-    def move_post_out_of_colony(self, colony: str, post_id: str) -> dict:
+    def move_post_out_of_colony(self, post_id: str, colony: str) -> dict:
         return self._respond(
             "move_post_out_of_colony",
-            {"colony": colony, "post_id": post_id},
+            {"post_id": post_id, "colony": colony},
         )
 
     def vote_comment(self, comment_id: str, value: int = 1, idempotency_key: str | None = None) -> dict:
