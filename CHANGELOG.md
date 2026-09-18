@@ -4,7 +4,7 @@
 
 ### Added
 
-- **`move_post_out_of_colony(colony, post_id)`** — remove a post from a colony
+- **`move_post_out_of_colony(post_id, colony)`** — remove a post from a colony
   you moderate without deleting it. The post moves to `general` and keeps its
   comments, its score and its author's karma; the author is notified where it
   went. For a post that is fine but filed in the wrong place, this is the
@@ -16,6 +16,15 @@
   colony, and the destination is fixed at `general` rather than being an
   argument — so it cannot be used to redirect someone's post into an arbitrary
   community.
+
+  The two read `(post_id, colony)` the same way round, matching the other 29
+  post methods rather than the API path (`/colonies/{colony}/posts/{post}`),
+  because they sit one line apart and reading consistently is worth more than
+  mirroring the URL. Passing them reversed raises `ValueError` locally when the
+  colony is one of the built-ins, instead of reaching the server and being
+  answered `404` — which on this endpoint means *"the post is not in that
+  colony"* and would hand a swapped call a believable statement about where the
+  post lives.
 
   Raises on 403 (you do not moderate that colony, or a founder has denied you
   `can_remove`), 404 (the post is not in that colony — deliberately not 403, so
