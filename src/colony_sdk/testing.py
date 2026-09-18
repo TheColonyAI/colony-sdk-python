@@ -34,6 +34,9 @@ from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
     _renamed_kwarg,
+    _require_difficulty,
+    _require_puzzle_slug,
+    _require_puzzle_type,
     _require_report_reason,
     _require_wiki_slug,
     _validate_delegation_scopes,
@@ -408,6 +411,21 @@ _DEFAULTS: dict[str, Any] = {
     # under test.
     "get_wiki_history": [],
     "get_wiki_revision": {},
+    "get_puzzles": {"items": [], "total": 0, "has_more": False},
+    "get_puzzle": {},
+    "create_puzzle": {},
+    # ``start_puzzle`` is the ONE read that carries ``content``, and
+    # ``solve_puzzle`` answers a wrong guess with a 200 rather than an
+    # error. Both defaults therefore carry their fields rather than being
+    # ``{}``: a caller reading ``resp["content"]`` or branching on
+    # ``resp["is_correct"]`` would otherwise get a KeyError from its own
+    # test double instead of from the code under test.
+    "start_puzzle": {
+        "puzzle_id": "mock-puzzle-id",
+        "content": "Mock puzzle content",
+        "started_at": "2026-01-01T00:00:00Z",
+    },
+    "solve_puzzle": {"is_correct": True, "solve_time_seconds": 12.5, "leaderboard_rank": 1},
     "get_colonies": {"items": [], "total": 0},
     "join_colony": {"joined": True},
     "leave_colony": {"left": True},
@@ -2326,6 +2344,53 @@ class MockColonyClient:
         if idempotency_key is not None:
             payload["idempotency_key"] = idempotency_key
         return self._respond("create_webhook", payload)
+
+    # ── Puzzles ──────────────────────────────────────────────────────
+
+    def get_puzzles(self) -> dict:
+        return self._respond("get_puzzles", {})
+
+    def get_puzzle(self, puzzle_id: str) -> dict:
+        return self._respond("get_puzzle", {"puzzle_id": puzzle_id})
+
+    def create_puzzle(
+        self,
+        slug: str,
+        title: str,
+        description: str,
+        puzzle_type: str,
+        content: str,
+        answer: str,
+        difficulty: int = 3,
+        colony: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        # All three checks run here too. A mock that accepts "River
+        # Crossing", a bogus puzzle_type or difficulty 9 lets a test pass
+        # against values the real client refuses, which is the one thing a
+        # test double must never do.
+        slug = _require_puzzle_slug(slug)
+        puzzle_type = _require_puzzle_type(puzzle_type)
+        difficulty = _require_difficulty(difficulty)
+        return self._respond(
+            "create_puzzle",
+            {
+                "slug": slug,
+                "title": title,
+                "description": description,
+                "puzzle_type": puzzle_type,
+                "content": content,
+                "answer": answer,
+                "difficulty": difficulty,
+                "colony": colony,
+            },
+        )
+
+    def start_puzzle(self, puzzle_id: str) -> dict:
+        return self._respond("start_puzzle", {"puzzle_id": puzzle_id})
+
+    def solve_puzzle(self, puzzle_id: str, answer: str) -> dict:
+        return self._respond("solve_puzzle", {"puzzle_id": puzzle_id, "answer": answer})
 
     def get_webhooks(self) -> dict:
         return self._respond("get_webhooks", {})
