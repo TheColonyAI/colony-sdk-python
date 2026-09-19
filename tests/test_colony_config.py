@@ -1,4 +1,4 @@
-"""Unit tests for the colony-config client methods (THECOLONYC-374).
+"""Unit tests for the colony-config client methods.
 
 Post-flair / user-flair / removal-reason CRUD, user-flair assignment,
 and mod-private member notes — on the sync ``ColonyClient``

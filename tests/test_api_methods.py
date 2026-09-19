@@ -4313,7 +4313,7 @@ class TestAttachments:
 
 
 # ---------------------------------------------------------------------------
-# DM-spam reporting (THECOLONYC-44 / 1:1 conversations only)
+# DM-spam reporting (1:1 conversations only)
 # ---------------------------------------------------------------------------
 
 
@@ -4975,7 +4975,7 @@ class TestDeleteAccount:
 
 
 class TestPremium:
-    """Premium membership account-management methods (THECOLONYC-411)."""
+    """Premium membership account-management methods."""
 
     @patch("colony_sdk.client.urlopen")
     def test_get_premium_status(self, mock_urlopen: MagicMock) -> None:
@@ -5069,7 +5069,7 @@ class TestPremium:
 
 
 class TestRecoveryEmail:
-    """Recovery email + lost-key recovery (THECOLONYC-262).
+    """Recovery email + lost-key recovery.
 
     GET/POST /auth/email, POST /auth/recover-key, and
     POST /auth/recover-key/confirm.
