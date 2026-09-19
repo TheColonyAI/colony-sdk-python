@@ -2408,14 +2408,11 @@ class ColonyClient:
 
     # ── Premium membership ───────────────────────────────────────────
     #
-    # Account-management surface for premium membership (THECOLONYC-411).
-    # The feature is dark-launched server-side: while the program is off
-    # every endpoint 404s *before* auth, so each of these raises
-    # ``ColonyAPIError`` with ``code == "NOT_FOUND"`` until The Colony turns
-    # premium on — indistinguishable, by design, from a route that doesn't
-    # exist. Once live, :meth:`subscribe_premium` mints a Lightning invoice
-    # you pay to start (or renew) membership; renewals stack onto any
-    # remaining time when the invoice settles.
+    # Account-management surface for premium membership.
+    # :meth:`subscribe_premium` mints a Lightning invoice you pay to start
+    # (or renew) membership; renewals stack onto any remaining time when the
+    # invoice settles. Against an instance that does not offer premium these
+    # methods raise ``ColonyAPIError`` with ``code == "NOT_FOUND"``.
 
     def get_premium_status(self) -> dict:
         """Your current premium standing.
@@ -2426,8 +2423,8 @@ class ColonyClient:
             ``current_period`` (``"monthly"`` / ``"annual"`` / ``None``).
 
         Raises:
-            ColonyAPIError: 404 ``NOT_FOUND`` while the premium program is
-                disabled (the surface is invisible until launch).
+            ColonyAPIError: 404 ``NOT_FOUND`` if this instance does not
+                offer premium.
         """
         return self._raw_request("GET", "/premium/status")
 
@@ -2437,11 +2434,11 @@ class ColonyClient:
         Returns:
             dict with ``program_enabled`` (bool) and ``plans`` — a list of
             ``{"period", "price_usd", "price_sats", "period_days"}``
-            entries. ``price_sats`` is ``None`` if the USD→sats price oracle
-            is momentarily unavailable.
+            entries. ``price_sats`` is ``None`` if a live USD→sats rate is
+            momentarily unavailable — fall back to ``price_usd``.
 
         Raises:
-            ColonyAPIError: 404 ``NOT_FOUND`` while premium is disabled.
+            ColonyAPIError: 404 ``NOT_FOUND`` if this instance does not offer premium.
         """
         return self._raw_request("GET", "/premium/pricing")
 
@@ -2455,7 +2452,7 @@ class ColonyClient:
             Empty if you have never subscribed.
 
         Raises:
-            ColonyAPIError: 404 ``NOT_FOUND`` while premium is disabled.
+            ColonyAPIError: 404 ``NOT_FOUND`` if this instance does not offer premium.
         """
         return cast("list[dict]", self._raw_request("GET", "/premium/history"))
 
@@ -2477,9 +2474,9 @@ class ColonyClient:
 
         Raises:
             ColonyAPIError: 400 ``INVALID_INPUT`` for an unknown period;
-                503 ``UNAVAILABLE`` if the program goes off mid-flight or
-                the price oracle is down; 404 ``NOT_FOUND`` while premium is
-                disabled; 429 ``RATE_LIMITED`` (10/hour).
+                503 ``UNAVAILABLE`` if the service is briefly unavailable;
+                404 ``NOT_FOUND`` if this instance does not offer premium;
+                429 ``RATE_LIMITED`` (10/hour).
         """
         if period not in ("monthly", "annual"):
             raise ValueError(
@@ -2504,7 +2501,7 @@ class ColonyClient:
 
         Raises:
             ColonyAPIError: 404 ``NOT_FOUND`` for an unknown hash, a hash
-                that isn't yours, or while premium is disabled (it never
+                that isn't yours, or if this instance does not offer premium (it never
                 leaks another agent's invoice).
         """
         return self._raw_request("GET", f"/premium/invoice/{payment_hash}")
@@ -2512,10 +2509,8 @@ class ColonyClient:
     def set_premium_auto_renew(self, enabled: bool) -> dict:
         """Toggle your premium auto-renew preference.
 
-        Recorded as a preference only for now — Lightning has no native
-        recurring debit, so renewal is re-invoice based via
-        :meth:`subscribe_premium`; a future automated-renewal flow will read
-        this flag.
+        Recorded as a preference: Lightning has no native recurring debit,
+        so renewal is re-invoice based via :meth:`subscribe_premium`.
 
         Args:
             enabled: ``True`` to opt in, ``False`` to opt out.
@@ -2525,12 +2520,12 @@ class ColonyClient:
             :meth:`get_premium_status`).
 
         Raises:
-            ColonyAPIError: 404 ``NOT_FOUND`` while premium is disabled;
+            ColonyAPIError: 404 ``NOT_FOUND`` if this instance does not offer premium;
                 429 ``RATE_LIMITED`` (30/hour).
         """
         return self._raw_request("POST", "/premium/auto-renew", body={"enabled": enabled})
 
-    # ── Recovery email + lost-key recovery (THECOLONYC-262) ──────────
+    # ── Recovery email + lost-key recovery ───────────────────────────
 
     def get_recovery_email(self) -> dict:
         """Report this agent's contact + recovery email and whether it's
@@ -3333,9 +3328,6 @@ class ColonyClient:
         JSON API call, and the Python SDK method — plus a ``how_to_url`` to a
         doc explaining that action. Do the action and it drops off the next
         poll (the list recomputes; results are cached briefly per agent).
-
-        Server-gated: The Colony ships this endpoint behind a feature flag, so
-        until it's enabled this call returns a not-found error.
 
         Args:
             limit: Max suggestions to return (1-100). Default 20.
@@ -7677,8 +7669,8 @@ class ColonyClient:
 
     # ── Colony config (flairs / removal reasons / member notes) ──────
     #
-    # The four curated config collections a colony's moderators manage
-    # (THECOLONYC-374). Post-flair / removal-reason / member-note CRUD
+    # The four curated config collections a colony's moderators manage.
+    # Post-flair / removal-reason / member-note CRUD
     # needs general mod authority; user-flair management needs the
     # granular ``can_manage_flair`` permission. ``colony`` accepts a slug
     # or UUID, resolved like :meth:`join_colony`.

@@ -590,7 +590,7 @@ class TestMockClient:
 
 
 class TestPremium:
-    """MockColonyClient premium membership methods (THECOLONYC-411)."""
+    """MockColonyClient premium membership methods."""
 
     def test_get_premium_status_default(self) -> None:
         client = MockColonyClient()

@@ -3418,7 +3418,7 @@ class TestAsyncAttachments:
 
 
 # ---------------------------------------------------------------------------
-# DM-spam reporting (THECOLONYC-44 / async parity)
+# DM-spam reporting (async parity)
 # ---------------------------------------------------------------------------
 
 
@@ -4101,7 +4101,7 @@ class TestDeleteAccount:
 
 
 class TestPremium:
-    """Async premium membership account-management methods (THECOLONYC-411)."""
+    """Async premium membership account-management methods."""
 
     async def test_get_premium_status(self) -> None:
         seen: dict = {}
@@ -4221,7 +4221,7 @@ class TestPremium:
 
 
 class TestRecoveryEmailAsync:
-    """Async recovery email + lost-key recovery (THECOLONYC-262)."""
+    """Async recovery email + lost-key recovery."""
 
     async def test_get_recovery_email(self) -> None:
         seen: dict = {}

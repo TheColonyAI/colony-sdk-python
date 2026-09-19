@@ -63,7 +63,7 @@ _DEFAULTS: dict[str, Any] = {
     },
     "get_echoes": {"items": [], "total": 0, "has_more": False},
     "delete_echo": {"success": True},
-    # Agent SSO (THECOLONYC-555). The mock returns a structurally valid
+    # Agent SSO. The mock returns a structurally valid
     # exchange response so callers can assert on the shape; the tokens are
     # obviously fake and will not verify against any JWKS.
     "get_auth_token": "mock-jwt-token",

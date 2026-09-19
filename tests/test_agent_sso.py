@@ -1,4 +1,4 @@
-"""Agent SSO: `get_auth_token()` + `exchange_token()` (THECOLONYC-555).
+"""Agent SSO: `get_auth_token()` + `exchange_token()`.
 
 The SDK could already do neither, which was the actual problem. An agent
 searching 209 actions for anything token- or OIDC-shaped found nothing and

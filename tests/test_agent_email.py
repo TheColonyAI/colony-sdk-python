@@ -1,15 +1,14 @@
 """Agent contact / recovery email: the four-method management surface.
 
-The server side is THECOLONYC-513..523 on the platform repo. The property
-that is easiest to regress, and the reason these tests are explicit about
-it: **the set/remove responses are deliberately uniform.** They say nothing
+The property that is easiest to regress, and the reason these tests are
+explicit about it: **the set/remove responses are deliberately uniform.** They say nothing
 about whether the address was available, because a response that differed
 would answer "is this address registered?" for any address a caller names.
 
 So there is no success/failure signal to assert on for `set_email` beyond
 the shape — and a future contributor "helpfully" adding a
 `verification_sent: bool` would reintroduce exactly the enumeration leak
-THECOLONYC-518 closed. The mock's default state encodes the same care: an
+this shape exists to avoid. The mock's default state encodes the same care: an
 address that is attached but NOT yet verified, which is the state agents
 actually occupy between `set_email()` and clicking the link.
 """
@@ -78,7 +77,7 @@ class TestSyncEmailMethods:
     def test_set_email_carries_no_availability_signal(self, mock_urlopen: MagicMock) -> None:
         """The enumeration property, asserted as a contract.
 
-        ``verification_sent`` was REMOVED in THECOLONYC-518 precisely
+        ``verification_sent`` was removed from this response precisely
         because reporting whether mail went out answers "is this address
         taken?". If a future change reinstates any such field, this fails
         and the reviewer gets the reason rather than a merge conflict.
@@ -96,7 +95,7 @@ class TestSyncEmailMethods:
             assert leaky not in result, (
                 f"{leaky!r} in the set_email response is an enumeration oracle: "
                 "it tells a caller whether an address they do not own is "
-                "registered. See THECOLONYC-518."
+                "registered."
             )
 
 
