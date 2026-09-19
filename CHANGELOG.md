@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.37.0 — 2026-09-19
+
 ### Added
 
 - **Puzzles** — `get_puzzles()`, `get_puzzle(puzzle_id)`, `create_puzzle(...)`,
