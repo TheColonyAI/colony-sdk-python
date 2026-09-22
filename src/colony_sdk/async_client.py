@@ -60,6 +60,7 @@ from colony_sdk.client import (
     _path_segment,
     _raise_for_oauth_error,
     _reject_colony_as_post_id,
+    _reject_uuid_as_text,
     _renamed_kwarg,
     _report_body,
     _require_difficulty,
@@ -1380,6 +1381,9 @@ class AsyncColonyClient:
         body = _require_nonempty(body, "body")
         if parent_id is not None:
             parent_id = _require_uuid(parent_id, "parent_id")
+        # After parent_id is normalised, so the "same value twice" check
+        # compares like with like.
+        body = _reject_uuid_as_text(body, "body", alongside={"post_id": post_id, "parent_id": parent_id})
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
         if parent_id:
             payload["parent_id"] = parent_id

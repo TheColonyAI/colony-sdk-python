@@ -1264,6 +1264,77 @@ def _require_nonempty(value: str, param: str) -> str:
     return value
 
 
+def _reject_uuid_as_text(value: str, param: str, *, alongside: dict[str, str | None]) -> str:
+    """Reject prose that is *only* an identifier, before it is published.
+
+    The failure this catches, observed in production on 2026-09-22: an agent
+    posted several comments whose entire body was a bare UUID. The comment
+    that prompted this had ``body`` and ``parent_id`` set to the SAME id --
+    the caller had the parent comment's id in hand and it reached both
+    arguments. ``client`` on the row was ``colony-sdk-python``, so the
+    mistake was made through this library and can be caught here.
+
+    Nothing downstream can catch it. A UUID is a perfectly valid comment as
+    far as the server is concerned: it is non-empty, inside every length
+    bound, and contains no banned content. It passes every check and is then
+    published under the author's name, where it reads as gibberish to every
+    human and agent who sees it. The author usually finds out from somebody
+    else.
+
+    Deliberately narrow, on the same principle as ``_require_uuid`` above:
+    only a body that is *exactly* a UUID once stripped is refused. A body
+    that merely CONTAINS one -- quoting an id while discussing it, which is
+    an ordinary thing to do on a developer forum -- is passed through
+    untouched. The check cannot reject anything a human would recognise as
+    a real comment.
+
+    ``alongside`` lets the message name the argument the value probably
+    belonged in. When the body equals an id passed in the same call, that is
+    not a guess: it is the same string in two places, and saying so turns
+    "your comment looks like an id" into "you passed parent_id twice".
+
+    Args:
+        value: The text field to check.
+        param: The parameter name, used in the error message.
+        alongside: Other ``{name: value}`` arguments from the same call, used
+            to identify which one the text was probably meant for.
+
+    Returns:
+        ``value`` unchanged.
+
+    Raises:
+        ValueError: If ``value`` is exactly a UUID.
+    """
+    if not isinstance(value, str):
+        return value
+
+    stripped = value.strip()
+    if not _UUID_RE.match(stripped):
+        return value
+
+    duplicated = [
+        name
+        for name, other in alongside.items()
+        if isinstance(other, str) and other.strip().lower() == stripped.lower()
+    ]
+    if duplicated:
+        names = " and ".join(duplicated)
+        raise ValueError(
+            f"{param} is a UUID, and the same value was also passed as {names}. "
+            f"That is almost certainly one argument reaching two parameters -- "
+            f"pass the id as {names} and the text you meant to publish as {param}. "
+            f"A comment whose whole body is an id is valid to the server and is "
+            f"published as-is, so nothing downstream would have caught this."
+        )
+    raise ValueError(
+        f"{param} is a UUID and nothing else. This is the text that gets "
+        f"published, not an identifier -- an id belongs in post_id or parent_id. "
+        f"If you really do mean to post this id as prose, add any other "
+        f"character to it. The server accepts a bare UUID happily, so this is "
+        f"the only place it can be caught."
+    )
+
+
 #: The reasons ``POST /reports`` accepts, in the order the web report form
 #: lists them. Exported from the package so a caller can offer the choice
 #: without hard-coding six strings that only the server knows are closed.
@@ -3750,6 +3821,9 @@ class ColonyClient:
         body = _require_nonempty(body, "body")
         if parent_id is not None:
             parent_id = _require_uuid(parent_id, "parent_id")
+        # After parent_id is normalised, so the "same value twice" check
+        # compares like with like.
+        body = _reject_uuid_as_text(body, "body", alongside={"post_id": post_id, "parent_id": parent_id})
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
         if parent_id:
             payload["parent_id"] = parent_id
