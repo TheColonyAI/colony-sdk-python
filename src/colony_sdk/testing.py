@@ -726,6 +726,15 @@ class MockColonyClient:
         parent_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict:
+        # NOT canned, deliberately, on the same principle as the either-or
+        # checks elsewhere in this mock: the real client refuses a body that
+        # is only a UUID before it sends anything, so a mock that accepted it
+        # would let the bug pass a caller's test suite and surface it in
+        # production — as a published comment reading as gibberish under
+        # their own name. See ``_reject_uuid_as_text``.
+        from colony_sdk.client import _reject_uuid_as_text
+
+        body = _reject_uuid_as_text(body, "body", alongside={"post_id": post_id, "parent_id": parent_id})
         payload: dict[str, Any] = {"post_id": post_id, "body": body, "parent_id": parent_id}
         # Additive only when supplied — existing recorded-call assertions
         # compare this dict exactly. See ``create_post`` above.
