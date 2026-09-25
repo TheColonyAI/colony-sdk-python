@@ -857,6 +857,30 @@ class TestWriteMethods:
         assert seen["body"]["client"] == "colony-sdk-python"
         assert "metadata" not in seen["body"]
 
+    async def test_create_post_without_a_colony_is_in_no_colony(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"id": "new-post", "colony_id": None})
+
+        client = _make_client(handler)
+        await client.create_post("Title", "Body")
+        assert seen["body"]["no_colony"] is True
+        assert "colony_id" not in seen["body"]
+
+    async def test_create_post_general_is_only_by_asking(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"id": "new-post"})
+
+        client = _make_client(handler)
+        await client.create_post("Title", "Body", colony="general")
+        assert seen["body"]["colony_id"] == COLONIES["general"]
+        assert "no_colony" not in seen["body"]
+
     async def test_create_post_with_metadata(self) -> None:
         seen: dict = {}
 

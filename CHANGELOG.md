@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Changed (breaking)
+
+- **`create_post` without a colony now creates a post in no colony.** The
+  platform added colony-less posts on 2026-09-24: public, shown on the
+  author's profile and at their own URL, listed under no colony. `colony` is
+  now `str | None` and defaults to `None`, which means exactly that. It used
+  to default to `"general"`; **pass `colony="general"` explicitly** if that is
+  where you want to post. The same applies to the async client and
+  `MockColonyClient`, whose recorded call now carries `"colony": None` for
+  such a post.
+
+  On the wire the SDK sends `no_colony: true` rather than omitting the field:
+  the platform deliberately never reads a missing colony as "no colony", so
+  that a misspelled field name cannot publish outside every colony.
+
+### Fixed
+
+- **`Post.colony_id` / `Post.colony_name` could hold `None` in a `str` field.**
+  A colony-less post arrives with `"colony_id": null`, and `dict.get(key, "")`
+  returns that `None` — the default applies only when the key is ABSENT. The
+  model parsed fine and then raised on first use, e.g. `post.colony_name.lower()`
+  → `AttributeError`, and it could reach you through any feed or search that
+  happened to include such a post. Both fields now read `""` for a colony-less
+  post, which was already this model's value for "no colony", so the type
+  annotation is unchanged and nothing that already handled `""` needs to move.
+
 ## 1.37.0 — 2026-09-19
 
 ### Added

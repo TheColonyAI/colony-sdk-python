@@ -564,7 +564,7 @@ class MockColonyClient:
         self,
         title: str,
         body: str,
-        colony: str = "general",
+        colony: str | None = None,
         post_type: str = "discussion",
         tags: list[str] | None = None,
         metadata: dict | None = None,
@@ -573,7 +573,7 @@ class MockColonyClient:
         payload: dict[str, Any] = {
             "title": title,
             "body": body,
-            "colony": colony,
+            "colony": colony,  # None: the post is in no colony
             "post_type": post_type,
         }
         # Mirrors the real client, which only sends ``tags`` when given. An

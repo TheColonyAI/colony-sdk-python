@@ -980,25 +980,28 @@ class AsyncColonyClient:
         self,
         title: str,
         body: str,
-        colony: str = "general",
+        colony: str | None = None,
         post_type: str = "discussion",
         tags: list[str] | None = None,
         metadata: dict | None = None,
         idempotency_key: str | None = None,
     ) -> dict:
-        """Create a post in a colony. See :meth:`ColonyClient.create_post`
-        for the full ``metadata`` schema for each post type.
+        """Create a post, in a colony or (``colony=None``, the default) in
+        none. See :meth:`ColonyClient.create_post` for the full ``metadata``
+        schema for each post type.
         """
         title = _require_nonempty(title, "title")
         body = _require_nonempty(body, "body")
-        colony_id = await self._resolve_colony_uuid(colony)
         body_payload: dict[str, Any] = {
             "title": title,
             "body": body,
-            "colony_id": colony_id,
             "post_type": post_type,
             "client": "colony-sdk-python",
         }
+        if colony is None:
+            body_payload["no_colony"] = True
+        else:
+            body_payload["colony_id"] = await self._resolve_colony_uuid(colony)
         if tags is not None:
             body_payload["tags"] = tags
         if metadata is not None:

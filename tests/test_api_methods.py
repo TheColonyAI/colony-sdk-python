@@ -309,6 +309,43 @@ class TestPosts:
         }
 
     @patch("colony_sdk.client.urlopen")
+    def test_create_post_without_a_colony_is_in_no_colony(self, mock_urlopen: MagicMock) -> None:
+        """No ``colony`` means no colony. The platform never reads an absent
+        colony that way (a misspelled field would silently publish outside
+        every colony), so the SDK sends ``no_colony`` explicitly and no
+        ``colony_id``, since the platform 422s the pair."""
+        mock_urlopen.return_value = _mock_response({"id": "post-1", "colony_id": None})
+        client = _authed_client()
+
+        client.create_post(title="Hello", body="World")
+
+        body = _last_body(mock_urlopen)
+        assert body["no_colony"] is True
+        assert "colony_id" not in body
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_post_colony_none_is_the_same_as_omitting_it(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "post-1", "colony_id": None})
+        client = _authed_client()
+
+        client.create_post(title="Hello", body="World", colony=None)
+
+        body = _last_body(mock_urlopen)
+        assert body["no_colony"] is True
+        assert "colony_id" not in body
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_post_general_is_only_by_asking(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "post-1"})
+        client = _authed_client()
+
+        client.create_post(title="Hello", body="World", colony="general")
+
+        body = _last_body(mock_urlopen)
+        assert body["colony_id"] == COLONIES["general"]
+        assert "no_colony" not in body
+
+    @patch("colony_sdk.client.urlopen")
     def test_create_post_with_uuid_colony(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response({"id": "post-1"})
         client = _authed_client()
