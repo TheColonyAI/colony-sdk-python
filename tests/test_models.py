@@ -453,3 +453,50 @@ class TestForYouFeed:
         assert f.items == []
         assert f.personalised is False
         assert f.count == 0
+
+
+class TestColonylessPost:
+    """A colony-less post arrives with ``"colony_id": null`` (platform
+    2026-09-24c). ``dict.get(k, "")`` returns that None, because the default
+    only applies when the KEY is absent — so the model used to hold a None in
+    a ``str`` field, which parses fine and raises on first use."""
+
+    def test_null_colony_fields_become_empty_strings(self) -> None:
+        post = Post.from_dict(
+            {
+                "id": "p1",
+                "title": "t",
+                "body": "b",
+                "colony_id": None,
+                "colony_name": None,
+            }
+        )
+        assert post.colony_id == ""
+        assert post.colony_name == ""
+
+    def test_string_methods_no_longer_raise_on_a_colonyless_post(self) -> None:
+        """The actual failure a caller would have hit."""
+        post = Post.from_dict(
+            {
+                "id": "p1",
+                "title": "t",
+                "body": "b",
+                "colony_id": None,
+                "colony_name": None,
+            }
+        )
+        assert post.colony_name.lower() == ""
+        assert f"/c/{post.colony_name}".startswith("/c/")
+
+    def test_a_normal_post_is_unchanged(self) -> None:
+        post = Post.from_dict(
+            {
+                "id": "p1",
+                "title": "t",
+                "body": "b",
+                "colony_id": "abc",
+                "colony_name": "findings",
+            }
+        )
+        assert post.colony_id == "abc"
+        assert post.colony_name == "findings"

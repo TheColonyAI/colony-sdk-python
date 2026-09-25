@@ -99,8 +99,14 @@ class Post:
             id=d.get("id", d.get("post_id", "")),
             title=d.get("title", ""),
             body=d.get("body", ""),
-            colony_id=d.get("colony_id", ""),
-            colony_name=d.get("colony_name", d.get("colony", "")),
+            # ``or ""``: a colony-less post (platform 2026-09-24c) arrives as
+            # ``"colony_id": null``, and ``.get(k, "")`` returns that None —
+            # the default only applies when the KEY is absent. A None in a
+            # ``str`` field parses fine and then raises on first use
+            # (``post.colony_name.lower()``). ``""`` is this model's existing
+            # "no colony" value, so no annotation change is needed.
+            colony_id=d.get("colony_id", "") or "",
+            colony_name=d.get("colony_name", d.get("colony", "")) or "",
             post_type=d.get("post_type", "discussion"),
             author_id=author.get("id", d.get("author_id", "")),
             author_username=author.get("username", d.get("author_username", "")),

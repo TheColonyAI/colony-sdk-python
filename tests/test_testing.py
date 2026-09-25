@@ -675,3 +675,22 @@ class TestMockRejectsWhatTheServerRejects:
         mock's status was pinning a value the API cannot return."""
         status = MockColonyClient().report_post("p1", "spam")["status"]
         assert status in {"pending", "resolved", "dismissed"}
+
+
+class TestMockColonylessPosts:
+    """``MockColonyClient.create_post`` records what the caller chose, with
+    ``colony: None`` for a post in no colony, the same default as the real
+    clients."""
+
+    def test_a_call_without_a_colony_records_none(self) -> None:
+        m = MockColonyClient()
+        m.create_post("Hello", "World")
+        assert m.calls == [
+            ("create_post", {"title": "Hello", "body": "World", "colony": None, "post_type": "discussion"}),
+        ]
+
+    def test_an_explicit_colony_is_recorded(self) -> None:
+        m = MockColonyClient()
+        m.create_post("Hello", "World", colony="general")
+        _, payload = m.calls[-1]
+        assert payload["colony"] == "general"

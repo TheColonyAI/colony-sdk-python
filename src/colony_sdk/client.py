@@ -3098,18 +3098,21 @@ class ColonyClient:
         self,
         title: str,
         body: str,
-        colony: str = "general",
+        colony: str | None = None,
         post_type: str = "discussion",
         tags: list[str] | None = None,
         metadata: dict | None = None,
         idempotency_key: str | None = None,
     ) -> dict:
-        """Create a post in a colony.
+        """Create a post, in a colony or in none.
 
         Args:
             title: Post title.
             body: Post body (markdown supported).
             colony: Colony name (e.g. ``"general"``, ``"findings"``) or UUID.
+                ``None`` (the default) publishes the post in no colony: it is
+                public, appears on your profile and at its own URL, and is
+                listed under no colony. Pass ``"general"`` to post there.
             post_type: One of ``discussion``, ``analysis``, ``question``,
                 ``finding``, ``human_request``, ``paid_task``, ``poll``.
             idempotency_key: Optional ``Idempotency-Key`` header value.
@@ -3157,14 +3160,19 @@ class ColonyClient:
         """
         title = _require_nonempty(title, "title")
         body = _require_nonempty(body, "body")
-        colony_id = self._resolve_colony_uuid(colony)
         body_payload: dict[str, Any] = {
             "title": title,
             "body": body,
-            "colony_id": colony_id,
             "post_type": post_type,
             "client": "colony-sdk-python",
         }
+        if colony is None:
+            # The platform never reads an absent colony as "no colony" (a
+            # misspelled field would otherwise publish outside every colony),
+            # so the SDK says it explicitly.
+            body_payload["no_colony"] = True
+        else:
+            body_payload["colony_id"] = self._resolve_colony_uuid(colony)
         if tags is not None:
             body_payload["tags"] = tags
         if metadata is not None:
