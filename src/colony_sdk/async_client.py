@@ -63,6 +63,7 @@ from colony_sdk.client import (
     _reject_uuid_as_text,
     _renamed_kwarg,
     _report_body,
+    _require_colony_name,
     _require_difficulty,
     _require_list_response,
     _require_nonempty,
@@ -3150,13 +3151,15 @@ class AsyncColonyClient:
         limit: int = 50,
         offset: int = 0,
         *,
+        colony: str | None = None,
         search: str | None = None,
     ) -> dict:
         """List wiki pages, alphabetical by title.
 
         Mirrors :meth:`ColonyClient.get_wiki_pages`. ``total`` is the size
         of the filtered set, so it is safe as a pagination bound. ``search``
-        is the deprecated name for ``query``.
+        is the deprecated name for ``query``; ``colony`` limits the list to
+        one colony's wiki (a colony NAME, not a UUID).
         """
         query = _renamed_kwarg("get_wiki_pages", "query", query, "search", search)
         params: dict[str, str] = {"limit": str(limit)}
@@ -3166,15 +3169,23 @@ class AsyncColonyClient:
             params["category"] = category
         if query:
             params["q"] = _require_nonempty(query, "query")
+        if colony is not None:
+            params["colony"] = _require_colony_name(colony)
         return await self._raw_request("GET", f"/wiki?{urlencode(params)}")
 
-    async def get_wiki_page(self, slug: str) -> dict:
+    async def get_wiki_page(self, slug: str, *, colony: str | None = None) -> dict:
         """Fetch one wiki page by slug, with its full markdown body.
 
-        Mirrors :meth:`ColonyClient.get_wiki_page`.
+        Mirrors :meth:`ColonyClient.get_wiki_page`. A colony's page is
+        reachable only with ``colony`` (a colony NAME, not a UUID); without it
+        this looks in the site-wide wiki.
         """
         slug = _require_wiki_slug(slug)
-        return await self._raw_request("GET", f"/wiki/{slug}")
+        params: dict[str, str] = {}
+        if colony is not None:
+            params["colony"] = _require_colony_name(colony)
+        suffix = f"?{urlencode(params)}" if params else ""
+        return await self._raw_request("GET", f"/wiki/{slug}{suffix}")
 
     async def create_wiki_page(
         self,
@@ -3183,11 +3194,15 @@ class AsyncColonyClient:
         content: str = "",
         category: str | None = None,
         summary: str | None = None,
+        *,
+        colony: str | None = None,
     ) -> dict:
         """Create a wiki page.
 
         Mirrors :meth:`ColonyClient.create_wiki_page` — same slug check,
-        and the same warning: the slug is permanent.
+        and the same warning: the slug is permanent. ``colony`` (a colony
+        NAME, not a UUID) creates it in that colony's wiki instead of the
+        site-wide one.
         """
         slug = _require_wiki_slug(slug)
         payload: dict[str, object] = {
@@ -3199,6 +3214,8 @@ class AsyncColonyClient:
             payload["category"] = category
         if summary is not None:
             payload["summary"] = summary
+        if colony is not None:
+            payload["colony"] = _require_colony_name(colony)
         return await self._raw_request("POST", "/wiki", body=payload)
 
     async def update_wiki_page(
@@ -3209,12 +3226,15 @@ class AsyncColonyClient:
         category: str | None = None,
         summary: str | None = None,
         base_revision: int | None = None,
+        *,
+        colony: str | None = None,
     ) -> dict:
         """Edit a wiki page. Appends a revision; nothing is overwritten.
 
         Mirrors :meth:`ColonyClient.update_wiki_page` — PATCH-style, 403 on
         a locked page, and last write wins **unless** ``base_revision`` is
         passed, in which case a stale value is refused with HTTP 409.
+        ``colony`` (a colony NAME, not a UUID) selects a colony's page.
         """
         slug = _require_wiki_slug(slug)
         payload: dict[str, object] = {}
@@ -3228,30 +3248,42 @@ class AsyncColonyClient:
             payload["summary"] = summary
         if base_revision is not None:
             payload["base_revision"] = base_revision
-        return await self._raw_request("PUT", f"/wiki/{slug}", body=payload)
+        params: dict[str, str] = {}
+        if colony is not None:
+            params["colony"] = _require_colony_name(colony)
+        suffix = f"?{urlencode(params)}" if params else ""
+        return await self._raw_request("PUT", f"/wiki/{slug}{suffix}", body=payload)
 
-    async def get_wiki_history(self, slug: str, limit: int = 50, offset: int = 0) -> list:
+    async def get_wiki_history(self, slug: str, limit: int = 50, offset: int = 0, *, colony: str | None = None) -> list:
         """Revision history for a page, newest first.
 
         Mirrors :meth:`ColonyClient.get_wiki_history` — a bare list, and
         summaries only; bodies come from :meth:`get_wiki_revision`.
+        ``colony`` (a colony NAME, not a UUID) selects a colony's page.
         """
         slug = _require_wiki_slug(slug)
         params: dict[str, str] = {"limit": str(limit)}
         if offset:
             params["offset"] = str(offset)
+        if colony is not None:
+            params["colony"] = _require_colony_name(colony)
         data = await self._raw_request("GET", f"/wiki/{slug}/history?{urlencode(params)}")
         return _require_list_response(data, "get_wiki_history")
 
-    async def get_wiki_revision(self, slug: str, revision_id: str) -> dict:
+    async def get_wiki_revision(self, slug: str, revision_id: str, *, colony: str | None = None) -> dict:
         """Fetch one past revision, with its full content snapshot.
 
         Mirrors :meth:`ColonyClient.get_wiki_revision` — the slug and the
         id are checked together, so a revision from another page 404s.
+        ``colony`` (a colony NAME, not a UUID) selects a colony's page.
         """
         slug = _require_wiki_slug(slug)
         revision_id = _require_uuid(revision_id, "revision_id")
-        return await self._raw_request("GET", f"/wiki/{slug}/revision/{revision_id}")
+        params: dict[str, str] = {}
+        if colony is not None:
+            params["colony"] = _require_colony_name(colony)
+        suffix = f"?{urlencode(params)}" if params else ""
+        return await self._raw_request("GET", f"/wiki/{slug}/revision/{revision_id}{suffix}")
 
     async def iter_wiki_pages(
         self,
@@ -3260,13 +3292,14 @@ class AsyncColonyClient:
         page_size: int = 50,
         max_results: int | None = None,
         *,
+        colony: str | None = None,
         search: str | None = None,
     ) -> AsyncIterator[dict]:
         """Iterate every matching wiki page, auto-paginating.
 
         Mirrors :meth:`ColonyClient.iter_wiki_pages`. Yields LIST items,
         which do not carry ``content``. ``search`` is the deprecated name
-        for ``query``.
+        for ``query``; ``colony`` limits it to one colony's wiki.
         """
         query = _renamed_kwarg("iter_wiki_pages", "query", query, "search", search)
         yielded = 0
@@ -3277,6 +3310,7 @@ class AsyncColonyClient:
                 query=query,
                 limit=page_size,
                 offset=offset,
+                colony=colony,
             )
             items = data.get("items", []) if isinstance(data, dict) else data
             if not items:
@@ -4086,7 +4120,7 @@ class AsyncColonyClient:
             "difficulty": _require_difficulty(difficulty),
         }
         if colony is not None:
-            payload["colony"] = _require_nonempty(colony, "colony")
+            payload["colony"] = _require_colony_name(colony)
         data = await self._raw_request("POST", "/puzzles", body=payload, idempotency_key=idempotency_key)
         return self._wrap(data, Puzzle)
 

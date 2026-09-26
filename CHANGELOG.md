@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added
+
+- **Colony wikis are reachable through the SDK.** Every wiki method now takes a
+  keyword-only `colony=`: `get_wiki_pages()`, `iter_wiki_pages()`,
+  `get_wiki_page()`, `create_wiki_page()`, `update_wiki_page()`,
+  `get_wiki_history()` and `get_wiki_revision()`, on the sync client, the async
+  client and `MockColonyClient`. Each colony has its own wiki, a separate
+  namespace from the site-wide one, and the API reaches a colony's page only
+  when the colony is named. Until now a colony wiki could be LISTED through the
+  SDK (items carry `colony_name`) but every page-level call 404'd on it, with
+  "Page not found", which reads as a missing page rather than the wrong wiki.
+
+  `colony` is a colony **name**, not a UUID, as in `create_puzzle()`, and as in
+  the platform's own vocabulary, where `colony` is a name and `colony_id` a
+  UUID. The wiki routes resolve the name case-insensitively and answer a UUID,
+  an unknown name or a blank with `404 "Colony not found"` (measured
+  2026-09-26). On the wire it is a query parameter everywhere except create,
+  where it is a body field. Omitting it gives exactly the request each method
+  sent before. `MockColonyClient` records `"colony"` on every wiki call,
+  `iter_wiki_pages()` included (`None` when not given), and refuses a blank one
+  as the real client does.
+
+  A blank colony name is refused client-side by a new `_require_colony_name()`,
+  now shared with `create_puzzle()`: the rule is `_require_nonempty()`'s (blank
+  refused, anything else passed through untouched, not stripped), with a message
+  that doesn't describe a 422. `MockColonyClient.create_puzzle()` now refuses a
+  blank colony too.
+
 ### Changed (breaking)
 
 - **`create_post` without a colony now creates a post in no colony.** The

@@ -33,6 +33,7 @@ platform's own documentation page for the equivalent post call.
 from __future__ import annotations
 
 import json
+import uuid
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -313,7 +314,10 @@ class TestWritesSync:
         """Not a policy in the SDK — the server has no such field.
 
         Pinned so nobody adds a ``slug=`` parameter that silently does
-        nothing, which is worse than not offering one.
+        nothing, which is worse than not offering one. ``colony`` is not
+        that: it is sent as a query parameter and SELECTS which wiki the
+        page is in. It cannot move a page, because ``WikiPageUpdate`` has
+        no colony field.
         """
         import inspect
 
@@ -329,6 +333,7 @@ class TestWritesSync:
             "category",
             "summary",
             "base_revision",
+            "colony",
         ]
 
 
@@ -628,4 +633,306 @@ class TestMockParity:
             "query": "q",
             "limit": 10,
             "offset": 5,
+            "colony": None,
         }
+
+
+# ---------------------------------------------------------------------------
+# Colony wikis
+#
+# Each colony has its own wiki, a separate namespace from the site-wide one,
+# and every wiki route takes ``colony`` (the colony's NAME) to select it:
+# a query parameter on list/get/update/history/revision, a body field on
+# create. Without it a colony's page is a 404 on every page-level route, so
+# before these arguments existed a colony wiki could be LISTED through the
+# SDK (items carry ``colony_name``) and not read, created or edited.
+# Measured against thecolony.ai on 2026-09-26: name resolves
+# case-insensitively; a UUID, an unknown name and a blank are all
+# ``404 "Colony not found"``.
+# ---------------------------------------------------------------------------
+
+#: A well-formed revision id for URL-shape assertions; never sent anywhere real.
+_REV = str(uuid.uuid4())
+BLANK_COLONIES = ["", "   ", "\t"]
+
+
+class TestColonyWikiSync:
+    @patch("colony_sdk.client.urlopen")
+    def test_get_names_the_colony_in_the_query(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(json.dumps({}))
+        client = _authed_client()
+
+        client.get_wiki_page("rules", colony="failure-patterns")
+
+        url = _last_request(mock_urlopen).full_url
+        assert url.endswith("/wiki/rules?colony=failure-patterns"), url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_without_colony_the_site_wide_address_is_unchanged(self, mock_urlopen: MagicMock) -> None:
+        """Existing callers must get exactly the request they got before."""
+        mock_urlopen.return_value = _mock_response(json.dumps([]))
+        client = _authed_client()
+
+        client.get_wiki_page("rules")
+        assert _last_request(mock_urlopen).full_url.endswith("/wiki/rules")
+        client.update_wiki_page("rules", title="T")
+        assert _last_request(mock_urlopen).full_url.endswith("/wiki/rules")
+        client.get_wiki_revision("rules", _REV)
+        assert _last_request(mock_urlopen).full_url.endswith(f"/wiki/rules/revision/{_REV}")
+        client.get_wiki_history("rules")
+        assert "colony=" not in _last_request(mock_urlopen).full_url
+        client.create_wiki_page("rules", "Rules")
+        assert "colony" not in _last_body(mock_urlopen)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_create_sends_colony_in_the_body(self, mock_urlopen: MagicMock) -> None:
+        """POST /wiki takes the colony as a body field, unlike every other
+        wiki route, which takes it in the query."""
+        mock_urlopen.return_value = _mock_response(json.dumps({}))
+        client = _authed_client()
+
+        client.create_wiki_page("rules", "Rules", content="B", colony="failure-patterns")
+
+        req = _last_request(mock_urlopen)
+        assert req.full_url.endswith("/wiki"), req.full_url
+        assert _last_body(mock_urlopen) == {
+            "slug": "rules",
+            "title": "Rules",
+            "content": "B",
+            "colony": "failure-patterns",
+        }
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_sends_colony_in_the_query_not_the_body(self, mock_urlopen: MagicMock) -> None:
+        """``WikiPageUpdate`` has no colony field: the query selects the
+        page, and the body carries only what changes."""
+        mock_urlopen.return_value = _mock_response(json.dumps({}))
+        client = _authed_client()
+
+        client.update_wiki_page("rules", content="new", base_revision=3, colony="failure-patterns")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url.endswith("/wiki/rules?colony=failure-patterns"), req.full_url
+        assert _last_body(mock_urlopen) == {"content": "new", "base_revision": 3}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_history_carries_colony_beside_pagination(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(json.dumps([]))
+        client = _authed_client()
+
+        client.get_wiki_history("rules", limit=5, offset=10, colony="failure-patterns")
+
+        url = _last_request(mock_urlopen).full_url
+        assert "/wiki/rules/history?" in url
+        assert "colony=failure-patterns" in url
+        assert "limit=5" in url and "offset=10" in url
+
+    @patch("colony_sdk.client.urlopen")
+    def test_revision_names_the_colony(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(json.dumps({}))
+        client = _authed_client()
+
+        client.get_wiki_revision("rules", _REV, colony="failure-patterns")
+
+        assert _last_request(mock_urlopen).full_url.endswith(f"/wiki/rules/revision/{_REV}?colony=failure-patterns")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_list_and_iterator_filter_by_colony(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = [
+            _mock_response(json.dumps({"items": [], "total": 0})),
+            _mock_response(json.dumps({"items": [{"slug": "a"}, {"slug": "b"}]})),
+            _mock_response(json.dumps({"items": [{"slug": "c"}]})),
+        ]
+        client = _authed_client()
+
+        client.get_wiki_pages(colony="failure-patterns")
+        assert "colony=failure-patterns" in _last_request(mock_urlopen).full_url
+
+        out = list(client.iter_wiki_pages(page_size=2, colony="failure-patterns"))
+        assert [p["slug"] for p in out] == ["a", "b", "c"]
+        urls = [c.args[0].full_url for c in mock_urlopen.call_args_list[1:]]
+        assert len(urls) == 2 and all("colony=failure-patterns" in u for u in urls), urls
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_padded_name_is_sent_as_given_not_repaired(self, mock_urlopen: MagicMock) -> None:
+        """The SDK's rule (``_require_nonempty``): a blank is refused, and
+        anything else passes through untouched. Padding is left for the
+        server to judge, not quietly stripped."""
+        from urllib.parse import parse_qs, urlsplit
+
+        mock_urlopen.return_value = _mock_response(json.dumps({}))
+        client = _authed_client()
+
+        client.get_wiki_page("rules", colony="  failure-patterns ")
+
+        query = parse_qs(urlsplit(_last_request(mock_urlopen).full_url).query)
+        assert query == {"colony": ["  failure-patterns "]}
+
+    @pytest.mark.parametrize("blank", BLANK_COLONIES)
+    @pytest.mark.parametrize(
+        "method,args",
+        [
+            ("get_wiki_pages", ()),
+            ("get_wiki_page", ("rules",)),
+            ("create_wiki_page", ("rules", "Rules")),
+            ("update_wiki_page", ("rules",)),
+            ("get_wiki_history", ("rules",)),
+            ("get_wiki_revision", ("rules", _REV)),
+        ],
+    )
+    @patch("colony_sdk.client.urlopen")
+    def test_a_blank_colony_is_refused_before_the_request(
+        self, mock_urlopen: MagicMock, method: str, args: tuple, blank: str
+    ) -> None:
+        """The server answers a blank with 404 "Colony not found", which
+        names a missing colony rather than an empty argument."""
+        client = _authed_client()
+        with pytest.raises(ValueError, match="colony is empty"):
+            getattr(client, method)(*args, colony=blank)
+        mock_urlopen.assert_not_called()
+
+    def test_a_non_string_colony_is_refused(self) -> None:
+        with pytest.raises(TypeError, match="colony must be a str"):
+            _authed_client().get_wiki_page("rules", colony=123)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("client_cls", ["ColonyClient", "AsyncColonyClient", "MockColonyClient"])
+    def test_colony_is_keyword_only_on_every_client(self, client_cls: str) -> None:
+        """Positional arguments already exist on create/update/history; a
+        new trailing positional would silently swallow a caller's value.
+        Checked on all three clients, because parity is the point."""
+        import inspect
+
+        import colony_sdk
+        import colony_sdk.async_client
+        import colony_sdk.testing
+
+        cls = {
+            "ColonyClient": colony_sdk.ColonyClient,
+            "AsyncColonyClient": colony_sdk.async_client.AsyncColonyClient,
+            "MockColonyClient": colony_sdk.testing.MockColonyClient,
+        }[client_cls]
+        for name in (
+            "get_wiki_pages",
+            "iter_wiki_pages",
+            "get_wiki_page",
+            "create_wiki_page",
+            "update_wiki_page",
+            "get_wiki_history",
+            "get_wiki_revision",
+        ):
+            param = inspect.signature(getattr(cls, name)).parameters["colony"]
+            assert param.kind is inspect.Parameter.KEYWORD_ONLY, f"{client_cls}.{name}"
+
+    @pytest.mark.parametrize("client_cls", ["ColonyClient", "AsyncColonyClient", "MockColonyClient"])
+    @pytest.mark.parametrize("method", ["get_wiki_pages", "iter_wiki_pages"])
+    def test_colony_comes_before_the_deprecated_search(self, client_cls: str, method: str) -> None:
+        """Deprecated aliases go last, as in ``get_posts``' ``*, search``. The
+        order is visible in ``help()`` and in IDE signatures."""
+        import inspect
+
+        import colony_sdk
+        import colony_sdk.async_client
+        import colony_sdk.testing
+
+        cls = {
+            "ColonyClient": colony_sdk.ColonyClient,
+            "AsyncColonyClient": colony_sdk.async_client.AsyncColonyClient,
+            "MockColonyClient": colony_sdk.testing.MockColonyClient,
+        }[client_cls]
+        names = list(inspect.signature(getattr(cls, method)).parameters)
+        assert names[-2:] == ["colony", "search"], names
+
+
+class TestColonyWikiAsync:
+    @pytest.mark.asyncio
+    async def test_every_route_names_the_colony_where_its_sync_twin_does(self) -> None:
+        seen: list[tuple[str, str, bytes]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append((request.method, str(request.url), request.content))
+            if "/history" in request.url.path:
+                return _json_response([])
+            if request.url.path.endswith("/wiki") and request.method == "GET":
+                return _json_response({"items": []})
+            return _json_response({})
+
+        client = _make_client(handler)
+        c = "failure-patterns"
+        await client.get_wiki_pages(colony=c)
+        await client.get_wiki_page("rules", colony=c)
+        await client.create_wiki_page("rules", "Rules", colony=c)
+        await client.update_wiki_page("rules", title="T", colony=c)
+        await client.get_wiki_history("rules", colony=c)
+        await client.get_wiki_revision("rules", _REV, colony=c)
+        pages = [p async for p in client.iter_wiki_pages(colony=c)]
+        await client.aclose()
+
+        assert pages == []
+        get_list, get_page, create, update, history, revision, iterate = seen
+        assert "colony=failure-patterns" in get_list[1]
+        assert get_page[1].endswith("/wiki/rules?colony=failure-patterns")
+        assert json.loads(create[2])["colony"] == c and "colony=" not in create[1]
+        assert update[1].endswith("/wiki/rules?colony=failure-patterns")
+        assert json.loads(update[2]) == {"title": "T"}
+        assert "colony=failure-patterns" in history[1]
+        assert revision[1].endswith(f"/revision/{_REV}?colony=failure-patterns")
+        assert "colony=failure-patterns" in iterate[1]
+
+    @pytest.mark.asyncio
+    async def test_async_refuses_a_blank_colony(self) -> None:
+        calls: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request)
+            return _json_response({})
+
+        client = _make_client(handler)
+        with pytest.raises(ValueError, match="colony is empty"):
+            await client.get_wiki_page("rules", colony=" ")
+        with pytest.raises(ValueError, match="colony is empty"):
+            await client.create_wiki_page("rules", "Rules", colony="")
+        await client.aclose()
+        assert calls == []
+
+
+class TestColonyWikiMock:
+    def test_the_mock_accepts_and_records_colony(self) -> None:
+        m = MockColonyClient()
+        c = "failure-patterns"
+        m.get_wiki_pages(colony=c)
+        m.get_wiki_page("rules", colony=c)
+        m.create_wiki_page("rules", "Rules", colony=c)
+        m.update_wiki_page("rules", title="T", colony=c)
+        m.get_wiki_history("rules", colony=c)
+        m.get_wiki_revision("rules", "r-1", colony=c)
+
+        assert [kwargs["colony"] for _, kwargs in m.calls] == [c] * 6
+
+    def test_the_mock_rejects_a_blank_colony_like_the_client(self) -> None:
+        m = MockColonyClient()
+        with pytest.raises(ValueError, match="colony is empty"):
+            m.get_wiki_page("rules", colony="")
+        with pytest.raises(ValueError, match="colony is empty"):
+            m.update_wiki_page("rules", colony="  ")
+        with pytest.raises(ValueError, match="colony is empty"):
+            list(m.iter_wiki_pages(colony=""))
+
+    def test_the_mock_iterator_records_colony_like_every_wiki_call(self) -> None:
+        """It used to take ``**kwargs``, which recorded ``{}`` when no colony
+        was given and accepted a blank one."""
+        m = MockColonyClient(responses={"get_wiki_pages": {"items": [{"slug": "a"}]}})
+
+        assert [p["slug"] for p in m.iter_wiki_pages()] == ["a"]
+        assert m.calls[-1][1]["colony"] is None
+        list(m.iter_wiki_pages(colony="failure-patterns", max_results=1))
+        assert m.calls[-1] == (
+            "iter_wiki_pages",
+            {
+                "category": None,
+                "query": None,
+                "page_size": 50,
+                "max_results": 1,
+                "colony": "failure-patterns",
+            },
+        )
