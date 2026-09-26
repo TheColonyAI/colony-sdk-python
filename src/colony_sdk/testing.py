@@ -38,6 +38,7 @@ from colony_sdk.client import (
     _require_puzzle_slug,
     _require_puzzle_type,
     _require_report_reason,
+    _require_wiki_colony,
     _require_wiki_slug,
     _validate_delegation_scopes,
     _validate_org_visibility,
@@ -527,6 +528,15 @@ _DEFAULTS: dict[str, Any] = {
     # email_verified, so code written against it raised KeyError in production.
     "verify_email": {"email": "agent@example.com", "email_verified": True},
 }
+
+
+def _mock_wiki_colony(colony: str | None) -> str | None:
+    """The real client's ``colony`` check, so the double refuses a blank too.
+
+    A mock that accepted ``colony=""`` would let a test pass on a value the
+    real client refuses before the request leaves.
+    """
+    return None if colony is None else _require_wiki_colony(colony)
 
 
 class MockColonyClient:
@@ -1836,6 +1846,7 @@ class MockColonyClient:
         offset: int = 0,
         *,
         search: str | None = None,
+        colony: str | None = None,
     ) -> dict:
         query = _renamed_kwarg("get_wiki_pages", "query", query, "search", search)
         return self._respond(
@@ -1845,11 +1856,12 @@ class MockColonyClient:
                 "query": query,
                 "limit": limit,
                 "offset": offset,
+                "colony": _mock_wiki_colony(colony),
             },
         )
 
-    def get_wiki_page(self, slug: str) -> dict:
-        return self._respond("get_wiki_page", {"slug": slug})
+    def get_wiki_page(self, slug: str, *, colony: str | None = None) -> dict:
+        return self._respond("get_wiki_page", {"slug": slug, "colony": _mock_wiki_colony(colony)})
 
     def create_wiki_page(
         self,
@@ -1858,6 +1870,8 @@ class MockColonyClient:
         content: str = "",
         category: str | None = None,
         summary: str | None = None,
+        *,
+        colony: str | None = None,
     ) -> dict:
         # The slug check runs here too. A mock that accepts "Getting Started"
         # lets a test pass against a value the real client refuses, which is
@@ -1871,6 +1885,7 @@ class MockColonyClient:
                 "content": content,
                 "category": category,
                 "summary": summary,
+                "colony": _mock_wiki_colony(colony),
             },
         )
 
@@ -1882,6 +1897,8 @@ class MockColonyClient:
         category: str | None = None,
         summary: str | None = None,
         base_revision: int | None = None,
+        *,
+        colony: str | None = None,
     ) -> dict:
         slug = _require_wiki_slug(slug)
         return self._respond(
@@ -1893,6 +1910,7 @@ class MockColonyClient:
                 "category": category,
                 "summary": summary,
                 "base_revision": base_revision,
+                "colony": _mock_wiki_colony(colony),
             },
         )
 
@@ -1909,11 +1927,17 @@ class MockColonyClient:
                 return
             yield item
 
-    def get_wiki_history(self, slug: str, limit: int = 50, offset: int = 0) -> list:
-        return self._respond("get_wiki_history", {"slug": slug, "limit": limit, "offset": offset})
+    def get_wiki_history(self, slug: str, limit: int = 50, offset: int = 0, *, colony: str | None = None) -> list:
+        return self._respond(
+            "get_wiki_history",
+            {"slug": slug, "limit": limit, "offset": offset, "colony": _mock_wiki_colony(colony)},
+        )
 
-    def get_wiki_revision(self, slug: str, revision_id: str) -> dict:
-        return self._respond("get_wiki_revision", {"slug": slug, "revision_id": revision_id})
+    def get_wiki_revision(self, slug: str, revision_id: str, *, colony: str | None = None) -> dict:
+        return self._respond(
+            "get_wiki_revision",
+            {"slug": slug, "revision_id": revision_id, "colony": _mock_wiki_colony(colony)},
+        )
 
     # ── System ──
 

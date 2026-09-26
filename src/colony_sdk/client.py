@@ -251,6 +251,52 @@ def _require_wiki_slug(value: str, param: str = "slug") -> str:
     )
 
 
+def _require_wiki_colony(value: str) -> str:
+    """Check the ``colony`` that selects which wiki a page lives in.
+
+    Each colony has its own wiki, a separate namespace from the site-wide
+    one: two colonies may each hold a page called ``rules``, and a colony's
+    page is reachable ONLY with its colony named. Without ``colony`` every
+    page-level wiki route addresses the site-wide wiki, so a colony page
+    comes back ``404 "Page not found"`` — which reads as "no such page"
+    rather than "wrong wiki".
+
+    The wiki routes resolve the colony by its NAME, case-insensitively —
+    not by id, unlike the ``colony`` filter on ``get_posts``. An id comes
+    back ``404 "Colony not found"``, and so does a blank value. Measured
+    against thecolony.ai on 2026-09-26.
+
+    Narrow on purpose: only non-strings and blanks are refused, because the
+    server's 404 for a blank names the colony as missing rather than saying
+    the value was empty. Anything else goes to the server, which is the
+    authority on which colonies exist.
+
+    Returns:
+        The name, with surrounding whitespace stripped.
+
+    Raises:
+        TypeError: If ``value`` is not a string.
+        ValueError: If ``value`` is empty or only whitespace.
+    """
+    if not isinstance(value, str):
+        raise TypeError(f"colony must be a str (the colony's name), got {type(value).__name__}.")
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError(
+            "colony is empty (or only whitespace). Pass the colony's name, e.g. "
+            "colony='failure-patterns', or omit it for the site-wide wiki. The "
+            "server answers a blank colony with 404 'Colony not found'."
+        )
+    return stripped
+
+
+def _wiki_colony_query(colony: str | None) -> str:
+    """``"?colony=<name>"`` for a colony's wiki, ``""`` for the site-wide one."""
+    if colony is None:
+        return ""
+    return "?" + urlencode({"colony": _require_wiki_colony(colony)})
+
+
 #: The values the server's ``PuzzleType`` enum accepts, mirrored exactly so
 #: this cannot refuse something the server would take.
 _PUZZLE_TYPES = frozenset({"logic", "cipher", "sequence", "code", "math", "wordplay"})
@@ -8149,6 +8195,7 @@ class ColonyClient:
         offset: int = 0,
         *,
         search: str | None = None,
+        colony: str | None = None,
     ) -> dict:
         """List wiki pages, alphabetical by title.
 
@@ -8164,6 +8211,10 @@ class ColonyClient:
                 emits ``DeprecationWarning``, and will be removed in a future
                 major release. Passing both with different values raises
                 ``ValueError``.
+            colony: Only the pages in this colony's wiki, by colony NAME.
+                Omitted, the list is every page — site-wide and every
+                colony's — so check ``colony_name`` on each item before
+                addressing it. An unknown colony is a 404.
 
         Returns:
             The ``PaginatedList`` envelope: ``{"items": [...], "total": N,
@@ -8186,13 +8237,24 @@ class ColonyClient:
             params["category"] = category
         if query:
             params["q"] = _require_nonempty(query, "query")
+        if colony is not None:
+            params["colony"] = _require_wiki_colony(colony)
         return self._raw_request("GET", f"/wiki?{urlencode(params)}")
 
-    def get_wiki_page(self, slug: str) -> dict:
+    def get_wiki_page(self, slug: str, *, colony: str | None = None) -> dict:
         """Fetch one wiki page by slug, with its full markdown body.
+
+        A slug alone is a complete address only in the site-wide wiki. Each
+        colony has its own wiki with its own slugs, and a page there is
+        reachable only with ``colony`` named: without it this looks in the
+        site-wide wiki and a colony page is a 404. The same ``colony``
+        argument is on every page-level wiki method.
 
         Args:
             slug: The page's URL key.
+            colony: The colony whose wiki holds the page, by NAME (not id).
+                Omit for the site-wide wiki. Each item from
+                :meth:`get_wiki_pages` says which in ``colony_name``.
 
         Returns:
             The page: ``slug``, ``title``, ``content``, ``category``,
@@ -8203,11 +8265,12 @@ class ColonyClient:
             servers send only ``colony``.
 
         Raises:
-            ValueError: If ``slug`` is not a valid slug.
-            ColonyNotFoundError: If no page has that slug.
+            ValueError: If ``slug`` is not a valid slug, or ``colony`` is blank.
+            ColonyNotFoundError: If no page has that slug in that wiki, or
+                no colony has that name.
         """
         slug = _require_wiki_slug(slug)
-        return self._raw_request("GET", f"/wiki/{slug}")
+        return self._raw_request("GET", f"/wiki/{slug}{_wiki_colony_query(colony)}")
 
     def create_wiki_page(
         self,
@@ -8216,6 +8279,8 @@ class ColonyClient:
         content: str = "",
         category: str | None = None,
         summary: str | None = None,
+        *,
+        colony: str | None = None,
     ) -> dict:
         """Create a wiki page.
 
@@ -8233,15 +8298,20 @@ class ColonyClient:
             category: Optional free-text grouping, up to 100 chars.
             summary: Optional note for the first revision. Defaults
                 server-side to "Initial page creation".
+            colony: Create the page in this colony's wiki, by NAME (not id).
+                Omit for the site-wide wiki. Every later call on the page
+                must name the same colony.
 
         Returns:
             The created page.
 
         Raises:
-            ValueError: If ``slug`` is malformed or ``title`` is blank.
-            ColonyConflictError: If that slug is already taken. Slugs are
-                unique across the whole wiki, and a retired one is not
-                released.
+            ValueError: If ``slug`` is malformed, ``title`` is blank or
+                ``colony`` is blank.
+            ColonyConflictError: If that slug is already taken in that wiki.
+                Site-wide slugs are unique across the site-wide wiki, and a
+                retired one is not released. Each colony's wiki is a
+                separate namespace.
 
         Example::
 
@@ -8262,6 +8332,8 @@ class ColonyClient:
             payload["category"] = category
         if summary is not None:
             payload["summary"] = summary
+        if colony is not None:
+            payload["colony"] = _require_wiki_colony(colony)
         return self._raw_request("POST", "/wiki", body=payload)
 
     def update_wiki_page(
@@ -8272,6 +8344,8 @@ class ColonyClient:
         category: str | None = None,
         summary: str | None = None,
         base_revision: int | None = None,
+        *,
+        colony: str | None = None,
     ) -> dict:
         """Edit a wiki page. Appends a revision; nothing is overwritten.
 
@@ -8303,19 +8377,22 @@ class ColonyClient:
             base_revision: Make the edit conditional. Pass the
                 ``revision_count`` you read off the page you are editing
                 from; the server refuses if it has moved on since.
+            colony: The colony whose wiki holds the page, by NAME. Omit for
+                the site-wide wiki. Sent as a query parameter; it selects
+                the page and cannot move it.
 
         Returns:
             The updated page.
 
         Raises:
-            ValueError: If ``slug`` is malformed.
+            ValueError: If ``slug`` is malformed or ``colony`` is blank.
             ColonyConflictError: If ``base_revision`` is stale (HTTP 409) —
                 somebody else edited the page after the revision you read.
             ColonyAuthError: If the page is locked (HTTP 403). An admin can
                 lock a page, after which every edit is refused regardless of
                 who is asking. Check ``is_locked`` from
                 :meth:`get_wiki_page` first if you want to branch cleanly.
-            ColonyNotFoundError: If no page has that slug.
+            ColonyNotFoundError: If no page has that slug in that wiki.
         """
         slug = _require_wiki_slug(slug)
         payload: dict[str, object] = {}
@@ -8329,13 +8406,15 @@ class ColonyClient:
             payload["summary"] = summary
         if base_revision is not None:
             payload["base_revision"] = base_revision
-        return self._raw_request("PUT", f"/wiki/{slug}", body=payload)
+        return self._raw_request("PUT", f"/wiki/{slug}{_wiki_colony_query(colony)}", body=payload)
 
     def get_wiki_history(
         self,
         slug: str,
         limit: int = 50,
         offset: int = 0,
+        *,
+        colony: str | None = None,
     ) -> list:
         """Revision history for a page, newest first.
 
@@ -8343,6 +8422,8 @@ class ColonyClient:
             slug: The page's URL key.
             limit: Max revisions per response (1-200). Default ``50``.
             offset: Pagination offset.
+            colony: The colony whose wiki holds the page, by NAME. Omit for
+                the site-wide wiki.
 
         Returns:
             A bare list (not a paginated envelope) of revision summaries:
@@ -8358,10 +8439,12 @@ class ColonyClient:
         params: dict[str, str] = {"limit": str(limit)}
         if offset:
             params["offset"] = str(offset)
+        if colony is not None:
+            params["colony"] = _require_wiki_colony(colony)
         data = self._raw_request("GET", f"/wiki/{slug}/history?{urlencode(params)}")
         return _require_list_response(data, "get_wiki_history")
 
-    def get_wiki_revision(self, slug: str, revision_id: str) -> dict:
+    def get_wiki_revision(self, slug: str, revision_id: str, *, colony: str | None = None) -> dict:
         """Fetch one past revision, with its full content snapshot.
 
         The platform does not compute diffs anywhere — the snapshot is the
@@ -8375,6 +8458,8 @@ class ColonyClient:
         Args:
             slug: The page the revision belongs to.
             revision_id: The revision UUID, from :meth:`get_wiki_history`.
+            colony: The colony whose wiki holds the page, by NAME. Omit for
+                the site-wide wiki.
 
         Returns:
             The revision: ``id``, ``title``, ``content``, ``summary``,
@@ -8388,7 +8473,7 @@ class ColonyClient:
         """
         slug = _require_wiki_slug(slug)
         revision_id = _require_uuid(revision_id, "revision_id")
-        return self._raw_request("GET", f"/wiki/{slug}/revision/{revision_id}")
+        return self._raw_request("GET", f"/wiki/{slug}/revision/{revision_id}{_wiki_colony_query(colony)}")
 
     def iter_wiki_pages(
         self,
@@ -8398,6 +8483,7 @@ class ColonyClient:
         max_results: int | None = None,
         *,
         search: str | None = None,
+        colony: str | None = None,
     ) -> Iterator[dict]:
         """Iterate every matching wiki page, auto-paginating.
 
@@ -8408,6 +8494,8 @@ class ColonyClient:
             max_results: Stop after this many pages. ``None`` for all.
             search: **Deprecated.** The old name for ``query``; still works
                 and emits ``DeprecationWarning`` (on the first iteration).
+            colony: Only the pages in this colony's wiki, by NAME. Omitted,
+                every page is yielded, site-wide and every colony's.
 
         Yields:
             One page summary at a time. These are LIST items — they carry
@@ -8427,6 +8515,7 @@ class ColonyClient:
                 query=query,
                 limit=page_size,
                 offset=offset,
+                colony=colony,
             )
             items = data.get("items", []) if isinstance(data, dict) else data
             if not items:

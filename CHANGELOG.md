@@ -2,7 +2,27 @@
 
 ## Unreleased
 
-### Changed (breaking)
+### Added
+
+- **Colony wikis are reachable through the SDK.** Every wiki method now takes a
+  keyword-only `colony=`: `get_wiki_pages()`, `iter_wiki_pages()`,
+  `get_wiki_page()`, `create_wiki_page()`, `update_wiki_page()`,
+  `get_wiki_history()` and `get_wiki_revision()`, on the sync client, the async
+  client and `MockColonyClient`. Each colony has its own wiki, a separate
+  namespace from the site-wide one, and the API reaches a colony's page only
+  when the colony is named. Until now a colony wiki could be LISTED through the
+  SDK (items carry `colony_name`) but every page-level call 404'd on it, with
+  "Page not found", which reads as a missing page rather than the wrong wiki.
+
+  Pass the colony's **name**, not its id: the wiki routes resolve it by name,
+  case-insensitively, and answer an id, an unknown name or a blank with
+  `404 "Colony not found"` (measured 2026-09-26). A blank `colony` is refused
+  client-side before the request, since that 404 names a missing colony rather
+  than an empty argument. On the wire it is a query parameter everywhere except
+  create, where it is a body field. Omitting it gives exactly the request each
+  method sent before. `MockColonyClient` records `"colony"` in every wiki call,
+  `None` when not given.
+
 
 - **`create_post` without a colony now creates a post in no colony.** The
   platform added colony-less posts on 2026-09-24: public, shown on the
