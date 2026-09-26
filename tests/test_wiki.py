@@ -647,7 +647,7 @@ class TestMockParity:
 # before these arguments existed a colony wiki could be LISTED through the
 # SDK (items carry ``colony_name``) and not read, created or edited.
 # Measured against thecolony.ai on 2026-09-26: name resolves
-# case-insensitively; an id, an unknown name and a blank are all
+# case-insensitively; a UUID, an unknown name and a blank are all
 # ``404 "Colony not found"``.
 # ---------------------------------------------------------------------------
 
@@ -755,13 +755,19 @@ class TestColonyWikiSync:
         assert len(urls) == 2 and all("colony=failure-patterns" in u for u in urls), urls
 
     @patch("colony_sdk.client.urlopen")
-    def test_surrounding_whitespace_is_stripped(self, mock_urlopen: MagicMock) -> None:
+    def test_a_padded_name_is_sent_as_given_not_repaired(self, mock_urlopen: MagicMock) -> None:
+        """The SDK's rule (``_require_nonempty``): a blank is refused, and
+        anything else passes through untouched. Padding is left for the
+        server to judge, not quietly stripped."""
+        from urllib.parse import parse_qs, urlsplit
+
         mock_urlopen.return_value = _mock_response(json.dumps({}))
         client = _authed_client()
 
         client.get_wiki_page("rules", colony="  failure-patterns ")
 
-        assert _last_request(mock_urlopen).full_url.endswith("?colony=failure-patterns")
+        query = parse_qs(urlsplit(_last_request(mock_urlopen).full_url).query)
+        assert query == {"colony": ["  failure-patterns "]}
 
     @pytest.mark.parametrize("blank", BLANK_COLONIES)
     @pytest.mark.parametrize(
@@ -790,13 +796,22 @@ class TestColonyWikiSync:
         with pytest.raises(TypeError, match="colony must be a str"):
             _authed_client().get_wiki_page("rules", colony=123)  # type: ignore[arg-type]
 
-    def test_colony_is_keyword_only(self) -> None:
+    @pytest.mark.parametrize("client_cls", ["ColonyClient", "AsyncColonyClient", "MockColonyClient"])
+    def test_colony_is_keyword_only_on_every_client(self, client_cls: str) -> None:
         """Positional arguments already exist on create/update/history; a
-        new trailing positional would silently swallow a caller's value."""
+        new trailing positional would silently swallow a caller's value.
+        Checked on all three clients, because parity is the point."""
         import inspect
 
-        from colony_sdk import ColonyClient
+        import colony_sdk
+        import colony_sdk.async_client
+        import colony_sdk.testing
 
+        cls = {
+            "ColonyClient": colony_sdk.ColonyClient,
+            "AsyncColonyClient": colony_sdk.async_client.AsyncColonyClient,
+            "MockColonyClient": colony_sdk.testing.MockColonyClient,
+        }[client_cls]
         for name in (
             "get_wiki_pages",
             "iter_wiki_pages",
@@ -806,8 +821,27 @@ class TestColonyWikiSync:
             "get_wiki_history",
             "get_wiki_revision",
         ):
-            param = inspect.signature(getattr(ColonyClient, name)).parameters["colony"]
-            assert param.kind is inspect.Parameter.KEYWORD_ONLY, name
+            param = inspect.signature(getattr(cls, name)).parameters["colony"]
+            assert param.kind is inspect.Parameter.KEYWORD_ONLY, f"{client_cls}.{name}"
+
+    @pytest.mark.parametrize("client_cls", ["ColonyClient", "AsyncColonyClient", "MockColonyClient"])
+    @pytest.mark.parametrize("method", ["get_wiki_pages", "iter_wiki_pages"])
+    def test_colony_comes_before_the_deprecated_search(self, client_cls: str, method: str) -> None:
+        """Deprecated aliases go last, as in ``get_posts``' ``*, search``. The
+        order is visible in ``help()`` and in IDE signatures."""
+        import inspect
+
+        import colony_sdk
+        import colony_sdk.async_client
+        import colony_sdk.testing
+
+        cls = {
+            "ColonyClient": colony_sdk.ColonyClient,
+            "AsyncColonyClient": colony_sdk.async_client.AsyncColonyClient,
+            "MockColonyClient": colony_sdk.testing.MockColonyClient,
+        }[client_cls]
+        names = list(inspect.signature(getattr(cls, method)).parameters)
+        assert names[-2:] == ["colony", "search"], names
 
 
 class TestColonyWikiAsync:
@@ -881,3 +915,24 @@ class TestColonyWikiMock:
             m.get_wiki_page("rules", colony="")
         with pytest.raises(ValueError, match="colony is empty"):
             m.update_wiki_page("rules", colony="  ")
+        with pytest.raises(ValueError, match="colony is empty"):
+            list(m.iter_wiki_pages(colony=""))
+
+    def test_the_mock_iterator_records_colony_like_every_wiki_call(self) -> None:
+        """It used to take ``**kwargs``, which recorded ``{}`` when no colony
+        was given and accepted a blank one."""
+        m = MockColonyClient(responses={"get_wiki_pages": {"items": [{"slug": "a"}]}})
+
+        assert [p["slug"] for p in m.iter_wiki_pages()] == ["a"]
+        assert m.calls[-1][1]["colony"] is None
+        list(m.iter_wiki_pages(colony="failure-patterns", max_results=1))
+        assert m.calls[-1] == (
+            "iter_wiki_pages",
+            {
+                "category": None,
+                "query": None,
+                "page_size": 50,
+                "max_results": 1,
+                "colony": "failure-patterns",
+            },
+        )

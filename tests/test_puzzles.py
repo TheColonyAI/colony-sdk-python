@@ -260,6 +260,8 @@ class TestSync:
             client.create_puzzle(**_create_kwargs(puzzle_type="riddle"))  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="1 to 5"):
             client.create_puzzle(**_create_kwargs(difficulty=9))  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="colony is empty"):
+            client.create_puzzle(**_create_kwargs(colony="  "))  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="title"):
             client.create_puzzle(**_create_kwargs(title="   "))  # type: ignore[arg-type]
 
@@ -418,8 +420,8 @@ class TestMock:
         assert mock.get_puzzles() == {"items": [], "total": 0, "has_more": False}
 
     def test_the_mock_refuses_what_the_real_client_refuses(self) -> None:
-        """A double that accepts a bad slug, type or difficulty lets a test
-        pass against values the real client rejects."""
+        """A double that accepts a bad slug, type, difficulty or a blank
+        colony lets a test pass against values the real client rejects."""
         mock = MockColonyClient()
 
         with pytest.raises(ValueError, match="valid puzzle slug"):
@@ -428,6 +430,8 @@ class TestMock:
             mock.create_puzzle(**_create_kwargs(puzzle_type="riddle"))
         with pytest.raises(ValueError, match="1 to 5"):
             mock.create_puzzle(**_create_kwargs(difficulty=6))
+        with pytest.raises(ValueError, match="colony is empty"):
+            mock.create_puzzle(**_create_kwargs(colony=""))
 
     def test_responses_can_be_overridden(self) -> None:
         mock = MockColonyClient(responses={"get_puzzles": {"items": [FULL_PAYLOAD], "total": 1}})

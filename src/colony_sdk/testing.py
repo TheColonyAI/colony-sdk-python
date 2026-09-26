@@ -34,11 +34,11 @@ from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
     _renamed_kwarg,
+    _require_colony_name,
     _require_difficulty,
     _require_puzzle_slug,
     _require_puzzle_type,
     _require_report_reason,
-    _require_wiki_colony,
     _require_wiki_slug,
     _validate_delegation_scopes,
     _validate_org_visibility,
@@ -530,13 +530,13 @@ _DEFAULTS: dict[str, Any] = {
 }
 
 
-def _mock_wiki_colony(colony: str | None) -> str | None:
-    """The real client's ``colony`` check, so the double refuses a blank too.
+def _optional_colony_name(colony: str | None) -> str | None:
+    """The real client's colony-name check, so the double refuses a blank too.
 
     A mock that accepted ``colony=""`` would let a test pass on a value the
     real client refuses before the request leaves.
     """
-    return None if colony is None else _require_wiki_colony(colony)
+    return None if colony is None else _require_colony_name(colony)
 
 
 class MockColonyClient:
@@ -1845,8 +1845,8 @@ class MockColonyClient:
         limit: int = 50,
         offset: int = 0,
         *,
-        search: str | None = None,
         colony: str | None = None,
+        search: str | None = None,
     ) -> dict:
         query = _renamed_kwarg("get_wiki_pages", "query", query, "search", search)
         return self._respond(
@@ -1856,12 +1856,12 @@ class MockColonyClient:
                 "query": query,
                 "limit": limit,
                 "offset": offset,
-                "colony": _mock_wiki_colony(colony),
+                "colony": _optional_colony_name(colony),
             },
         )
 
     def get_wiki_page(self, slug: str, *, colony: str | None = None) -> dict:
-        return self._respond("get_wiki_page", {"slug": slug, "colony": _mock_wiki_colony(colony)})
+        return self._respond("get_wiki_page", {"slug": slug, "colony": _optional_colony_name(colony)})
 
     def create_wiki_page(
         self,
@@ -1885,7 +1885,7 @@ class MockColonyClient:
                 "content": content,
                 "category": category,
                 "summary": summary,
-                "colony": _mock_wiki_colony(colony),
+                "colony": _optional_colony_name(colony),
             },
         )
 
@@ -1910,18 +1910,40 @@ class MockColonyClient:
                 "category": category,
                 "summary": summary,
                 "base_revision": base_revision,
-                "colony": _mock_wiki_colony(colony),
+                "colony": _optional_colony_name(colony),
             },
         )
 
-    def iter_wiki_pages(self, **kwargs: Any) -> Iterator[dict]:
-        # Mirrors the other iterators here: records the call and yields the
-        # canned list, rather than re-implementing pagination against a
-        # double that returns one fixed page forever.
-        self.calls.append(("iter_wiki_pages", kwargs))
+    def iter_wiki_pages(
+        self,
+        category: str | None = None,
+        query: str | None = None,
+        page_size: int = 50,
+        max_results: int | None = None,
+        *,
+        colony: str | None = None,
+        search: str | None = None,
+    ) -> Iterator[dict]:
+        # Records the call and yields the canned list, like the other mock
+        # iterators, rather than re-implementing pagination against a double
+        # that returns one fixed page forever. Unlike them it takes an
+        # explicit signature: a **kwargs double accepted colony="" (which the
+        # real client refuses) and recorded no "colony" when none was given.
+        query = _renamed_kwarg("iter_wiki_pages", "query", query, "search", search)
+        self.calls.append(
+            (
+                "iter_wiki_pages",
+                {
+                    "category": category,
+                    "query": query,
+                    "page_size": page_size,
+                    "max_results": max_results,
+                    "colony": _optional_colony_name(colony),
+                },
+            )
+        )
         resp = self._responses.get("get_wiki_pages", {"items": []})
         items = resp.get("items", []) if isinstance(resp, dict) else resp
-        max_results = kwargs.get("max_results")
         for i, item in enumerate(items):
             if max_results is not None and i >= max_results:
                 return
@@ -1930,13 +1952,13 @@ class MockColonyClient:
     def get_wiki_history(self, slug: str, limit: int = 50, offset: int = 0, *, colony: str | None = None) -> list:
         return self._respond(
             "get_wiki_history",
-            {"slug": slug, "limit": limit, "offset": offset, "colony": _mock_wiki_colony(colony)},
+            {"slug": slug, "limit": limit, "offset": offset, "colony": _optional_colony_name(colony)},
         )
 
     def get_wiki_revision(self, slug: str, revision_id: str, *, colony: str | None = None) -> dict:
         return self._respond(
             "get_wiki_revision",
-            {"slug": slug, "revision_id": revision_id, "colony": _mock_wiki_colony(colony)},
+            {"slug": slug, "revision_id": revision_id, "colony": _optional_colony_name(colony)},
         )
 
     # ── System ──
@@ -2398,13 +2420,14 @@ class MockColonyClient:
         colony: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict:
-        # All three checks run here too. A mock that accepts "River
-        # Crossing", a bogus puzzle_type or difficulty 9 lets a test pass
-        # against values the real client refuses, which is the one thing a
-        # test double must never do.
+        # All four checks run here too. A mock that accepts "River
+        # Crossing", a bogus puzzle_type, difficulty 9 or a blank colony lets
+        # a test pass against values the real client refuses, which is the
+        # one thing a test double must never do.
         slug = _require_puzzle_slug(slug)
         puzzle_type = _require_puzzle_type(puzzle_type)
         difficulty = _require_difficulty(difficulty)
+        colony = _optional_colony_name(colony)
         return self._respond(
             "create_puzzle",
             {
