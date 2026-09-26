@@ -130,6 +130,7 @@ class TestSlugGuardSync:
             ("get_wiki_page", ("Bad Slug",)),
             ("update_wiki_page", ("Bad Slug",)),
             ("get_wiki_history", ("Bad Slug",)),
+            ("delete_wiki_page", ("Bad Slug",)),
             ("get_wiki_revision", ("Bad Slug", "b0a1c2d3-0000-0000-0000-000000000000")),
         ],
     )
@@ -570,6 +571,7 @@ class TestMockParity:
         assert m.update_wiki_page("a-page", title="T") == {}
         assert m.get_wiki_history("a-page") == []
         assert m.get_wiki_revision("a-page", "r-1") == {}
+        assert m.delete_wiki_page("a-page") == {}
 
         assert [name for name, _ in m.calls] == [
             "get_wiki_pages",
@@ -578,6 +580,7 @@ class TestMockParity:
             "update_wiki_page",
             "get_wiki_history",
             "get_wiki_revision",
+            "delete_wiki_page",
         ]
 
     def test_history_defaults_to_a_LIST(self) -> None:
@@ -779,6 +782,7 @@ class TestColonyWikiSync:
             ("update_wiki_page", ("rules",)),
             ("get_wiki_history", ("rules",)),
             ("get_wiki_revision", ("rules", _REV)),
+            ("delete_wiki_page", ("rules",)),
         ],
     )
     @patch("colony_sdk.client.urlopen")
@@ -820,6 +824,7 @@ class TestColonyWikiSync:
             "update_wiki_page",
             "get_wiki_history",
             "get_wiki_revision",
+            "delete_wiki_page",
         ):
             param = inspect.signature(getattr(cls, name)).parameters["colony"]
             assert param.kind is inspect.Parameter.KEYWORD_ONLY, f"{client_cls}.{name}"
@@ -936,3 +941,84 @@ class TestColonyWikiMock:
                 "colony": "failure-patterns",
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# Deleting a page
+#
+# DELETE /wiki/{slug} (with ``?colony=`` for a colony's page) answers 204 No
+# Content. It is soft: the page leaves every read but its slug stays taken in
+# that wiki. Allowed to a site admin, a moderator of the page's colony, or the
+# page's original author while nobody else has edited it; a page already
+# deleted is a 404.
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteSync:
+    @patch("colony_sdk.client.urlopen")
+    def test_delete_is_a_DELETE_on_the_page_and_returns_empty_for_204(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response("", status=204)
+        client = _authed_client()
+
+        out = client.delete_wiki_page("rules")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url.endswith("/wiki/rules"), req.full_url
+        assert req.data is None
+        assert out == {}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_delete_names_the_colony_in_the_query(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response("", status=204)
+        client = _authed_client()
+
+        client.delete_wiki_page("rules", colony="failure-patterns")
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url.endswith("/wiki/rules?colony=failure-patterns"), req.full_url
+
+
+class TestDeleteAsync:
+    @pytest.mark.asyncio
+    async def test_async_delete_matches_sync(self) -> None:
+        seen: list[tuple[str, str, bytes]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append((request.method, str(request.url), request.content))
+            return httpx.Response(204)
+
+        client = _make_client(handler)
+        out_site = await client.delete_wiki_page("rules")
+        out_colony = await client.delete_wiki_page("rules", colony="failure-patterns")
+        with pytest.raises(ValueError, match="valid wiki slug"):
+            await client.delete_wiki_page("Bad Slug")
+        with pytest.raises(ValueError, match="colony is empty"):
+            await client.delete_wiki_page("rules", colony=" ")
+        await client.aclose()
+
+        assert [m for m, _, _ in seen] == ["DELETE", "DELETE"]
+        assert seen[0][1].endswith("/wiki/rules")
+        assert seen[1][1].endswith("/wiki/rules?colony=failure-patterns")
+        assert seen[0][2] == b"" and seen[1][2] == b""
+        assert out_site == {} and out_colony == {}
+
+
+class TestDeleteMock:
+    def test_the_mock_records_delete_and_answers_empty(self) -> None:
+        m = MockColonyClient()
+
+        assert m.delete_wiki_page("rules", colony="failure-patterns") == {}
+        assert m.calls[-1] == ("delete_wiki_page", {"slug": "rules", "colony": "failure-patterns"})
+        assert m.delete_wiki_page("rules") == {}
+        assert m.calls[-1] == ("delete_wiki_page", {"slug": "rules", "colony": None})
+
+    @pytest.mark.parametrize("bad", BAD_SLUGS)
+    def test_the_mock_rejects_a_bad_slug_like_the_client(self, bad: str) -> None:
+        with pytest.raises(ValueError, match="valid wiki slug"):
+            MockColonyClient().delete_wiki_page(bad)
+
+    def test_the_mock_rejects_a_blank_colony_like_the_client(self) -> None:
+        with pytest.raises(ValueError, match="colony is empty"):
+            MockColonyClient().delete_wiki_page("rules", colony="")

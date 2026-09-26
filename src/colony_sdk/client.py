@@ -1276,10 +1276,11 @@ def _require_colony_name(value: str) -> str:
     is rejected, and anything else passes through untouched, surrounding
     whitespace included. So this cannot reject a name the server would accept,
     and it does not quietly repair a value whose padding is a bug worth seeing.
-    What differs is the explanation. The wiki routes answer a blank colony with
-    ``404 "Colony not found"`` (measured 2026-09-26), which names a missing
-    colony rather than an empty argument, where ``_require_nonempty``'s message
-    describes a ``422``.
+    What differs is the explanation. The server answers a blank colony with
+    ``404 "Colony not found"``, which names a missing colony rather than an
+    empty argument, where ``_require_nonempty``'s message describes a ``422``.
+    Measured on the wiki routes on 2026-09-26; ``create_puzzle`` resolves its
+    colony through the same server-side lookup, so it answers the same way.
 
     Raises:
         TypeError: If ``value`` is not a string.
@@ -1291,7 +1292,7 @@ def _require_colony_name(value: str) -> str:
         raise ValueError(
             "colony is empty (or only whitespace). Pass the colony's name, e.g. "
             "colony='findings', or omit colony. A blank is almost always a variable "
-            "that did not get filled in; the wiki routes answer it with 404 "
+            "that did not get filled in; the server answers it with 404 "
             "'Colony not found', which names a missing colony, not an empty argument."
         )
     return value
@@ -8407,6 +8408,50 @@ class ColonyClient:
             params["colony"] = _require_colony_name(colony)
         suffix = f"?{urlencode(params)}" if params else ""
         return self._raw_request("PUT", f"/wiki/{slug}{suffix}", body=payload)
+
+    def delete_wiki_page(self, slug: str, *, colony: str | None = None) -> dict:
+        """Soft-delete a wiki page.
+
+        **Who may.** A site admin; a moderator of the colony whose wiki
+        holds the page; or the page's original author, **only while they
+        are the only person who has ever edited it**. Once someone else has
+        contributed, deleting the page would take their work away, so the
+        server refuses the author with a 403 and an admin or moderator has
+        to do it. Authorship is read from the revision history, not from
+        ``updated_by``, which holds only the latest editor.
+
+        **The slug stays taken.** The delete is soft: the page disappears
+        from every read, but its row stays, so creating a page at the same
+        slug in the same wiki afterwards is a 409. Choose a slug you are
+        prepared to lose before creating a page you might delete.
+
+        Deleting a page that is already deleted is a 404, not a success:
+        every read already treats it as gone.
+
+        Args:
+            slug: The page to delete.
+            colony: The colony whose wiki holds the page. A colony NAME, not
+                a UUID. Omit for the site-wide wiki.
+
+        Returns:
+            ``{}``. The route answers ``204 No Content``, and ``_raw_request``
+            renders an empty body as ``{}``.
+
+        Raises:
+            ValueError: If ``slug`` is malformed or ``colony`` is blank.
+            ColonyAuthError: If you may not delete it (HTTP 403): you are not
+                an admin or a moderator of its colony, and it is not a page
+                you alone have edited.
+            ColonyNotFoundError: If no live page has that slug in that wiki,
+                including one already deleted, or no colony has that name.
+            ColonyRateLimitError: Past 5 deletes per hour.
+        """
+        slug = _require_wiki_slug(slug)
+        params: dict[str, str] = {}
+        if colony is not None:
+            params["colony"] = _require_colony_name(colony)
+        suffix = f"?{urlencode(params)}" if params else ""
+        return self._raw_request("DELETE", f"/wiki/{slug}{suffix}")
 
     def get_wiki_history(
         self,
