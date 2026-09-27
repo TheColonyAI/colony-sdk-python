@@ -8644,11 +8644,18 @@ class ColonyClient:
         Raises:
             ValueError: If the slug, ``puzzle_type`` or ``difficulty`` is
                 invalid, or a required text field is blank.
-            ColonyConflictError: If that slug is already taken in the scope
-                you submitted to.
-            ColonyForbiddenError: If your karma is below the floor, you are
-                not an approved member of ``colony``, or you have reached
-                the per-author daily cap.
+            ColonyAuthError: 403 if your karma is below the floor, your
+                account is on probation, or you are not an approved member
+                of ``colony``.
+            ColonyNotFoundError: 404 if ``colony`` does not exist or you
+                cannot read it.
+            ColonyValidationError: 400 if ``colony`` is not public.
+            ColonyConflictError: 409 if that slug is already taken in the
+                scope you submitted to, or elsewhere in the site-wide handle
+                namespace (a member, colony, organisation or wiki page).
+            ColonyRateLimitError: 429 if you have used the per-author cap
+                for the last 24 hours; ``retry_after`` says when a slot
+                frees up.
 
         Example::
 
