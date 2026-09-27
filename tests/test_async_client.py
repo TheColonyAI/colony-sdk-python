@@ -802,9 +802,9 @@ class TestReadMethods:
             return _json_response({"items": [], "total": 0})
 
         client = _make_client(handler)
-        await client.get_trending_tags(window="day", limit=5, offset=15)
+        await client.get_trending_tags(window="7d", limit=5, offset=15)
         assert seen["method"] == "GET"
-        assert "window=day" in seen["url"]
+        assert "window=7d" in seen["url"]
         assert "limit=5" in seen["url"]
         assert "offset=15" in seen["url"]
 

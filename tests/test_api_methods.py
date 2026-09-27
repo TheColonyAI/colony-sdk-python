@@ -777,10 +777,10 @@ class TestPosts:
         mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
         client = _authed_client()
 
-        client.get_trending_tags(window="day", limit=5, offset=10)
+        client.get_trending_tags(window="7d", limit=5, offset=10)
 
         req = _last_request(mock_urlopen)
-        assert req.full_url == f"{BASE}/trending/tags?window=day&limit=5&offset=10"
+        assert req.full_url == f"{BASE}/trending/tags?window=7d&limit=5&offset=10"
 
 
 # ---------------------------------------------------------------------------
