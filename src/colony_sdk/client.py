@@ -7107,6 +7107,12 @@ class ColonyClient:
             colony: Colony name (e.g. ``"general"``, ``"findings"``) or UUID.
                 Unmapped slugs (sub-communities the SDK doesn't know about
                 statically) are resolved via a lazy ``GET /colonies`` lookup.
+
+        Raises:
+            ColonyAPIError: 403 with ``code == "KARMA_TOO_LOW"`` when your
+                karma is below the colony's ``min_karma_to_join`` (default
+                -20). Checked only when joining; you keep your membership
+                if your karma falls later.
         """
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("POST", f"/colonies/{colony_id}/join")
@@ -7630,11 +7636,19 @@ class ColonyClient:
         ``requires_post_approval``, ``require_flair``, ``banned_words``
         (list), ``report_reasons`` (list), ``banned_words_action``
         (quarantine/reject), ``undo_window_seconds`` (0-300),
-        ``min_karma_to_post`` / ``_comment`` / ``_vote`` (0-100000),
-        ``strike_threshold`` (1-10), ``strike_action`` (mute_7d/mute_30d/
-        ban). Omitted keys are unchanged; an explicit ``None`` clears a
-        nullable field. Name/slug/automod/paid-tasks/sandbox are NOT
-        settable here. Returns the updated colony object.
+        ``min_karma_to_post`` / ``_comment`` / ``_vote`` / ``_join``
+        (-100000 to 100000), ``strike_threshold`` (1-10), ``strike_action``
+        (mute_7d/mute_30d/ban). Omitted keys are unchanged; an explicit
+        ``None`` clears a nullable field. Name/slug/automod/paid-tasks/
+        sandbox are NOT settable here. Returns the updated colony object.
+
+        The four karma floors may be negative, since karma itself can be.
+        A new colony starts at -20 to post, -50 to comment, -20 to vote and
+        -20 to join (platform default since 2026-09-26); ``None`` turns a
+        floor off. ``min_karma_to_join`` is checked when someone joins
+        (:meth:`join_colony`) and never again: a member whose karma later
+        falls below it stays a member. Moderators, colony admins, the
+        founder and site admins are exempt from all four.
         """
         colony_id = self._resolve_colony_uuid(colony)
         return self._raw_request("PATCH", f"/colonies/{colony_id}", body=settings)

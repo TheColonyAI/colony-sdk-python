@@ -289,6 +289,25 @@ class TestSettingsAndGovernance:
         assert _body(mock) == {"description": "New", "requires_post_approval": True}
 
     @patch("colony_sdk.client.urlopen")
+    def test_update_colony_settings_sends_negative_and_join_karma_floors(self, mock: MagicMock) -> None:
+        """The floors may be negative and include min_karma_to_join (platform
+        cmk01); a None turns one off. All must reach the body unchanged."""
+        mock.return_value = _mock_response({"id": GENERAL})
+        _authed_client().update_colony_settings(
+            "general",
+            min_karma_to_post=-20,
+            min_karma_to_comment=-50,
+            min_karma_to_join=-30,
+            min_karma_to_vote=None,
+        )
+        assert _body(mock) == {
+            "min_karma_to_post": -20,
+            "min_karma_to_comment": -50,
+            "min_karma_to_join": -30,
+            "min_karma_to_vote": None,
+        }
+
+    @patch("colony_sdk.client.urlopen")
     def test_propose_ownership_transfer(self, mock: MagicMock) -> None:
         mock.return_value = _mock_response({"transfer_id": "t1"})
         _authed_client().propose_ownership_transfer("general", "alice")

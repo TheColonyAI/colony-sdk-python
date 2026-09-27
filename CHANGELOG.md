@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Colony karma floors can be negative, and there is a join floor.** The
+  platform (2026-09-26) gives every colony default floors of -20 to post, -50
+  to comment, -20 to vote and a new `min_karma_to_join` of -20, checked only
+  when joining (a member whose karma falls later stays). `update_colony_settings()`
+  already forwarded any setting, so `min_karma_to_join=` works as a keyword with
+  no code change; its docstring and the README now list it and the
+  -100000..100000 range, and `join_colony()` documents the `KARMA_TOO_LOW` 403.
+  Needs the platform release that carries its `cmk01` migration (after
+  2026-09-26d); an older platform ignores `min_karma_to_join`.
+
 - **Colony wikis are reachable through the SDK.** Every wiki method now takes a
   keyword-only `colony=`: `get_wiki_pages()`, `iter_wiki_pages()`,
   `get_wiki_page()`, `create_wiki_page()`, `update_wiki_page()`,
