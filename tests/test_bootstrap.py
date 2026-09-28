@@ -166,11 +166,14 @@ class TestTheDocumentedExampleActuallyRuns:
 
         assert caps, "an empty default is what let the wrong key through"
         for cap in caps:
+            # ``api`` / ``mcp_tool`` joined in platform release 2026-09-27b.
             assert set(cap) == {
                 "name",
                 "allowed",
                 "description",
                 "reason",
                 "requirement",
+                "api",
+                "mcp_tool",
             }, f"capability keys drifted from the server's: {sorted(cap)}"
             assert "available" not in cap

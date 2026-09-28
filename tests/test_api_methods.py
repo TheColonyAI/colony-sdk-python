@@ -4382,7 +4382,7 @@ class TestMarkConversationSpam:
         client = _authed_client()
         result = client.mark_conversation_spam(
             "alice",
-            reason_code="spam",
+            reason="spam",
             description="repeat spammer",
         )
 
@@ -4390,7 +4390,7 @@ class TestMarkConversationSpam:
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/messages/conversations/alice/spam"
         assert _last_body(mock_urlopen) == {
-            "reason_code": "spam",
+            "reason": "spam",
             "description": "repeat spammer",
         }
         # No replay header → False, NOT missing or None — explicit bool
@@ -4468,7 +4468,7 @@ class TestMarkConversationSpam:
         )
         client = _authed_client()
         client.mark_conversation_spam("alice")
-        assert _last_body(mock_urlopen) == {"reason_code": "spam"}
+        assert _last_body(mock_urlopen) == {"reason": "spam"}
 
     @patch("colony_sdk.client.urlopen")
     def test_mark_omits_description_when_none(self, mock_urlopen: MagicMock) -> None:
@@ -4478,10 +4478,56 @@ class TestMarkConversationSpam:
             status=201,
         )
         client = _authed_client()
-        client.mark_conversation_spam("bob", reason_code="harassment")
+        client.mark_conversation_spam("bob", reason="harassment")
         body = _last_body(mock_urlopen)
-        assert body == {"reason_code": "harassment"}
+        assert body == {"reason": "harassment"}
         assert "description" not in body
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_reason_code_is_a_deprecated_alias(self, mock_urlopen: MagicMock) -> None:
+        """Platform release 2026-09-27a renamed the body field ``reason``
+        (the report routes' name) and still accepts ``reason_code``. The SDK
+        kwarg follows: the old one warns and sends the NEW wire name."""
+        mock_urlopen.return_value = _mock_response_with_headers(
+            {"conversation_id": "c", "spam_reported_at": "x", "spam_reason_code": "harassment", "report_id": "r"},
+            headers={},
+            status=201,
+        )
+        client = _authed_client()
+        with pytest.warns(
+            DeprecationWarning, match=r"mark_conversation_spam\(reason_code=\.\.\.\) is deprecated; use reason="
+        ):
+            client.mark_conversation_spam("bob", reason_code="harassment")
+        assert _last_body(mock_urlopen) == {"reason": "harassment"}
+
+        # The second positional slot was ``reason_code``; it is now ``reason``.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            client.mark_conversation_spam("bob", "off_topic", "context")
+        assert _last_body(mock_urlopen) == {"reason": "off_topic", "description": "context"}
+
+        with pytest.warns(DeprecationWarning):
+            client.mark_conversation_spam("bob", reason="other", reason_code="other")
+        assert _last_body(mock_urlopen) == {"reason": "other"}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mark_reason_conflict_raises_before_the_request(self, mock_urlopen: MagicMock) -> None:
+        with pytest.raises(ValueError, match="different values"):
+            _authed_client().mark_conversation_spam("bob", reason="spam", reason_code="other")
+        mock_urlopen.assert_not_called()
+
+    def test_mock_records_reason_whichever_name_was_used(self) -> None:
+        from colony_sdk.testing import MockColonyClient
+
+        mock = MockColonyClient()
+        with pytest.warns(DeprecationWarning, match="reason_code"):
+            mock.mark_conversation_spam("bob", reason_code="harassment")
+        assert mock.calls[-1] == (
+            "mark_conversation_spam",
+            {"username": "bob", "reason": "harassment", "description": None},
+        )
+        mock.mark_conversation_spam("bob")
+        assert mock.calls[-1][1]["reason"] == "spam"
 
     @patch("colony_sdk.client.urlopen")
     def test_mark_group_target_raises_validation(self, mock_urlopen: MagicMock) -> None:

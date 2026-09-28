@@ -184,6 +184,7 @@ _DEFAULTS: dict[str, Any] = {
     # nothing while the real client iterates rows.
     "list_my_colony_mod_invitations": [
         {
+            "invitation_id": "11111111-1111-1111-1111-111111111111",
             "invite_id": "11111111-1111-1111-1111-111111111111",
             "colony_id": "22222222-2222-2222-2222-222222222222",
             "invitee_id": "33333333-3333-3333-3333-333333333333",
@@ -195,17 +196,20 @@ _DEFAULTS: dict[str, Any] = {
         }
     ],
     "accept_colony_mod_invitation": {
+        "invitation_id": "11111111-1111-1111-1111-111111111111",
         "invite_id": "11111111-1111-1111-1111-111111111111",
         "colony_id": "22222222-2222-2222-2222-222222222222",
         "role_offered": "moderator",
         "status": "accepted",
     },
     "decline_colony_mod_invitation": {
+        "invitation_id": "11111111-1111-1111-1111-111111111111",
         "invite_id": "11111111-1111-1111-1111-111111111111",
         "colony_id": "22222222-2222-2222-2222-222222222222",
         "status": "declined",
     },
     "invite_colony_moderator": {
+        "invitation_id": "11111111-1111-1111-1111-111111111111",
         "invite_id": "11111111-1111-1111-1111-111111111111",
         "colony_id": "22222222-2222-2222-2222-222222222222",
         "role_offered": "moderator",
@@ -213,6 +217,7 @@ _DEFAULTS: dict[str, Any] = {
     },
     "list_colony_mod_invitations": [
         {
+            "invitation_id": "11111111-1111-1111-1111-111111111111",
             "invite_id": "11111111-1111-1111-1111-111111111111",
             "colony_id": "22222222-2222-2222-2222-222222222222",
             "role_offered": "moderator",
@@ -220,6 +225,7 @@ _DEFAULTS: dict[str, Any] = {
         }
     ],
     "revoke_colony_mod_invitation": {
+        "invitation_id": "11111111-1111-1111-1111-111111111111",
         "invite_id": "11111111-1111-1111-1111-111111111111",
         "colony_id": "22222222-2222-2222-2222-222222222222",
         "status": "revoked",
@@ -406,6 +412,8 @@ _DEFAULTS: dict[str, Any] = {
     "get_wiki_page": {},
     "create_wiki_page": {},
     "update_wiki_page": {},
+    # The real client returns {} for the route's 204 No Content.
+    "delete_wiki_page": {},
     # A bare LIST, not an envelope: /wiki/{slug}/history really does return
     # one, and a mock that answers {} sends a caller iterating the result
     # into a TypeError from its own test double rather than from the code
@@ -958,12 +966,15 @@ class MockColonyClient:
     def mark_conversation_spam(
         self,
         username: str,
-        reason_code: str = "spam",
+        reason: str | None = None,
         description: str | None = None,
+        *,
+        reason_code: str | None = None,
     ) -> dict:
+        reason = _renamed_kwarg("mark_conversation_spam", "reason", reason, "reason_code", reason_code)
         return self._respond(
             "mark_conversation_spam",
-            {"username": username, "reason_code": reason_code, "description": description},
+            {"username": username, "reason": "spam" if reason is None else reason, "description": description},
         )
 
     def unmark_conversation_spam(self, username: str) -> dict:
@@ -1282,7 +1293,9 @@ class MockColonyClient:
             # against the live API — which is exactly how the docstring
             # example in this same change shipped with `c["available"]`
             # when the server serves `allowed`. The key names and shape
-            # here match app/api/v1/me.py::Capability field for field.
+            # here match app/api/v1/me.py::Capability field for field;
+            # `api` / `mcp_tool` are None because /me/bootstrap sends them
+            # unfilled (only /me/capabilities fills them, since 2026-09-27b).
             "capabilities": [
                 {
                     "name": "create_post",
@@ -1290,6 +1303,8 @@ class MockColonyClient:
                     "description": "Publish a post.",
                     "reason": None,
                     "requirement": None,
+                    "api": None,
+                    "mcp_tool": None,
                 },
                 {
                     "name": "create_colony",
@@ -1297,6 +1312,8 @@ class MockColonyClient:
                     "description": "Found a new colony.",
                     "reason": "Requires 100 karma.",
                     "requirement": {"min_karma": 100},
+                    "api": None,
+                    "mcp_tool": None,
                 },
             ],
             "trust_level": "newcomer",
@@ -1372,11 +1389,21 @@ class MockColonyClient:
     def list_my_colony_mod_invitations(self) -> Any:
         return self._respond("list_my_colony_mod_invitations", {})
 
-    def accept_colony_mod_invitation(self, invite_id: Any) -> Any:
-        return self._respond("accept_colony_mod_invitation", {"invite_id": invite_id})
+    def accept_colony_mod_invitation(self, invitation_id: Any = None, *, invite_id: Any = None) -> Any:
+        invitation_id = _renamed_kwarg(
+            "accept_colony_mod_invitation", "invitation_id", invitation_id, "invite_id", invite_id
+        )
+        if invitation_id is None:
+            raise TypeError("accept_colony_mod_invitation() missing required argument: 'invitation_id'")
+        return self._respond("accept_colony_mod_invitation", {"invitation_id": invitation_id})
 
-    def decline_colony_mod_invitation(self, invite_id: Any) -> Any:
-        return self._respond("decline_colony_mod_invitation", {"invite_id": invite_id})
+    def decline_colony_mod_invitation(self, invitation_id: Any = None, *, invite_id: Any = None) -> Any:
+        invitation_id = _renamed_kwarg(
+            "decline_colony_mod_invitation", "invitation_id", invitation_id, "invite_id", invite_id
+        )
+        if invitation_id is None:
+            raise TypeError("decline_colony_mod_invitation() missing required argument: 'invitation_id'")
+        return self._respond("decline_colony_mod_invitation", {"invitation_id": invitation_id})
 
     def invite_colony_moderator(
         self,
@@ -1399,10 +1426,15 @@ class MockColonyClient:
     def list_colony_mod_invitations(self, colony: Any) -> Any:
         return self._respond("list_colony_mod_invitations", {"colony": colony})
 
-    def revoke_colony_mod_invitation(self, colony: Any, invite_id: Any) -> Any:
+    def revoke_colony_mod_invitation(self, colony: Any, invitation_id: Any = None, *, invite_id: Any = None) -> Any:
+        invitation_id = _renamed_kwarg(
+            "revoke_colony_mod_invitation", "invitation_id", invitation_id, "invite_id", invite_id
+        )
+        if invitation_id is None:
+            raise TypeError("revoke_colony_mod_invitation() missing required argument: 'invitation_id'")
         return self._respond(
             "revoke_colony_mod_invitation",
-            {"colony": colony, "invite_id": invite_id},
+            {"colony": colony, "invitation_id": invitation_id},
         )
 
     def list_my_org_invitations(self) -> Any:
@@ -1914,6 +1946,10 @@ class MockColonyClient:
             },
         )
 
+    def delete_wiki_page(self, slug: str, *, colony: str | None = None) -> dict:
+        slug = _require_wiki_slug(slug)
+        return self._respond("delete_wiki_page", {"slug": slug, "colony": _optional_colony_name(colony)})
+
     def iter_wiki_pages(
         self,
         category: str | None = None,
@@ -2039,23 +2075,31 @@ class MockColonyClient:
         self,
         colony: str,
         *,
-        source_kind: str,
+        source: str | None = None,
         source_id: str,
         action: str,
         reason_id: str | None = None,
         reason_text: str | None = None,
+        duration_days: int | None = None,
+        source_kind: str | None = None,
         ban_duration_days: int | None = None,
     ) -> dict:
+        source = _renamed_kwarg("mod_queue_action", "source", source, "source_kind", source_kind)
+        duration_days = _renamed_kwarg(
+            "mod_queue_action", "duration_days", duration_days, "ban_duration_days", ban_duration_days
+        )
+        if source is None:
+            raise TypeError("mod_queue_action() missing required keyword argument: 'source'")
         return self._respond(
             "mod_queue_action",
             {
                 "colony": colony,
-                "source_kind": source_kind,
+                "source": source,
                 "source_id": source_id,
                 "action": action,
                 "reason_id": reason_id,
                 "reason_text": reason_text,
-                "ban_duration_days": ban_duration_days,
+                "duration_days": duration_days,
             },
         )
 

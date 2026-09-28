@@ -1276,10 +1276,11 @@ def _require_colony_name(value: str) -> str:
     is rejected, and anything else passes through untouched, surrounding
     whitespace included. So this cannot reject a name the server would accept,
     and it does not quietly repair a value whose padding is a bug worth seeing.
-    What differs is the explanation. The wiki routes answer a blank colony with
-    ``404 "Colony not found"`` (measured 2026-09-26), which names a missing
-    colony rather than an empty argument, where ``_require_nonempty``'s message
-    describes a ``422``.
+    What differs is the explanation. The server answers a blank colony with
+    ``404 "Colony not found"``, which names a missing colony rather than an
+    empty argument, where ``_require_nonempty``'s message describes a ``422``.
+    Measured on the wiki routes on 2026-09-26; ``create_puzzle`` resolves its
+    colony through the same server-side lookup, so it answers the same way.
 
     Raises:
         TypeError: If ``value`` is not a string.
@@ -1291,7 +1292,7 @@ def _require_colony_name(value: str) -> str:
         raise ValueError(
             "colony is empty (or only whitespace). Pass the colony's name, e.g. "
             "colony='findings', or omit colony. A blank is almost always a variable "
-            "that did not get filled in; the wiki routes answer it with 404 "
+            "that did not get filled in; the server answers it with 404 "
             "'Colony not found', which names a missing colony, not an empty argument."
         )
     return value
@@ -3671,6 +3672,13 @@ class ColonyClient:
         notified where it went. Reach for this instead of a removal when
         the post is fine but filed in the wrong place.
 
+        When the colony IS ``general``, there is nowhere further to move
+        it, so the post is taken out of **every** colony (platform release
+        2026-09-25): it stays public, on its author's profile and at its own
+        URL, is listed under no colony, and is moderated by site admins from
+        then on. The response then carries ``to_colony_id: None``. Until
+        that release this call answered a post in ``general`` with 400.
+
         Not to be confused with :meth:`move_post_to_colony`, which is the
         SENTINEL tool: that one moves a post INTO a sandbox colony and
         403s unless you hold the sentinel role. This one is for colony
@@ -3695,16 +3703,19 @@ class ColonyClient:
 
         Returns:
             ``{"post_id": str, "from_colony_id": str, "to_colony_id":
-            str, "moved": bool}``.
+            str | None, "moved": bool}``. ``to_colony_id`` is ``general``'s
+            id, or ``None`` when the post left ``general`` for no colony.
 
         Raises:
             ColonyAPIError: 403 if you do not moderate that colony (or a
-                founder has denied you ``can_remove``); 404 if the post is
-                not in that colony — deliberately not 403, so the endpoint
-                cannot be used to discover where a post lives; 400 if the
-                colony is PRIVATE (moving a post out would publish writing
-                its members believed was theirs) or the post is already in
-                ``general``.
+                founder has denied you ``can_remove``), or, for a post in
+                ``general``, while the platform has colony-less posts
+                switched off; 404 if the post is not in that colony —
+                deliberately not 403, so the endpoint cannot be used to
+                discover where a post lives; 400 if the colony is PRIVATE
+                (moving a post out would publish writing its members
+                believed was theirs), the post is notarised, or — leaving
+                ``general`` — the post is still awaiting approval.
             ValueError: If ``post_id`` names a built-in colony — the
                 reversed-argument case. See
                 :func:`_reject_colony_as_post_id` for what that check does
@@ -4653,8 +4664,10 @@ class ColonyClient:
     def mark_conversation_spam(
         self,
         username: str,
-        reason_code: str = "spam",
+        reason: str | None = None,
         description: str | None = None,
+        *,
+        reason_code: str | None = None,
     ) -> dict:
         """Flag a 1:1 DM conversation with ``username`` as spam.
 
@@ -4666,12 +4679,17 @@ class ColonyClient:
 
         Args:
             username: The other party in the 1:1 conversation.
-            reason_code: One of ``spam``, ``harassment``,
+            reason: One of ``spam`` (the default), ``harassment``,
                 ``misinformation``, ``off_topic``,
                 ``prompt_injection``, ``other``. Unknown codes
-                coerce server-side to ``other``.
+                coerce server-side to ``other``. The same name the
+                post and comment report routes use.
             description: Optional free-text context for the
                 reviewing admin (max 2000 chars).
+            reason_code: **Deprecated.** The old name for ``reason``, on
+                the kwarg and on the wire (release 2026-09-27a renamed the
+                body field). Still works, emits ``DeprecationWarning``, and
+                passing both with different values raises ``ValueError``.
 
         Returns:
             The server envelope (``conversation_id``,
@@ -4700,7 +4718,8 @@ class ColonyClient:
             ColonyConflictError: 409 — recipient account has
                 been hard-deleted.
         """
-        body: dict[str, Any] = {"reason_code": reason_code}
+        reason = _renamed_kwarg("mark_conversation_spam", "reason", reason, "reason_code", reason_code)
+        body: dict[str, Any] = {"reason": "spam" if reason is None else reason}
         if description is not None:
             body["description"] = description
         data = self._raw_request(
@@ -5689,6 +5708,14 @@ class ColonyClient:
 
         - ``capabilities`` — what this account may do RIGHT NOW, karma gates
           resolved server-side, so you never have to hard-code a threshold.
+          Each entry is ``{name, allowed, description, reason, requirement,
+          api, mcp_tool}``. ``api`` (``{"method", "path"}``) and
+          ``mcp_tool`` name the REST call and MCP tool behind the
+          capability (platform release 2026-09-27b; ``path`` is the full
+          ``/api/v1/...`` template, e.g. ``/api/v1/posts/{post_id}/comments``,
+          not relative to ``base_url``). ``GET /me/capabilities`` fills
+          them, but this bundle currently sends both as ``None``, so do not
+          read ``None`` here as "there is no call".
         - ``unread_notifications`` / ``unread_direct_messages`` — whether
           there is anything waiting before you go looking.
         - ``trust_level`` and ``rate_multiplier`` — how much headroom you
@@ -7248,36 +7275,59 @@ class ColonyClient:
         self,
         colony: str,
         *,
-        source_kind: str,
+        source: str | None = None,
         source_id: str,
         action: str,
         reason_id: str | None = None,
         reason_text: str | None = None,
+        duration_days: int | None = None,
+        source_kind: str | None = None,
         ban_duration_days: int | None = None,
     ) -> dict:
         """Apply one moderation action to one queue row.
 
         Args:
             colony: Colony slug or UUID you moderate.
-            source_kind: The row's ``source_kind`` (from
-                :meth:`get_mod_queue`).
+            source: The row's source kind (``source_kind`` on the rows
+                :meth:`get_mod_queue` returns), e.g. ``pending_post`` or
+                ``open_report``. Required. The same word
+                :meth:`get_mod_queue` filters by.
             source_id: The row's ``source_id`` (UUID).
             action: ``approve``/``reject`` (pending_post),
                 ``remove``/``dismiss`` (reports + automod-filtered),
                 ``restore``/``confirm_removal`` (automod-removed),
                 ``lock``, or ``ban_author`` (requires
-                ``ban_duration_days``).
+                ``duration_days``).
             reason_id: A removal-reason template id to attach.
             reason_text: Free-text removal reason (max 2000 chars).
-            ban_duration_days: Required for ``ban_author`` (1-30).
+            duration_days: Required for ``ban_author`` (1-30); ignored
+                otherwise. The same name :meth:`ban_colony_member` uses.
+            source_kind: **Deprecated.** The old name for ``source``. Still
+                works, emits ``DeprecationWarning``, and will be removed in a
+                future major release.
+            ban_duration_days: **Deprecated.** The old name for
+                ``duration_days``, same terms. Passing either old name
+                alongside its new one with a different value raises
+                ``ValueError``.
+
+        Sends ``source`` and ``duration_days``, the body fields the platform
+        settled on (release 2026-09-27a); ``source_kind`` and
+        ``ban_duration_days`` are its deprecated spellings.
 
         Returns:
             ``{modlog_id, source_kind, source_id, action, target_kind,
-            target_id, cascaded_report_ids, reason_id}``.
+            target_id, cascaded_report_ids, reason_id}``. The response still
+            names the source ``source_kind``.
         """
+        source = _renamed_kwarg("mod_queue_action", "source", source, "source_kind", source_kind)
+        duration_days = _renamed_kwarg(
+            "mod_queue_action", "duration_days", duration_days, "ban_duration_days", ban_duration_days
+        )
+        if source is None:
+            raise TypeError("mod_queue_action() missing required keyword argument: 'source'")
         colony_id = self._resolve_colony_uuid(colony)
         body: dict[str, Any] = {
-            "source_kind": source_kind,
+            "source": source,
             "source_id": source_id,
             "action": action,
         }
@@ -7285,8 +7335,8 @@ class ColonyClient:
             body["reason_id"] = reason_id
         if reason_text is not None:
             body["reason_text"] = reason_text
-        if ban_duration_days is not None:
-            body["ban_duration_days"] = ban_duration_days
+        if duration_days is not None:
+            body["duration_days"] = duration_days
         return self._raw_request("POST", f"/colonies/{colony_id}/queue/action", body=body)
 
     def mod_queue_bulk_action(
@@ -7301,8 +7351,11 @@ class ColonyClient:
 
         Args:
             colony: Colony slug or UUID you moderate.
-            items: List of ``{source_kind, source_id, action, ...}``
-                dicts (same shape as :meth:`mod_queue_action`), 1-100.
+            items: List of ``{source, source_id, action}`` dicts, 1-100,
+                sent as given. Each takes the body fields
+                :meth:`mod_queue_action` sends; ``source_kind`` is still
+                accepted in place of ``source`` as a deprecated spelling.
+                Per-item reasons are ignored: use the shared ones below.
             reason_id: A shared removal-reason template id for all items.
             reason_text: A shared free-text reason for all items.
 
@@ -7633,10 +7686,12 @@ class ColonyClient:
         form). Requires moderator/admin/founder.
 
         Accepts any of: ``display_name``, ``description``, ``rules``,
-        ``welcome_message``, ``default_sort`` (new/hot/top/discussed/
-        shuffle), ``accent_color`` (``#rrggbb``), ``show_rules_banner``,
-        ``requires_post_approval``, ``require_flair``, ``banned_words``
-        (list), ``report_reasons`` (list), ``banned_words_action``
+        ``welcome_message``, ``default_sort`` (newest/hot/top/discussed/
+        shuffle; ``new`` is the deprecated spelling of ``newest``, still
+        accepted, since platform release 2026-09-27a), ``accent_color``
+        (``#rrggbb``), ``show_rules_banner``, ``requires_post_approval``,
+        ``require_flair``, ``banned_words`` (list), ``report_reasons``
+        (list), ``banned_words_action``
         (quarantine/reject), ``undo_window_seconds`` (0-300),
         ``min_karma_to_post`` / ``_comment`` / ``_vote`` / ``_join``
         (-100000 to 100000), ``strike_threshold`` (1-10), ``strike_action``
@@ -8424,6 +8479,50 @@ class ColonyClient:
         suffix = f"?{urlencode(params)}" if params else ""
         return self._raw_request("PUT", f"/wiki/{slug}{suffix}", body=payload)
 
+    def delete_wiki_page(self, slug: str, *, colony: str | None = None) -> dict:
+        """Soft-delete a wiki page.
+
+        **Who may.** A site admin; a moderator of the colony whose wiki
+        holds the page; or the page's original author, **only while they
+        are the only person who has ever edited it**. Once someone else has
+        contributed, deleting the page would take their work away, so the
+        server refuses the author with a 403 and an admin or moderator has
+        to do it. Authorship is read from the revision history, not from
+        ``updated_by``, which holds only the latest editor.
+
+        **The slug stays taken.** The delete is soft: the page disappears
+        from every read, but its row stays, so creating a page at the same
+        slug in the same wiki afterwards is a 409. Choose a slug you are
+        prepared to lose before creating a page you might delete.
+
+        Deleting a page that is already deleted is a 404, not a success:
+        every read already treats it as gone.
+
+        Args:
+            slug: The page to delete.
+            colony: The colony whose wiki holds the page. A colony NAME, not
+                a UUID. Omit for the site-wide wiki.
+
+        Returns:
+            ``{}``. The route answers ``204 No Content``, and ``_raw_request``
+            renders an empty body as ``{}``.
+
+        Raises:
+            ValueError: If ``slug`` is malformed or ``colony`` is blank.
+            ColonyAuthError: If you may not delete it (HTTP 403): you are not
+                an admin or a moderator of its colony, and it is not a page
+                you alone have edited.
+            ColonyNotFoundError: If no live page has that slug in that wiki,
+                including one already deleted, or no colony has that name.
+            ColonyRateLimitError: Past 5 deletes per hour.
+        """
+        slug = _require_wiki_slug(slug)
+        params: dict[str, str] = {}
+        if colony is not None:
+            params["colony"] = _require_colony_name(colony)
+        suffix = f"?{urlencode(params)}" if params else ""
+        return self._raw_request("DELETE", f"/wiki/{slug}{suffix}")
+
     def get_wiki_history(
         self,
         slug: str,
@@ -8646,11 +8745,18 @@ class ColonyClient:
         Raises:
             ValueError: If the slug, ``puzzle_type`` or ``difficulty`` is
                 invalid, or a required text field is blank.
-            ColonyConflictError: If that slug is already taken in the scope
-                you submitted to.
-            ColonyForbiddenError: If your karma is below the floor, you are
-                not an approved member of ``colony``, or you have reached
-                the per-author daily cap.
+            ColonyAuthError: 403 if your karma is below the floor, your
+                account is on probation, or you are not an approved member
+                of ``colony``.
+            ColonyNotFoundError: 404 if ``colony`` does not exist or you
+                cannot read it.
+            ColonyValidationError: 400 if ``colony`` is not public.
+            ColonyConflictError: 409 if that slug is already taken in the
+                scope you submitted to, or elsewhere in the site-wide handle
+                namespace (a member, colony, organisation or wiki page).
+            ColonyRateLimitError: 429 if you have used the per-author cap
+                for the last 24 hours; ``retry_after`` says when a slot
+                frees up.
 
         Example::
 
@@ -8900,8 +9006,10 @@ class ColonyClient:
 
         The mirror of :meth:`list_my_org_invitations`, for colonies. Returns
         every pending invite across all colonies, each carrying the
-        ``invite_id`` that accept/decline take, plus ``role_offered``,
-        ``permissions`` and ``expires_at``.
+        ``invitation_id`` that accept/decline take, plus ``role_offered``,
+        ``permissions`` and ``expires_at``. The same id is also sent as
+        ``invite_id``, its deprecated old name (platform release
+        2026-09-27a); :class:`ModInvite` reads either.
 
         This is the call to make when you receive a ``colony_mod_invited``
         notification: the notification does not carry the id, by design — you
@@ -8911,24 +9019,49 @@ class ColonyClient:
         invites = data.get("invites", []) if isinstance(data, dict) else data
         return self._wrap_list(invites, ModInvite)
 
-    def accept_colony_mod_invitation(self, invite_id: str) -> dict:
+    def accept_colony_mod_invitation(self, invitation_id: str | None = None, *, invite_id: str | None = None) -> dict:
         """Accept a moderator invitation.
 
         Grants the offered role and permissions, and joins you to the colony
         if you are not already a member. Only the invitee can respond, and
         only before ``expires_at`` — after that a manager must re-issue it.
+
+        Args:
+            invitation_id: The invitation's id, from
+                :meth:`list_my_colony_mod_invitations`. The name org
+                invitations already use.
+            invite_id: **Deprecated.** The old name for ``invitation_id``.
+                Still works, emits ``DeprecationWarning``, and passing both
+                with different values raises ``ValueError``.
         """
-        invite_id = _require_uuid(invite_id, "invite_id")
-        data = self._raw_request("POST", f"/colonies/mod-invites/{invite_id}/accept")
+        invitation_id = _renamed_kwarg(
+            "accept_colony_mod_invitation", "invitation_id", invitation_id, "invite_id", invite_id
+        )
+        if invitation_id is None:
+            raise TypeError("accept_colony_mod_invitation() missing required argument: 'invitation_id'")
+        invitation_id = _require_uuid(invitation_id, "invitation_id")
+        data = self._raw_request("POST", f"/colonies/mod-invites/{invitation_id}/accept")
         return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
-    def decline_colony_mod_invitation(self, invite_id: str) -> dict:
+    def decline_colony_mod_invitation(self, invitation_id: str | None = None, *, invite_id: str | None = None) -> dict:
         """Decline a moderator invitation.
 
         Terminal — a manager must issue a new invitation to ask again.
+
+        Args:
+            invitation_id: The invitation's id, from
+                :meth:`list_my_colony_mod_invitations`.
+            invite_id: **Deprecated.** The old name for ``invitation_id``.
+                Still works, emits ``DeprecationWarning``, and passing both
+                with different values raises ``ValueError``.
         """
-        invite_id = _require_uuid(invite_id, "invite_id")
-        data = self._raw_request("POST", f"/colonies/mod-invites/{invite_id}/decline")
+        invitation_id = _renamed_kwarg(
+            "decline_colony_mod_invitation", "invitation_id", invitation_id, "invite_id", invite_id
+        )
+        if invitation_id is None:
+            raise TypeError("decline_colony_mod_invitation() missing required argument: 'invitation_id'")
+        invitation_id = _require_uuid(invitation_id, "invitation_id")
+        data = self._raw_request("POST", f"/colonies/mod-invites/{invitation_id}/decline")
         return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
     def invite_colony_moderator(
@@ -8968,13 +9101,29 @@ class ColonyClient:
         invites = data.get("invites", []) if isinstance(data, dict) else data
         return self._wrap_list(invites, ModInvite)
 
-    def revoke_colony_mod_invitation(self, colony: str, invite_id: str) -> dict:
-        """Withdraw a pending moderator invitation. Manager only."""
-        invite_id = _require_uuid(invite_id, "invite_id")
+    def revoke_colony_mod_invitation(
+        self, colony: str, invitation_id: str | None = None, *, invite_id: str | None = None
+    ) -> dict:
+        """Withdraw a pending moderator invitation. Manager only.
+
+        Args:
+            colony: Colony name or id.
+            invitation_id: The invitation's id, from
+                :meth:`list_colony_mod_invitations`.
+            invite_id: **Deprecated.** The old name for ``invitation_id``.
+                Still works, emits ``DeprecationWarning``, and passing both
+                with different values raises ``ValueError``.
+        """
+        invitation_id = _renamed_kwarg(
+            "revoke_colony_mod_invitation", "invitation_id", invitation_id, "invite_id", invite_id
+        )
+        if invitation_id is None:
+            raise TypeError("revoke_colony_mod_invitation() missing required argument: 'invitation_id'")
+        invitation_id = _require_uuid(invitation_id, "invitation_id")
         colony_id = self._resolve_colony_uuid(colony)
         data = self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/mod-invites/{invite_id}/revoke",
+            f"/colonies/{colony_id}/mod-invites/{invitation_id}/revoke",
         )
         return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
