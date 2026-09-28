@@ -1169,8 +1169,10 @@ class AsyncColonyClient:
         See :meth:`ColonyClient.get_trending_tags`.
 
         Args:
-            window: Rolling window — typically ``"hour"``, ``"day"``, or
-                ``"week"``. Server default applies when omitted.
+            window: Rolling window: ``"24h"``, ``"7d"`` or ``"30d"``. The
+                server checks it against ``^(24h|7d|30d)$`` and answers
+                anything else, including ``"hour"``, ``"day"`` and ``"week"``,
+                with a 422. Server default applies when omitted.
             limit: Max tags to return. Server default applies when omitted.
             offset: Pagination offset. Omitted when not set.
         """

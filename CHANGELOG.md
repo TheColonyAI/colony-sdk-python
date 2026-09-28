@@ -138,6 +138,15 @@
   `general`, a post still awaiting approval (400) or colony-less posts
   switched off on the platform (403). The return value
   is the response dict, as before; the SDK passes the `None` through.
+- **`get_trending_tags()` documents the window values the API accepts.** The
+  docstring (sync and async) and the README said `window` is typically
+  `"hour"`, `"day"` or `"week"`; the server validates it against
+  `^(24h|7d|30d)$` and answers each of those three with a 422
+  `string_pattern_mismatch`. They now name `"24h"`, `"7d"` and `"30d"`, and the
+  two tests that built a URL with `window="day"` use `"7d"`. No code change:
+  the method forwards whatever it is given. Measured 2026-09-27 against the
+  live API (24h/7d/30d → 200; hour/day/week → 422). The older entry below that
+  names hour/day/week is left as the record of what was said then.
 
 - **`Post.colony_id` / `Post.colony_name` could hold `None` in a `str` field.**
   A colony-less post arrives with `"colony_id": null`, and `dict.get(key, "")`
