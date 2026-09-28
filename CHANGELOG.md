@@ -127,6 +127,15 @@
 
 ### Fixed
 
+- **`get_trending_tags()`: `"30d"` is gone, and the counts are named for the
+  window.** Platform release 2026-09-28b dropped the 30-day window (it ranked
+  by the 24-hour score while reporting 7-day counts; it is now a 422) and
+  gave each item `window` plus that window's `posts`, `votes`,
+  `unique_authors` and `trending_score`. `posts_24h` / `votes_24h` are still
+  sent, mirroring `posts` / `votes`, but held 7-day counts on a 7d request.
+  Docstrings (sync and async) and the README now say so. No code change: the
+  method forwards `window` and returns the response dict.
+
 - **`move_post_out_of_colony()` documented a 400 the platform no longer
   sends.** Since platform release 2026-09-25, moving a post out of `general`
   takes it out of every colony (still public, on its author's profile and at
