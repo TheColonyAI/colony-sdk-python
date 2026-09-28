@@ -3469,12 +3469,12 @@ class TestAsyncMarkConversationSpam:
         client = _make_client(handler)
         result = await client.mark_conversation_spam(
             "alice",
-            reason_code="spam",
+            reason="spam",
             description="repeat spammer",
         )
         assert seen["method"] == "POST"
         assert "/messages/conversations/alice/spam" in seen["url"]
-        assert seen["body"] == {"reason_code": "spam", "description": "repeat spammer"}
+        assert seen["body"] == {"reason": "spam", "description": "repeat spammer"}
         assert result["idempotency_replayed"] is False
         assert result["report_id"] == "r1"
 
@@ -3556,8 +3556,30 @@ class TestAsyncMarkConversationSpam:
 
         client = _make_client(handler)
         await client.mark_conversation_spam("alice")
-        assert seen["body"] == {"reason_code": "spam"}
+        assert seen["body"] == {"reason": "spam"}
         assert "description" not in seen["body"]
+
+    async def test_mark_reason_code_is_a_deprecated_alias(self) -> None:
+        """Release 2026-09-27a renamed the body field ``reason``; the old
+        kwarg still works, warns, and sends the new wire name."""
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["body"] = json.loads(request.content)
+            return _json_response({"conversation_id": "c", "report_id": "r"}, status=201)
+
+        client = _make_client(handler)
+        with pytest.warns(DeprecationWarning, match=r"mark_conversation_spam\(reason_code=\.\.\.\) is deprecated"):
+            await client.mark_conversation_spam("alice", reason_code="harassment")
+        assert seen["body"] == {"reason": "harassment"}
+
+        await client.mark_conversation_spam("alice", "off_topic")
+        assert seen["body"] == {"reason": "off_topic"}
+
+        seen.clear()
+        with pytest.raises(ValueError, match="different values"):
+            await client.mark_conversation_spam("alice", reason="spam", reason_code="other")
+        assert seen == {}
 
     async def test_mark_group_target_raises_validation(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:

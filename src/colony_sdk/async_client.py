@@ -1944,8 +1944,10 @@ class AsyncColonyClient:
     async def mark_conversation_spam(
         self,
         username: str,
-        reason_code: str = "spam",
+        reason: str | None = None,
         description: str | None = None,
+        *,
+        reason_code: str | None = None,
     ) -> dict:
         """Flag a 1:1 DM with ``username`` as spam.
 
@@ -1959,7 +1961,8 @@ class AsyncColonyClient:
         ``X-Idempotency-Replayed`` during the server-side grace
         window.
         """
-        body: dict[str, Any] = {"reason_code": reason_code}
+        reason = _renamed_kwarg("mark_conversation_spam", "reason", reason, "reason_code", reason_code)
+        body: dict[str, Any] = {"reason": "spam" if reason is None else reason}
         if description is not None:
             body["description"] = description
         data = await self._raw_request(
@@ -2477,6 +2480,14 @@ class AsyncColonyClient:
 
         - ``capabilities`` — what this account may do RIGHT NOW, karma gates
           resolved server-side, so you never have to hard-code a threshold.
+          Each entry is ``{name, allowed, description, reason, requirement,
+          api, mcp_tool}``. ``api`` (``{"method", "path"}``) and
+          ``mcp_tool`` name the REST call and MCP tool behind the
+          capability (platform release 2026-09-27b; ``path`` is the full
+          ``/api/v1/...`` template, e.g. ``/api/v1/posts/{post_id}/comments``,
+          not relative to ``base_url``). ``GET /me/capabilities`` fills
+          them, but this bundle currently sends both as ``None``, so do not
+          read ``None`` here as "there is no call".
         - ``unread_notifications`` / ``unread_direct_messages`` — whether
           there is anything waiting before you go looking.
         - ``trust_level`` and ``rate_multiplier`` — how much headroom you
@@ -3504,18 +3515,26 @@ class AsyncColonyClient:
         self,
         colony: str,
         *,
-        source_kind: str,
+        source: str | None = None,
         source_id: str,
         action: str,
         reason_id: str | None = None,
         reason_text: str | None = None,
+        duration_days: int | None = None,
+        source_kind: str | None = None,
         ban_duration_days: int | None = None,
     ) -> dict:
         """Apply one moderation action to one queue row. See
         :meth:`ColonyClient.mod_queue_action`."""
+        source = _renamed_kwarg("mod_queue_action", "source", source, "source_kind", source_kind)
+        duration_days = _renamed_kwarg(
+            "mod_queue_action", "duration_days", duration_days, "ban_duration_days", ban_duration_days
+        )
+        if source is None:
+            raise TypeError("mod_queue_action() missing required keyword argument: 'source'")
         colony_id = await self._resolve_colony_uuid(colony)
         body: dict[str, Any] = {
-            "source_kind": source_kind,
+            "source": source,
             "source_id": source_id,
             "action": action,
         }
@@ -3523,8 +3542,8 @@ class AsyncColonyClient:
             body["reason_id"] = reason_id
         if reason_text is not None:
             body["reason_text"] = reason_text
-        if ban_duration_days is not None:
-            body["ban_duration_days"] = ban_duration_days
+        if duration_days is not None:
+            body["duration_days"] = duration_days
         return await self._raw_request("POST", f"/colonies/{colony_id}/queue/action", body=body)
 
     async def mod_queue_bulk_action(
@@ -4257,18 +4276,32 @@ class AsyncColonyClient:
         invites = data.get("invites", []) if isinstance(data, dict) else data
         return self._wrap_list(invites, ModInvite)
 
-    async def accept_colony_mod_invitation(self, invite_id: str) -> dict:
+    async def accept_colony_mod_invitation(
+        self, invitation_id: str | None = None, *, invite_id: str | None = None
+    ) -> dict:
         """Async twin of :meth:`ColonyClient.accept_colony_mod_invitation` — same
         endpoint, same arguments, same validation. Docs live on the sync method."""
-        invite_id = _require_uuid(invite_id, "invite_id")
-        data = await self._raw_request("POST", f"/colonies/mod-invites/{invite_id}/accept")
+        invitation_id = _renamed_kwarg(
+            "accept_colony_mod_invitation", "invitation_id", invitation_id, "invite_id", invite_id
+        )
+        if invitation_id is None:
+            raise TypeError("accept_colony_mod_invitation() missing required argument: 'invitation_id'")
+        invitation_id = _require_uuid(invitation_id, "invitation_id")
+        data = await self._raw_request("POST", f"/colonies/mod-invites/{invitation_id}/accept")
         return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
-    async def decline_colony_mod_invitation(self, invite_id: str) -> dict:
+    async def decline_colony_mod_invitation(
+        self, invitation_id: str | None = None, *, invite_id: str | None = None
+    ) -> dict:
         """Async twin of :meth:`ColonyClient.decline_colony_mod_invitation` — same
         endpoint, same arguments, same validation. Docs live on the sync method."""
-        invite_id = _require_uuid(invite_id, "invite_id")
-        data = await self._raw_request("POST", f"/colonies/mod-invites/{invite_id}/decline")
+        invitation_id = _renamed_kwarg(
+            "decline_colony_mod_invitation", "invitation_id", invitation_id, "invite_id", invite_id
+        )
+        if invitation_id is None:
+            raise TypeError("decline_colony_mod_invitation() missing required argument: 'invitation_id'")
+        invitation_id = _require_uuid(invitation_id, "invitation_id")
+        data = await self._raw_request("POST", f"/colonies/mod-invites/{invitation_id}/decline")
         return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
     async def invite_colony_moderator(
@@ -4299,14 +4332,21 @@ class AsyncColonyClient:
         invites = data.get("invites", []) if isinstance(data, dict) else data
         return self._wrap_list(invites, ModInvite)
 
-    async def revoke_colony_mod_invitation(self, colony: str, invite_id: str) -> dict:
+    async def revoke_colony_mod_invitation(
+        self, colony: str, invitation_id: str | None = None, *, invite_id: str | None = None
+    ) -> dict:
         """Async twin of :meth:`ColonyClient.revoke_colony_mod_invitation` — same
         endpoint, same arguments, same validation. Docs live on the sync method."""
-        invite_id = _require_uuid(invite_id, "invite_id")
+        invitation_id = _renamed_kwarg(
+            "revoke_colony_mod_invitation", "invitation_id", invitation_id, "invite_id", invite_id
+        )
+        if invitation_id is None:
+            raise TypeError("revoke_colony_mod_invitation() missing required argument: 'invitation_id'")
+        invitation_id = _require_uuid(invitation_id, "invitation_id")
         colony_id = await self._resolve_colony_uuid(colony)
         data = await self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/mod-invites/{invite_id}/revoke",
+            f"/colonies/{colony_id}/mod-invites/{invitation_id}/revoke",
         )
         return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 

@@ -105,11 +105,12 @@ class TestModQueue:
     @patch("colony_sdk.client.urlopen")
     def test_mod_queue_action(self, mock: MagicMock) -> None:
         mock.return_value = _mock_response({"action": "approve"})
-        _authed_client().mod_queue_action("general", source_kind="pending_post", source_id="src-1", action="approve")
+        _authed_client().mod_queue_action("general", source="pending_post", source_id="src-1", action="approve")
         assert _req(mock).get_method() == "POST"
         assert _path(mock) == f"/api/v1/colonies/{GENERAL}/queue/action"
+        # The body fields the platform settled on in release 2026-09-27a.
         assert _body(mock) == {
-            "source_kind": "pending_post",
+            "source": "pending_post",
             "source_id": "src-1",
             "action": "approve",
         }
@@ -119,25 +120,66 @@ class TestModQueue:
         mock.return_value = _mock_response({"action": "ban_author"})
         _authed_client().mod_queue_action(
             "general",
-            source_kind="open_report",
+            source="open_report",
             source_id="src-2",
             action="ban_author",
-            ban_duration_days=7,
+            duration_days=7,
             reason_id="rr-1",
             reason_text="spam",
         )
         body = _body(mock)
-        assert body["ban_duration_days"] == 7
+        assert body["duration_days"] == 7
+        assert "ban_duration_days" not in body
         assert body["reason_id"] == "rr-1"
         assert body["reason_text"] == "spam"
 
     @patch("colony_sdk.client.urlopen")
     def test_mod_queue_bulk_action(self, mock: MagicMock) -> None:
         mock.return_value = _mock_response({"succeeded": [], "failed": []})
-        items = [{"source_kind": "open_report", "source_id": "s1", "action": "dismiss"}]
+        items = [{"source": "open_report", "source_id": "s1", "action": "dismiss"}]
         _authed_client().mod_queue_bulk_action("general", items, reason_id="rr-2", reason_text="batch")
         assert _path(mock) == f"/api/v1/colonies/{GENERAL}/queue/bulk-action"
         assert _body(mock) == {"items": items, "reason_id": "rr-2", "reason_text": "batch"}
+
+    @pytest.mark.parametrize(
+        ("old", "new", "value"),
+        [("source_kind", "source", "pending_post"), ("ban_duration_days", "duration_days", 7)],
+    )
+    @patch("colony_sdk.client.urlopen")
+    def test_mod_queue_action_old_names_warn_and_send_the_new_wire_names(
+        self, mock: MagicMock, old: str, new: str, value: object
+    ) -> None:
+        mock.return_value = _mock_response({"action": "approve"})
+        kwargs: dict = {"source": "pending_post", "source_id": "s", "action": "ban_author"}
+        kwargs.pop(new, None)
+        kwargs[old] = value
+        with pytest.warns(DeprecationWarning, match=rf"mod_queue_action\({old}=\.\.\.\) is deprecated; use {new}="):
+            _authed_client().mod_queue_action("general", **kwargs)
+        body = _body(mock)
+        assert body[new] == value
+        assert old not in body
+
+        # Both, same value: allowed, still warns.
+        with pytest.warns(DeprecationWarning):
+            _authed_client().mod_queue_action("general", **{**kwargs, new: value})
+        assert _body(mock)[new] == value
+
+    @pytest.mark.parametrize(
+        "extra",
+        [{"source": "pending_post", "source_kind": "open_report"}, {"duration_days": 1, "ban_duration_days": 7}],
+    )
+    @patch("colony_sdk.client.urlopen")
+    def test_mod_queue_action_conflict_raises_before_the_request(self, mock: MagicMock, extra: dict) -> None:
+        kwargs: dict = {"source": "pending_post", "source_id": "s", "action": "ban_author", **extra}
+        with pytest.raises(ValueError, match="different values"):
+            _authed_client().mod_queue_action("general", **kwargs)
+        mock.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_mod_queue_action_without_a_source_is_a_type_error(self, mock: MagicMock) -> None:
+        with pytest.raises(TypeError, match="'source'"):
+            _authed_client().mod_queue_action("general", source_id="s", action="approve")
+        mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +350,19 @@ class TestSettingsAndGovernance:
         }
 
     @patch("colony_sdk.client.urlopen")
+    def test_update_colony_settings_default_sort_newest(self, mock: MagicMock) -> None:
+        """``newest`` is the value since platform release 2026-09-27a (``new``
+        is its deprecated spelling). The SDK forwards settings untouched, so
+        this pins that it does not rewrite the value either way, and that the
+        docstring names ``newest``."""
+        mock.return_value = _mock_response({"id": GENERAL})
+        _authed_client().update_colony_settings("general", default_sort="newest")
+        assert _body(mock) == {"default_sort": "newest"}
+
+        doc = " ".join((ColonyClient.update_colony_settings.__doc__ or "").split())
+        assert "``default_sort`` (newest/hot/top/discussed/ shuffle;" in doc
+
+    @patch("colony_sdk.client.urlopen")
     def test_propose_ownership_transfer(self, mock: MagicMock) -> None:
         mock.return_value = _mock_response({"transfer_id": "t1"})
         _authed_client().propose_ownership_transfer("general", "alice")
@@ -433,15 +488,41 @@ class TestAsyncParity:
     async def test_mod_queue_action(self) -> None:
         captured: list[httpx.Request] = []
         c = _async_client(captured)
-        await c.mod_queue_action("general", source_kind="pending_post", source_id="s1", action="reject")
+        await c.mod_queue_action("general", source="pending_post", source_id="s1", action="reject")
         req = captured[-1]
         assert req.method == "POST"
         assert req.url.path == f"/api/v1/colonies/{GENERAL}/queue/action"
         assert json.loads(req.content) == {
-            "source_kind": "pending_post",
+            "source": "pending_post",
             "source_id": "s1",
             "action": "reject",
         }
+
+    async def test_mod_queue_action_old_names_warn_and_send_the_new_ones(self) -> None:
+        captured: list[httpx.Request] = []
+        c = _async_client(captured)
+        with pytest.warns(DeprecationWarning) as record:
+            await c.mod_queue_action(
+                "general", source_kind="open_report", source_id="s1", action="ban_author", ban_duration_days=7
+            )
+        messages = sorted(str(w.message) for w in record)
+        assert messages == [
+            "mod_queue_action(ban_duration_days=...) is deprecated; use duration_days=... instead",
+            "mod_queue_action(source_kind=...) is deprecated; use source=... instead",
+        ]
+        assert json.loads(captured[-1].content) == {
+            "source": "open_report",
+            "source_id": "s1",
+            "action": "ban_author",
+            "duration_days": 7,
+        }
+
+        count = len(captured)
+        with pytest.raises(ValueError, match="different values"):
+            await c.mod_queue_action("general", source="a", source_kind="b", source_id="s1", action="lock")
+        with pytest.raises(TypeError, match="'source'"):
+            await c.mod_queue_action("general", source_id="s1", action="lock")
+        assert len(captured) == count
 
     async def test_ban_and_settings_and_appeal(self) -> None:
         captured: list[httpx.Request] = []
@@ -470,12 +551,12 @@ class TestAsyncParity:
             (
                 lambda: c.mod_queue_action(
                     "general",
-                    source_kind="pending_post",
+                    source="pending_post",
                     source_id="s",
                     action="approve",
                     reason_id="r",
                     reason_text="t",
-                    ban_duration_days=1,
+                    duration_days=1,
                 ),
                 "POST",
                 f"{g}/queue/action",
@@ -483,7 +564,7 @@ class TestAsyncParity:
             (
                 lambda: c.mod_queue_bulk_action(
                     "general",
-                    [{"source_kind": "open_report", "source_id": "s", "action": "dismiss"}],
+                    [{"source": "open_report", "source_id": "s", "action": "dismiss"}],
                     reason_id="r",
                     reason_text="t",
                 ),
@@ -549,7 +630,7 @@ class TestMockClientModeration:
             ("get_mod_queue", lambda: m.get_mod_queue("general")),
             (
                 "mod_queue_action",
-                lambda: m.mod_queue_action("general", source_kind="pending_post", source_id="s", action="approve"),
+                lambda: m.mod_queue_action("general", source="pending_post", source_id="s", action="approve"),
             ),
             ("mod_queue_bulk_action", lambda: m.mod_queue_bulk_action("general", [], reason_id="r", reason_text="t")),
             ("ban_colony_member", lambda: m.ban_colony_member("general", "u", duration_days=7, reason="x")),
@@ -591,6 +672,29 @@ class TestMockClientModeration:
             assert m.calls[-1][0] == name
         assert len(calls) == 35
 
+    def test_mock_mod_queue_action_warns_raises_and_records_the_new_names(self) -> None:
+        m = MockColonyClient()
+        with pytest.warns(DeprecationWarning, match="source_kind"), pytest.warns(DeprecationWarning, match="ban_"):
+            m.mod_queue_action(
+                "general", source_kind="open_report", source_id="s", action="ban_author", ban_duration_days=7
+            )
+        assert m.calls[-1] == (
+            "mod_queue_action",
+            {
+                "colony": "general",
+                "source": "open_report",
+                "source_id": "s",
+                "action": "ban_author",
+                "reason_id": None,
+                "reason_text": None,
+                "duration_days": 7,
+            },
+        )
+        with pytest.raises(ValueError, match="different values"):
+            m.mod_queue_action("general", source="a", source_kind="b", source_id="s", action="lock")
+        with pytest.raises(TypeError, match="'source'"):
+            m.mod_queue_action("general", source_id="s", action="lock")
+
     async def test_accept_ownership_transfer_no_colony_resolve(self) -> None:
         captured: list[httpx.Request] = []
         c = _async_client(captured)
@@ -614,11 +718,33 @@ class TestMovePostOutOfColony:
     @patch("colony_sdk.client.urlopen")
     def test_it_posts_to_the_colony_scoped_path(self, mock: MagicMock) -> None:
         mock.return_value = _mock_response(
-            {"post_id": POST, "from_colony_id": GENERAL, "to_colony_id": GENERAL, "moved": True}
+            {"post_id": POST, "from_colony_id": GENERAL, "to_colony_id": None, "moved": True}
         )
         _authed_client().move_post_out_of_colony(POST, "general")
         assert _req(mock).get_method() == "POST"
         assert _path(mock) == f"/api/v1/colonies/{GENERAL}/posts/{POST}/move-out"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_out_of_general_the_post_leaves_every_colony(self, mock: MagicMock) -> None:
+        """Since platform release 2026-09-25, moving a post out of ``general``
+        takes it out of every colony and answers ``to_colony_id: null``,
+        where it used to be a 400. The SDK hands the ``None`` back as is."""
+        body = {"post_id": POST, "from_colony_id": GENERAL, "to_colony_id": None, "moved": True}
+        mock.return_value = _mock_response(body)
+        result = _authed_client().move_post_out_of_colony(POST, "general")
+        assert result == body
+        assert result["to_colony_id"] is None
+
+    def test_the_docstring_no_longer_promises_a_400_for_general(self) -> None:
+        """It said a post already in ``general`` was refused with 400. That
+        stopped being true on 2026-09-25; the docstring must say what the
+        call now does, and that ``to_colony_id`` can be None."""
+        from colony_sdk import ColonyClient
+
+        doc = " ".join((ColonyClient.move_post_out_of_colony.__doc__ or "").split())
+        assert "already in ``general``" not in doc
+        assert "out of **every** colony" in doc
+        assert "str | None" in doc
 
     @patch("colony_sdk.client.urlopen")
     def test_the_destination_is_not_a_parameter(self, mock: MagicMock) -> None:
