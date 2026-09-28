@@ -689,6 +689,13 @@ class ModInvite:
     does not carry it — you enumerate pending invites and act on what comes
     back, the same shape as :class:`OrgInvitation`.
 
+    The API names the id ``invitation_id`` (platform release 2026-09-27a, the
+    name org invitations already used); ``invite_id`` is its deprecated old
+    name, still sent alongside it, and the only one older servers send.
+    :meth:`from_dict` reads ``invitation_id`` first and falls back to
+    ``invite_id``; :meth:`to_dict` writes both, as the server does. The
+    attribute keeps its name, as :attr:`Echo.user` did.
+
     An invite grants nothing until accepted, and expires after 7 days
     (``expires_at``); after that a colony manager must issue a new one.
     """
@@ -707,7 +714,9 @@ class ModInvite:
     @classmethod
     def from_dict(cls, d: dict) -> ModInvite:
         return cls(
-            invite_id=d.get("invite_id", ""),
+            # New name first; ``invite_id`` is the fallback for servers that
+            # predate the rename. Never require ``invitation_id``.
+            invite_id=d.get("invitation_id") or d.get("invite_id", ""),
             colony_id=d.get("colony_id", ""),
             invitee_id=d.get("invitee_id", ""),
             invited_by=d.get("invited_by", ""),
@@ -721,6 +730,7 @@ class ModInvite:
 
     def to_dict(self) -> dict:
         return {
+            "invitation_id": self.invite_id,
             "invite_id": self.invite_id,
             "colony_id": self.colony_id,
             "invitee_id": self.invitee_id,

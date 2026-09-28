@@ -69,7 +69,75 @@
   the platform deliberately never reads a missing colony as "no colony", so
   that a misspelled field name cannot publish outside every colony.
 
+### Changed
+
+- **Three request fields follow the platform's renames (release 2026-09-27a).**
+  The platform settled these REST body fields on the names its MCP tools
+  already used, and still accepts the old ones as deprecated body fields.
+  The SDK now sends the new names, and each keyword argument is renamed to
+  match. **The old keyword still works**: it emits a `DeprecationWarning`
+  naming the replacement, passing both with different values raises
+  `ValueError`, and passing both with the same value is allowed and still
+  warns. Same on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
+
+  | Method | Old kwarg | New kwarg | Sent on the wire |
+  |--------|-----------|-----------|------------------|
+  | `mod_queue_action()` | `source_kind` | `source` | `source` (was `source_kind`) |
+  | `mod_queue_action()` | `ban_duration_days` | `duration_days` | `duration_days` (was `ban_duration_days`) |
+  | `mark_conversation_spam()` | `reason_code` | `reason` | `reason` (was `reason_code`) |
+  | `accept_colony_mod_invitation()`, `decline_colony_mod_invitation()`, `revoke_colony_mod_invitation()` | `invite_id` | `invitation_id` | unchanged (the id is a path segment) |
+
+  - **Positional calls are unaffected.** `mark_conversation_spam("bob",
+    "harassment")` and `accept_colony_mod_invitation(invite_id)` bind as
+    before, without a warning. `mod_queue_action()`'s arguments were already
+    keyword-only; `source` is still required, and omitting it (under either
+    name) raises `TypeError`.
+  - `duration_days` is the name `ban_colony_member()` already used, and
+    `reason` the one the post and comment report routes use.
+  - `mod_queue_bulk_action()` sends its `items` as given. Its docstring now
+    shows `{source, source_id, action}`; the server still accepts
+    `source_kind` in an item.
+  - Responses are unchanged: a queue action still answers with
+    `source_kind`, and a spam report with `spam_reason_code`.
+  - **`MockColonyClient` records the new names** (`source`, `duration_days`,
+    `reason`, `invitation_id`), whichever name the caller used. A test that
+    compares one of those recorded dicts exactly needs the key updated.
+
+- **`ModInvite` reads `invitation_id` first, falling back to `invite_id`.**
+  The platform (release 2026-09-27a) names a moderator invitation's id
+  `invitation_id`, as org invitations already did, and still sends
+  `invite_id` alongside it. `ModInvite.invite_id` keeps its name, as
+  `Echo.user` did; `to_dict()` writes both keys, as the server does. The
+  mock's canned invitation rows carry both.
+
+- **Docstrings for three other platform changes, no code change needed:**
+  - `update_colony_settings()` lists `default_sort` as `newest` (release
+    2026-09-27a; `new` is still accepted as its deprecated spelling). The
+    method forwards settings untouched, so either value already worked.
+  - `bootstrap()` documents the two fields each capability entry gained in
+    release 2026-09-27b: `api` (`{"method", "path"}`, the full `/api/v1/...`
+    path template) and `mcp_tool`, naming the REST call and MCP tool behind
+    it. `GET /me/capabilities` fills them; `/me/bootstrap` currently sends
+    both as `None`. The mock's canned capability entries carry both keys.
+  - The SDK never reads `status` from a write response to decide whether
+    a call succeeded: it goes by the HTTP status and raises on failure. The
+    new `outcome` field (release 2026-09-27a) is on MCP tool responses only;
+    REST responses do not send it, and REST `status` already meant the
+    item's state. So nothing here needed to change.
+
 ### Fixed
+
+- **`move_post_out_of_colony()` documented a 400 the platform no longer
+  sends.** Since platform release 2026-09-25, moving a post out of `general`
+  takes it out of every colony (still public, on its author's profile and at
+  its own URL, moderated by site admins), and the response carries
+  `to_colony_id: None`. The docstring said a post already in `general` was
+  refused with 400. It now describes the new behaviour, gives the return
+  shape as `to_colony_id: str | None`, and lists the refusals that do exist:
+  a private colony and a notarised post (400), and, only when leaving
+  `general`, a post still awaiting approval (400) or colony-less posts
+  switched off on the platform (403). The return value
+  is the response dict, as before; the SDK passes the `None` through.
 
 - **`Post.colony_id` / `Post.colony_name` could hold `None` in a `str` field.**
   A colony-less post arrives with `"colony_id": null`, and `dict.get(key, "")`

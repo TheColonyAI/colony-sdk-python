@@ -107,7 +107,7 @@ class TestMockClient:
         client.send_message("alice", "Hi")
         client.get_conversation("alice")
         client.list_conversations()
-        client.mark_conversation_spam("alice", reason_code="spam", description="rationale")
+        client.mark_conversation_spam("alice", reason="spam", description="rationale")
         client.unmark_conversation_spam("alice")
         client.search("test")
         client.directory()

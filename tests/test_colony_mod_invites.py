@@ -64,7 +64,10 @@ CALLS: list[tuple[str, tuple, dict]] = [
     ("revoke_colony_mod_invitation", (COLONY, INVITE), {}),
 ]
 
+#: As the server sends it since release 2026-09-27a: the id under
+#: ``invitation_id``, mirrored under its deprecated old name ``invite_id``.
 INVITE_ROW = {
+    "invitation_id": INVITE,
     "invite_id": INVITE,
     "colony_id": COLONY,
     "invitee_id": "33333333-3333-3333-3333-333333333333",
@@ -209,7 +212,8 @@ class TestTheInviteeSide:
         also keeps the two methods callable from a notification alone."""
         for name in ("accept_colony_mod_invitation", "decline_colony_mod_invitation"):
             params = list(inspect.signature(getattr(ColonyClient, name)).parameters)
-            assert params == ["self", "invite_id"], f"{name} takes {params}"
+            # ``invite_id`` is the keyword-only deprecated alias, not a colony.
+            assert params == ["self", "invitation_id", "invite_id"], f"{name} takes {params}"
 
 
 class TestTheManagerSide:
@@ -343,6 +347,21 @@ class TestTheModel:
         inv = ModInvite.from_dict({**INVITE_ROW, "some_future_field": 1})
         assert inv.invite_id == INVITE
 
+    def test_it_reads_invitation_id_first_and_falls_back_to_invite_id(self) -> None:
+        """The platform renamed the id ``invitation_id`` on 2026-09-27 and
+        mirrors ``invite_id``. A server from before sends only the old name,
+        so the new one is preferred and never required."""
+        other = "55555555-5555-5555-5555-555555555555"
+        assert ModInvite.from_dict({"invitation_id": INVITE, "colony_id": COLONY}).invite_id == INVITE
+        assert ModInvite.from_dict({"invite_id": INVITE, "colony_id": COLONY}).invite_id == INVITE
+        assert ModInvite.from_dict({"invitation_id": INVITE, "invite_id": other}).invite_id == INVITE
+
+    def test_to_dict_writes_both_names(self) -> None:
+        """As the server does, so code reading either key from a typed
+        round trip keeps working."""
+        d = ModInvite.from_dict({"invite_id": INVITE, "colony_id": COLONY}).to_dict()
+        assert d["invitation_id"] == d["invite_id"] == INVITE
+
 
 # ---------------------------------------------------------------------------
 # Parity — names, signatures, requests, and returns
@@ -391,7 +410,8 @@ class TestParity:
 
         received = client.list_my_colony_mod_invitations()
         assert isinstance(received, list) and received, "default is not a populated list"
-        assert "invite_id" in received[0], "the id accept/decline take is missing"
+        assert "invitation_id" in received[0], "the id accept/decline take is missing"
+        assert received[0]["invite_id"] == received[0]["invitation_id"], "the deprecated mirror is missing"
         assert isinstance(client.list_colony_mod_invitations(COLONY), list)
 
         for name, args in (
@@ -401,7 +421,7 @@ class TestParity:
             ("revoke_colony_mod_invitation", (COLONY, INVITE)),
         ):
             answer = getattr(client, name)(*args)
-            assert isinstance(answer, dict) and "invite_id" in answer, name
+            assert isinstance(answer, dict) and "invitation_id" in answer and "invite_id" in answer, name
 
     def test_the_mock_records_what_it_was_asked(self) -> None:
         """``calls`` is how a user asserts their own code invited the right
@@ -504,3 +524,89 @@ class TestAsyncMatchesSync:
         assert async_result == sync_result
         assert len(async_result) == 1
         assert async_result[0]["invite_id"] == INVITE
+
+
+# ---------------------------------------------------------------------------
+# invite_id -> invitation_id (platform release 2026-09-27a)
+# ---------------------------------------------------------------------------
+
+#: (method, leading args, expected URL suffix) for the three methods that take
+#: the id. The id is the last positional argument on each.
+RENAMED: list[tuple[str, tuple, str]] = [
+    ("accept_colony_mod_invitation", (), f"/colonies/mod-invites/{INVITE}/accept"),
+    ("decline_colony_mod_invitation", (), f"/colonies/mod-invites/{INVITE}/decline"),
+    ("revoke_colony_mod_invitation", (COLONY,), f"/colonies/{COLONY}/mod-invites/{INVITE}/revoke"),
+]
+
+
+class TestInvitationIdRename:
+    """The platform settled on ``invitation_id`` — "invitation" is the noun,
+    as org invitations already said. The id travels in the URL path, so no
+    wire name changes; only the SDK keyword follows the platform, with
+    ``invite_id`` kept as a deprecated alias."""
+
+    @pytest.mark.parametrize("method,lead,suffix", RENAMED)
+    @patch("colony_sdk.client.urlopen")
+    def test_positional_and_new_keyword_do_not_warn(
+        self, mock_urlopen: MagicMock, method: str, lead: tuple, suffix: str
+    ) -> None:
+        import warnings
+
+        mock_urlopen.return_value = _mock_response(INVITE_ROW)
+        client = _authed_client()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            getattr(client, method)(*lead, INVITE)
+            assert _last_request(mock_urlopen).full_url == f"{BASE}{suffix}"
+            getattr(client, method)(*lead, invitation_id=INVITE)
+            assert _last_request(mock_urlopen).full_url == f"{BASE}{suffix}"
+
+    @pytest.mark.parametrize("method,lead,suffix", RENAMED)
+    @patch("colony_sdk.client.urlopen")
+    def test_old_keyword_warns_and_reaches_the_same_url(
+        self, mock_urlopen: MagicMock, method: str, lead: tuple, suffix: str
+    ) -> None:
+        mock_urlopen.return_value = _mock_response(INVITE_ROW)
+        with pytest.warns(DeprecationWarning, match=rf"{method}\(invite_id=\.\.\.\) is deprecated; use invitation_id="):
+            getattr(_authed_client(), method)(*lead, invite_id=INVITE)
+        assert _last_request(mock_urlopen).full_url == f"{BASE}{suffix}"
+
+    @pytest.mark.parametrize("method,lead,suffix", RENAMED)
+    @patch("colony_sdk.client.urlopen")
+    def test_conflict_and_missing_raise_before_the_request(
+        self, mock_urlopen: MagicMock, method: str, lead: tuple, suffix: str
+    ) -> None:
+        client = _authed_client()
+        other = "55555555-5555-5555-5555-555555555555"
+        with pytest.raises(ValueError, match="different values"):
+            getattr(client, method)(*lead, INVITE, invite_id=other)
+        with pytest.raises(TypeError, match="invitation_id"):
+            getattr(client, method)(*lead)
+        mock_urlopen.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method,lead,suffix", RENAMED)
+    async def test_the_async_client_behaves_the_same(self, method: str, lead: tuple, suffix: str) -> None:
+        with pytest.warns(DeprecationWarning, match=rf"{method}\(invite_id=\.\.\.\)"):
+            seen, _ = await TestAsyncMatchesSync()._record(method, lead, {"invite_id": INVITE}, INVITE_ROW)
+        assert seen["url"] == f"{BASE}{suffix}"
+
+        seen, _ = await TestAsyncMatchesSync()._record(method, lead, {"invitation_id": INVITE}, INVITE_ROW)
+        assert seen["url"] == f"{BASE}{suffix}"
+
+        with pytest.raises(TypeError, match="invitation_id"):
+            await TestAsyncMatchesSync()._record(method, lead, {}, INVITE_ROW)
+
+    @pytest.mark.parametrize("method,lead,suffix", RENAMED)
+    def test_the_mock_warns_raises_and_records_the_new_name(self, method: str, lead: tuple, suffix: str) -> None:
+        from colony_sdk.testing import MockColonyClient
+
+        client = MockColonyClient()
+        with pytest.warns(DeprecationWarning, match="invite_id"):
+            getattr(client, method)(*lead, invite_id=INVITE)
+        recorded = client.calls[-1][1]
+        assert recorded["invitation_id"] == INVITE
+        assert "invite_id" not in recorded
+
+        with pytest.raises(TypeError, match="invitation_id"):
+            getattr(client, method)(*lead)
