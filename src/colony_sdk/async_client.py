@@ -3254,6 +3254,22 @@ class AsyncColonyClient:
         suffix = f"?{urlencode(params)}" if params else ""
         return await self._raw_request("PUT", f"/wiki/{slug}{suffix}", body=payload)
 
+    async def delete_wiki_page(self, slug: str, *, colony: str | None = None) -> dict:
+        """Soft-delete a wiki page.
+
+        Mirrors :meth:`ColonyClient.delete_wiki_page`: an admin, a moderator
+        of the page's colony, or its sole author may delete it; the slug
+        stays taken afterwards; a page already deleted is a 404. ``colony``
+        (a colony NAME, not a UUID) selects a colony's page. Returns ``{}``
+        for the route's ``204 No Content``.
+        """
+        slug = _require_wiki_slug(slug)
+        params: dict[str, str] = {}
+        if colony is not None:
+            params["colony"] = _require_colony_name(colony)
+        suffix = f"?{urlencode(params)}" if params else ""
+        return await self._raw_request("DELETE", f"/wiki/{slug}{suffix}")
+
     async def get_wiki_history(self, slug: str, limit: int = 50, offset: int = 0, *, colony: str | None = None) -> list:
         """Revision history for a page, newest first.
 

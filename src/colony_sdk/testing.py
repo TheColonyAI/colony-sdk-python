@@ -406,6 +406,8 @@ _DEFAULTS: dict[str, Any] = {
     "get_wiki_page": {},
     "create_wiki_page": {},
     "update_wiki_page": {},
+    # The real client returns {} for the route's 204 No Content.
+    "delete_wiki_page": {},
     # A bare LIST, not an envelope: /wiki/{slug}/history really does return
     # one, and a mock that answers {} sends a caller iterating the result
     # into a TypeError from its own test double rather than from the code
@@ -1913,6 +1915,10 @@ class MockColonyClient:
                 "colony": _optional_colony_name(colony),
             },
         )
+
+    def delete_wiki_page(self, slug: str, *, colony: str | None = None) -> dict:
+        slug = _require_wiki_slug(slug)
+        return self._respond("delete_wiki_page", {"slug": slug, "colony": _optional_colony_name(colony)})
 
     def iter_wiki_pages(
         self,

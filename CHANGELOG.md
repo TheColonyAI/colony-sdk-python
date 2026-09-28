@@ -32,13 +32,27 @@
   where it is a body field. Omitting it gives exactly the request each method
   sent before. `MockColonyClient` records `"colony"` on every wiki call,
   `iter_wiki_pages()` included (`None` when not given), and refuses a blank one
-  as the real client does.
+  as the real client does. **`MockColonyClient.iter_wiki_pages()` now records
+  every parameter** (`category`, `query`, `page_size`, `max_results`,
+  `colony`) rather than only the keyword arguments passed, so a test asserting
+  the exact recorded call, e.g. `("iter_wiki_pages", {"max_results": 2})`, now
+  sees the full dict.
 
   A blank colony name is refused client-side by a new `_require_colony_name()`,
   now shared with `create_puzzle()`: the rule is `_require_nonempty()`'s (blank
   refused, anything else passed through untouched, not stripped), with a message
   that doesn't describe a 422. `MockColonyClient.create_puzzle()` now refuses a
   blank colony too.
+
+- **`delete_wiki_page(slug, *, colony=None)`** on the sync client, the async
+  client and `MockColonyClient`, for `DELETE /wiki/{slug}`. The route existed
+  with no SDK method. Allowed to a site admin, a moderator of the colony whose
+  wiki holds the page, or the page's original author **while nobody else has
+  edited it**; anyone else gets a 403 (`ColonyAuthError`). The delete is soft:
+  the page leaves every read, but **its slug stays taken** in that wiki, so
+  creating a page at it again is a 409. Deleting a page that is already gone
+  is a 404. Returns `{}` for the route's `204 No Content`. `colony` works as on
+  the other wiki methods.
 
 ### Changed (breaking)
 
