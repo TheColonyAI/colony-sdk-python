@@ -547,6 +547,20 @@ def _optional_colony_name(colony: str | None) -> str | None:
     return None if colony is None else _require_colony_name(colony)
 
 
+def _canned_rows(resp: Any, key: str) -> list:
+    """The rows a mock iterator yields from a canned list response.
+
+    The real routes return a bare array. The mock's defaults predate that
+    and are envelopes (``{"conversations": []}``, ``{"items": [...]}``), and
+    tests configure either shape, so accept both.
+    """
+    if isinstance(resp, list):
+        return resp
+    if isinstance(resp, dict) and isinstance(resp.get(key), list):
+        return cast(list, resp[key])
+    return []
+
+
 class MockColonyClient:
     """A mock Colony client that returns canned responses without network calls.
 
@@ -919,8 +933,40 @@ class MockColonyClient:
     def get_conversation(self, username: str) -> dict:
         return self._respond("get_conversation", {"username": username})
 
-    def list_conversations(self) -> dict:
-        return self._respond("list_conversations", {})
+    def list_conversations(
+        self,
+        limit: int | None = None,
+        offset: int | None = None,
+        include_archived: bool = False,
+    ) -> dict:
+        # Additive only when supplied — recorded-call assertions written before
+        # these parameters compare ("list_conversations", {}) exactly.
+        payload: dict[str, Any] = {}
+        if limit is not None:
+            payload["limit"] = limit
+        if offset is not None:
+            payload["offset"] = offset
+        if include_archived:
+            payload["include_archived"] = True
+        return self._respond("list_conversations", payload)
+
+    def iter_conversations(
+        self,
+        page_size: int = 50,
+        max_results: int | None = None,
+        include_archived: bool = False,
+    ) -> Iterator[dict]:
+        # Records the call and yields the canned list, like iter_wiki_pages,
+        # rather than re-implementing pagination against a double that
+        # returns one fixed page forever.
+        self.calls.append(
+            (
+                "iter_conversations",
+                {"page_size": page_size, "max_results": max_results, "include_archived": include_archived},
+            )
+        )
+        rows = _canned_rows(self._responses.get("list_conversations", []), "conversations")
+        yield from rows if max_results is None else rows[:max_results]
 
     def conversation_history(self, username: str, before: str, **kwargs: Any) -> dict:
         return self._respond("conversation_history", {"username": username, "before": before, **kwargs})
@@ -1826,8 +1872,27 @@ class MockColonyClient:
 
     # ── Notifications ──
 
-    def get_notifications(self, unread_only: bool = False, limit: int = 50) -> dict:
-        return self._respond("get_notifications", {"unread_only": unread_only, "limit": limit})
+    def get_notifications(self, unread_only: bool = False, limit: int = 50, offset: int | None = None) -> dict:
+        payload: dict[str, Any] = {"unread_only": unread_only, "limit": limit}
+        # Additive only when supplied — see ``list_conversations``.
+        if offset is not None:
+            payload["offset"] = offset
+        return self._respond("get_notifications", payload)
+
+    def iter_notifications(
+        self,
+        unread_only: bool = False,
+        page_size: int = 50,
+        max_results: int | None = None,
+    ) -> Iterator[dict]:
+        self.calls.append(
+            (
+                "iter_notifications",
+                {"unread_only": unread_only, "page_size": page_size, "max_results": max_results},
+            )
+        )
+        rows = _canned_rows(self._responses.get("get_notifications", []), "items")
+        yield from rows if max_results is None else rows[:max_results]
 
     def get_notification_count(self) -> dict:
         return self._respond("get_notification_count", {})

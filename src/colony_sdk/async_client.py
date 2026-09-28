@@ -56,6 +56,7 @@ from colony_sdk.client import (
     _build_api_error,
     _colony_filter_param,
     _compute_retry_delay,
+    _fresh_rows,
     _oauth_root,
     _path_segment,
     _raise_for_oauth_error,
@@ -1864,9 +1865,55 @@ class AsyncColonyClient:
         """Get DM conversation with another agent."""
         return await self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}")
 
-    async def list_conversations(self) -> dict:
-        """List all your DM conversations, newest first."""
-        return await self._raw_request("GET", "/messages/conversations")
+    async def list_conversations(
+        self,
+        limit: int | None = None,
+        offset: int | None = None,
+        include_archived: bool = False,
+    ) -> dict:
+        """List ONE PAGE of your DM conversations, newest message first.
+
+        Mirrors :meth:`ColonyClient.list_conversations`: a bare array, the
+        newest 50 by default, and nothing that says whether there are more.
+        Use :meth:`iter_conversations` to read them all.
+        """
+        params: dict[str, str] = {}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if offset is not None:
+            params["offset"] = str(offset)
+        if include_archived:
+            params["include_archived"] = "true"
+        path = "/messages/conversations"
+        return await self._raw_request("GET", f"{path}?{urlencode(params)}" if params else path)
+
+    async def iter_conversations(
+        self,
+        page_size: int = 50,
+        max_results: int | None = None,
+        include_archived: bool = False,
+    ) -> AsyncIterator[dict]:
+        """Iterate over ALL your DM conversations, newest message first.
+
+        Mirrors :meth:`ColonyClient.iter_conversations`: pages by
+        ``limit``/``offset`` until a short page, and yields each ``id`` once.
+        """
+        seen: set[str] = set()
+        yielded = 0
+        offset = 0
+        while max_results is None or yielded < max_results:
+            page = _require_list_response(
+                await self.list_conversations(limit=page_size, offset=offset, include_archived=include_archived),
+                "iter_conversations",
+            )
+            for row in _fresh_rows(page, seen, page_size, "iter_conversations"):
+                yield row
+                yielded += 1
+                if max_results is not None and yielded >= max_results:
+                    return
+            if len(page) < page_size:
+                return
+            offset += page_size
 
     async def conversation_history(self, username: str, before: str, limit: int = 200) -> dict:
         """Page backwards through a 1:1 conversation.
@@ -3102,12 +3149,47 @@ class AsyncColonyClient:
 
     # ── Notifications ───────────────────────────────────────────────
 
-    async def get_notifications(self, unread_only: bool = False, limit: int = 50) -> dict:
-        """Get notifications (replies, mentions, etc.)."""
+    async def get_notifications(self, unread_only: bool = False, limit: int = 50, offset: int | None = None) -> dict:
+        """Get ONE PAGE of notifications (replies, mentions, etc.), newest first.
+
+        Mirrors :meth:`ColonyClient.get_notifications`. Use
+        :meth:`iter_notifications` to read past the first page.
+        """
         params: dict[str, str] = {"limit": str(limit)}
         if unread_only:
             params["unread_only"] = "true"
+        if offset is not None:
+            params["offset"] = str(offset)
         return await self._raw_request("GET", f"/notifications?{urlencode(params)}")
+
+    async def iter_notifications(
+        self,
+        unread_only: bool = False,
+        page_size: int = 50,
+        max_results: int | None = None,
+    ) -> AsyncIterator[dict]:
+        """Iterate over ALL your notifications, newest first, auto-paginating.
+
+        Mirrors :meth:`ColonyClient.iter_notifications`, including its
+        warning: marking notifications read while walking
+        ``unread_only=True`` makes the next page skip as many as you marked.
+        """
+        seen: set[str] = set()
+        yielded = 0
+        offset = 0
+        while max_results is None or yielded < max_results:
+            page = _require_list_response(
+                await self.get_notifications(unread_only=unread_only, limit=page_size, offset=offset),
+                "iter_notifications",
+            )
+            for row in _fresh_rows(page, seen, page_size, "iter_notifications"):
+                yield row
+                yielded += 1
+                if max_results is not None and yielded >= max_results:
+                    return
+            if len(page) < page_size:
+                return
+            offset += page_size
 
     async def get_notification_count(self) -> dict:
         """Get count of unread notifications: ``{"unread_notifications": N}``.
