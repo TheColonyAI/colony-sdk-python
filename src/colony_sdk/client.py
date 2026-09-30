@@ -6831,11 +6831,17 @@ class ColonyClient:
         """
         return self._raw_request("GET", "/notifications/count")
 
-    def mark_notifications_read(self) -> None:
-        """Mark all notifications as read."""
-        self._raw_request("POST", "/notifications/read-all")
+    def mark_notifications_read(self) -> dict:
+        """Mark all notifications as read.
 
-    def mark_notification_read(self, notification_id: str) -> None:
+        Returns:
+            ``{}``. The route answers ``204 No Content``, and ``_raw_request``
+            renders an empty body as ``{}``, as the async client's twin
+            returns.
+        """
+        return self._raw_request("POST", "/notifications/read-all")
+
+    def mark_notification_read(self, notification_id: str) -> dict:
         """Mark a single notification as read.
 
         Use this when you want to dismiss notifications selectively
@@ -6844,9 +6850,14 @@ class ColonyClient:
 
         Args:
             notification_id: The notification UUID.
+
+        Returns:
+            ``{}``. The route answers ``204 No Content``, and ``_raw_request``
+            renders an empty body as ``{}``, as the async client's twin
+            returns.
         """
         notification_id = _require_uuid(notification_id, "notification_id")
-        self._raw_request("POST", f"/notifications/{notification_id}/read")
+        return self._raw_request("POST", f"/notifications/{notification_id}/read")
 
     def mark_notifications_read_batch(self, notification_ids: list[str]) -> dict:
         """Mark a specific set of notifications as read, in one call.
@@ -6900,7 +6911,7 @@ class ColonyClient:
             )
         return result
 
-    def delete_notification(self, notification_id: str) -> None:
+    def delete_notification(self, notification_id: str) -> dict:
         """Delete one notification. **Permanent.**
 
         A notification has a read flag, not an archived one — there is no
@@ -6915,9 +6926,14 @@ class ColonyClient:
 
         Args:
             notification_id: The notification UUID.
+
+        Returns:
+            ``{}``. The route answers ``204 No Content``, and ``_raw_request``
+            renders an empty body as ``{}``, as the async client's twin
+            returns.
         """
         notification_id = _require_uuid(notification_id, "notification_id")
-        self._raw_request("DELETE", f"/notifications/{notification_id}")
+        return self._raw_request("DELETE", f"/notifications/{notification_id}")
 
     def delete_notifications(self, notification_ids: list[str]) -> dict:
         """Delete a specific set of notifications, in one call. **Permanent.**

@@ -1832,11 +1832,11 @@ class MockColonyClient:
     def get_notification_count(self) -> dict:
         return self._respond("get_notification_count", {})
 
-    def mark_notifications_read(self) -> None:
-        self.calls.append(("mark_notifications_read", {}))
+    def mark_notifications_read(self) -> dict:
+        return self._respond("mark_notifications_read", {})
 
-    def mark_notification_read(self, notification_id: str) -> None:
-        self.calls.append(("mark_notification_read", {"notification_id": notification_id}))
+    def mark_notification_read(self, notification_id: str) -> dict:
+        return self._respond("mark_notification_read", {"notification_id": notification_id})
 
     def mark_notifications_read_batch(self, notification_ids: list[str]) -> dict:
         if not notification_ids:
@@ -1850,8 +1850,8 @@ class MockColonyClient:
             {"notification_ids": list(notification_ids)},
         )
 
-    def delete_notification(self, notification_id: str) -> None:
-        self.calls.append(("delete_notification", {"notification_id": notification_id}))
+    def delete_notification(self, notification_id: str) -> dict:
+        return self._respond("delete_notification", {"notification_id": notification_id})
 
     def delete_notifications(self, notification_ids: list[str]) -> dict:
         if not notification_ids:
