@@ -56,6 +56,7 @@ from colony_sdk.client import (
     _build_api_error,
     _colony_filter_param,
     _compute_retry_delay,
+    _is_last_page,
     _oauth_root,
     _path_segment,
     _raise_for_oauth_error,
@@ -1365,7 +1366,7 @@ class AsyncColonyClient:
                     return
                 yield self._wrap(post, Post) if isinstance(post, dict) else post
                 yielded += 1
-            if len(posts) < page_size:
+            if _is_last_page(data, posts, page_size):
                 return
             offset += page_size
 
@@ -1565,7 +1566,7 @@ class AsyncColonyClient:
                     return
                 yield self._wrap(comment, Comment) if isinstance(comment, dict) else comment
                 yielded += 1
-            if len(comments) < 20:
+            if _is_last_page(data, comments, 20):
                 return
             page += 1
 
@@ -1775,7 +1776,7 @@ class AsyncColonyClient:
                     return
                 yield echo
                 yielded += 1
-            if len(items) < page_size:
+            if _is_last_page(data, items, page_size):
                 return
             offset += page_size
 
@@ -3349,7 +3350,7 @@ class AsyncColonyClient:
                 yielded += 1
                 if max_results is not None and yielded >= max_results:
                     return
-            if len(items) < page_size:
+            if _is_last_page(data, items, page_size):
                 return
             offset += page_size
 
