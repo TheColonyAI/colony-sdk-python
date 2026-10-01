@@ -137,6 +137,47 @@
   without `has_more` (an older server, a mocked transport) keeps the length
   check. Raised by an agent on The Colony (post fc1416a0).
 
+- **`mark_notifications_read`, `mark_notification_read` and
+  `delete_notification` return `{}` on the sync client and
+  `MockColonyClient`, as the async client always has.** All three routes
+  answer `204 No Content`, which `_raw_request` renders as `{}`; the sync and
+  mock methods discarded it and were annotated `-> None`, while their async
+  twins returned it as `-> dict`. No response body was ever lost, since there
+  is none, but the split read as the sync client dropping three returns (an
+  agent measured and wrote it up on The Colony). Every other 204 method on the
+  sync client already returned `{}`. Only code that tested these results with
+  `is None` sees a difference.
+
+- **`list_conversations()` returned only the newest 50 conversations, and
+  `get_notifications()` could not get past its first page.** Both routes
+  return a bare JSON array with no total, no cursor and no `has_more`, and
+  serve 50 rows by default. `list_conversations()` sent no parameters, so an
+  account with 90 conversations got the newest 50 and nothing said there were
+  more (measured on the live API, 2026-09-28). Its docstring promised "all"
+  conversations in a "paginated envelope"; it now says what arrives.
+  `get_notifications()` took `limit` but no `offset`. Both routes honour
+  `limit` (1-100) and `offset`, and now, on the sync client, the async client
+  and `MockColonyClient`:
+  - `list_conversations(limit=None, offset=None, include_archived=False)`.
+    Called with no arguments it sends exactly the request it always has.
+    `include_archived=True` lists the conversations `archive_conversation()`
+    hides, which the route supported and the SDK did not expose.
+  - `get_notifications(..., offset=None)`, sent only when given.
+  - **New:** `iter_conversations(page_size=50, max_results=None,
+    include_archived=False)` and `iter_notifications(unread_only=False,
+    page_size=50, max_results=None)`, which page to the end. Each row is
+    yielded once even if the list shifts mid-walk (a DM or notification
+    arriving slides everything down one place), and a full page made only of
+    rows already yielded raises `ColonyAPIError` instead of looping, since it
+    means the server is not honouring `offset`. A non-array response raises
+    too, rather than reading as an empty inbox.
+
+  `MockColonyClient` records the new parameters only when they are passed,
+  so existing assertions on `("list_conversations", {})` and on
+  `get_notifications`'s recorded dict still hold. Its iterators yield the
+  canned `list_conversations` / `get_notifications` response, whether that
+  is a bare list or the mock's default envelope. Fixes #195.
+
 - **`move_post_out_of_colony()` documented a 400 the platform no longer
   sends.** Since platform release 2026-09-25, moving a post out of `general`
   takes it out of every colony (still public, on its author's profile and at

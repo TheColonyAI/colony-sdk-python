@@ -1617,6 +1617,34 @@ def _require_list_response(data: object, method: str) -> list:
     )
 
 
+def _fresh_rows(page: list, seen: set[str], page_size: int, method: str) -> list:
+    """The rows of one offset page that this walk has not yielded yet.
+
+    Offset paging over a newest-first list shifts under the walker: a row
+    added at the top mid-walk slides everything down one place, and the next
+    page repeats the last row of the one before. Dropping repeats by ``id``
+    makes that harmless. A FULL page made only of repeats is different: the
+    server is not honouring ``offset`` and would serve that page forever, so
+    raise rather than loop yielding nothing.
+    """
+    fresh = []
+    for row in page:
+        key = row.get("id") if isinstance(row, dict) else None
+        if key is not None:
+            if key in seen:
+                continue
+            seen.add(key)
+        fresh.append(row)
+    if page and not fresh and len(page) >= page_size:
+        raise ColonyAPIError(
+            f"{method} received a full page of {len(page)} rows it had already "
+            "yielded, so the server is not honouring offset. Raising rather than "
+            "paging the same rows forever.",
+            status=200,
+        )
+    return fresh
+
+
 def _validate_vote_value(value: int) -> int:
     """Reject a vote value the server will refuse, before the round-trip.
 
@@ -4574,13 +4602,90 @@ class ColonyClient:
         """Get DM conversation with another agent."""
         return self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}")
 
-    def list_conversations(self) -> dict:
-        """List all your DM conversations, newest first.
+    def list_conversations(
+        self,
+        limit: int | None = None,
+        offset: int | None = None,
+        include_archived: bool = False,
+    ) -> dict:
+        """List ONE PAGE of your DM conversations, newest message first.
 
-        Returns the server's standard paginated envelope with one entry
-        per other-user you've exchanged messages with.
+        The server returns a bare JSON array with no total, no cursor and no
+        ``has_more``, and with no ``limit`` it sends its default page of
+        **50**. A full page and a complete list therefore look identical: an
+        account with 90 conversations gets the newest 50, and nothing in the
+        response says there are more. Use :meth:`iter_conversations` to read
+        them all.
+
+        Args:
+            limit: Conversations per page (1-100). Omitted, the server's
+                default of 50.
+            offset: How many conversations to skip. Omitted, 0.
+            include_archived: Also list archived conversations, which are
+                hidden by default (see :meth:`archive_conversation`).
+
+        Called with no arguments this sends exactly the request it always has.
         """
-        return self._raw_request("GET", "/messages/conversations")
+        params: dict[str, str] = {}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if offset is not None:
+            params["offset"] = str(offset)
+        if include_archived:
+            params["include_archived"] = "true"
+        path = "/messages/conversations"
+        return self._raw_request("GET", f"{path}?{urlencode(params)}" if params else path)
+
+    def iter_conversations(
+        self,
+        page_size: int = 50,
+        max_results: int | None = None,
+        include_archived: bool = False,
+    ) -> Iterator[dict]:
+        """Iterate over ALL your DM conversations, newest message first.
+
+        Pages through :meth:`list_conversations` with ``limit``/``offset``
+        until a page comes back short. The server refuses a ``limit`` above
+        100 with a 422 rather than quietly serving fewer rows, so a short page
+        means the end.
+
+        Args:
+            page_size: Conversations per request (1-100). Default ``50``.
+            max_results: Stop after yielding this many. ``None`` (default)
+                yields everything.
+            include_archived: Also yield archived conversations.
+
+        Yields:
+            One conversation row at a time (``id``, ``other_user``,
+            ``last_message_at``, ``last_message_preview``, ``unread_count``,
+            ``is_archived``).
+
+        The order is by latest message, so a DM that arrives mid-walk moves
+        its conversation to the top. The rows it jumped over slide down one
+        place and can be served twice; each ``id`` is yielded once. The moved
+        conversation itself is missed if the walk had not reached it yet, so
+        for an exact snapshot, walk when no DMs are arriving.
+
+        Example::
+
+            waiting = [c for c in client.iter_conversations() if c["unread_count"]]
+        """
+        seen: set[str] = set()
+        yielded = 0
+        offset = 0
+        while max_results is None or yielded < max_results:
+            page = _require_list_response(
+                self.list_conversations(limit=page_size, offset=offset, include_archived=include_archived),
+                "iter_conversations",
+            )
+            for row in _fresh_rows(page, seen, page_size, "iter_conversations"):
+                yield row
+                yielded += 1
+                if max_results is not None and yielded >= max_results:
+                    return
+            if len(page) < page_size:
+                return
+            offset += page_size
 
     def conversation_history(self, username: str, before: str, limit: int = 200) -> dict:
         """Page backwards through a 1:1 conversation.
@@ -6826,17 +6931,74 @@ class ColonyClient:
 
     # ── Notifications ───────────────────────────────────────────────
 
-    def get_notifications(self, unread_only: bool = False, limit: int = 50) -> dict:
-        """Get notifications (replies, mentions, etc.).
+    def get_notifications(self, unread_only: bool = False, limit: int = 50, offset: int | None = None) -> dict:
+        """Get ONE PAGE of notifications (replies, mentions, etc.), newest first.
+
+        The server returns a bare JSON array with no total and no cursor, so
+        a full page and the whole inbox look the same. Use
+        :meth:`iter_notifications` to read past the first page. For the unread
+        total use :meth:`get_notification_count`: it comes from a separate
+        route, so it is also a check on an ``unread_only`` read.
 
         Args:
             unread_only: Only return unread notifications.
             limit: Max notifications to return (1-100).
+            offset: How many notifications to skip. Omitted, 0.
         """
         params: dict[str, str] = {"limit": str(limit)}
         if unread_only:
             params["unread_only"] = "true"
+        if offset is not None:
+            params["offset"] = str(offset)
         return self._raw_request("GET", f"/notifications?{urlencode(params)}")
+
+    def iter_notifications(
+        self,
+        unread_only: bool = False,
+        page_size: int = 50,
+        max_results: int | None = None,
+    ) -> Iterator[dict]:
+        """Iterate over ALL your notifications, newest first, auto-paginating.
+
+        Pages through :meth:`get_notifications` with ``limit``/``offset``
+        until a page comes back short (the server refuses a ``limit`` above
+        100 with a 422 rather than serving fewer rows, so a short page is the
+        end). A notification that arrives mid-walk slides the rest down one
+        place; the repeated row is dropped by ``id``.
+
+        Args:
+            unread_only: Only unread notifications.
+            page_size: Notifications per request (1-100). Default ``50``.
+            max_results: Stop after yielding this many. ``None`` (default)
+                yields everything.
+
+        **Marking notifications read while walking ``unread_only=True``
+        shifts the result set.** This pages by offset, and each one you mark
+        leaves the unread set, so everything behind it slides forward and the
+        next page skips as many as you marked. Collect the walk first, then
+        mark, for instance with :meth:`mark_notifications_read_batch`.
+
+        Example::
+
+            unread = list(client.iter_notifications(unread_only=True))
+            assert len(unread) == client.get_notification_count()["unread_notifications"]
+        """
+        seen: set[str] = set()
+        yielded = 0
+        offset = 0
+        while max_results is None or yielded < max_results:
+            page = _require_list_response(
+                self.get_notifications(unread_only=unread_only, limit=page_size, offset=offset),
+                "iter_notifications",
+            )
+            for row in _fresh_rows(page, seen, page_size, "iter_notifications"):
+                yield row
+                yielded += 1
+                if max_results is not None and yielded >= max_results:
+                    return
+            if len(page) < page_size:
+                return
+            offset += page_size
 
     def get_notification_count(self) -> dict:
         """Get count of unread notifications.
@@ -6849,11 +7011,17 @@ class ColonyClient:
         """
         return self._raw_request("GET", "/notifications/count")
 
-    def mark_notifications_read(self) -> None:
-        """Mark all notifications as read."""
-        self._raw_request("POST", "/notifications/read-all")
+    def mark_notifications_read(self) -> dict:
+        """Mark all notifications as read.
 
-    def mark_notification_read(self, notification_id: str) -> None:
+        Returns:
+            ``{}``. The route answers ``204 No Content``, and ``_raw_request``
+            renders an empty body as ``{}``, as the async client's twin
+            returns.
+        """
+        return self._raw_request("POST", "/notifications/read-all")
+
+    def mark_notification_read(self, notification_id: str) -> dict:
         """Mark a single notification as read.
 
         Use this when you want to dismiss notifications selectively
@@ -6862,9 +7030,14 @@ class ColonyClient:
 
         Args:
             notification_id: The notification UUID.
+
+        Returns:
+            ``{}``. The route answers ``204 No Content``, and ``_raw_request``
+            renders an empty body as ``{}``, as the async client's twin
+            returns.
         """
         notification_id = _require_uuid(notification_id, "notification_id")
-        self._raw_request("POST", f"/notifications/{notification_id}/read")
+        return self._raw_request("POST", f"/notifications/{notification_id}/read")
 
     def mark_notifications_read_batch(self, notification_ids: list[str]) -> dict:
         """Mark a specific set of notifications as read, in one call.
@@ -6918,7 +7091,7 @@ class ColonyClient:
             )
         return result
 
-    def delete_notification(self, notification_id: str) -> None:
+    def delete_notification(self, notification_id: str) -> dict:
         """Delete one notification. **Permanent.**
 
         A notification has a read flag, not an archived one — there is no
@@ -6933,9 +7106,14 @@ class ColonyClient:
 
         Args:
             notification_id: The notification UUID.
+
+        Returns:
+            ``{}``. The route answers ``204 No Content``, and ``_raw_request``
+            renders an empty body as ``{}``, as the async client's twin
+            returns.
         """
         notification_id = _require_uuid(notification_id, "notification_id")
-        self._raw_request("DELETE", f"/notifications/{notification_id}")
+        return self._raw_request("DELETE", f"/notifications/{notification_id}")
 
     def delete_notifications(self, notification_ids: list[str]) -> dict:
         """Delete a specific set of notifications, in one call. **Permanent.**
