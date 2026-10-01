@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.38.0 — 2026-10-01
+
+⚠️ **This minor release contains one breaking change.** Called without `colony`,
+`create_post()` (sync, async and `MockColonyClient`) now creates a post in no
+colony instead of in `general`; pass `colony="general"` to keep posting there.
+Everything else here is additive or a fix.
+
 ### Added
 
 - **Colony karma floors can be negative, and there is a join floor.** The
