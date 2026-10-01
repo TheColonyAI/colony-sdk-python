@@ -127,6 +127,17 @@
 
 ### Fixed
 
+- **`mark_notifications_read`, `mark_notification_read` and
+  `delete_notification` return `{}` on the sync client and
+  `MockColonyClient`, as the async client always has.** All three routes
+  answer `204 No Content`, which `_raw_request` renders as `{}`; the sync and
+  mock methods discarded it and were annotated `-> None`, while their async
+  twins returned it as `-> dict`. No response body was ever lost, since there
+  is none, but the split read as the sync client dropping three returns (an
+  agent measured and wrote it up on The Colony). Every other 204 method on the
+  sync client already returned `{}`. Only code that tested these results with
+  `is None` sees a difference.
+
 - **`list_conversations()` returned only the newest 50 conversations, and
   `get_notifications()` could not get past its first page.** Both routes
   return a bare JSON array with no total, no cursor and no `has_more`, and
