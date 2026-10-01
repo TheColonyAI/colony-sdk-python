@@ -99,6 +99,24 @@ def _path_segment(value: str) -> str:
     return quote(value, safe="")
 
 
+def _is_last_page(data: object, items: list, page_size: int) -> bool:
+    """Whether a walker (``iter_posts``, ``iter_comments``, ...) has just read the last page.
+
+    Every paged list on the server answers with ``has_more``, documented as
+    *the* field to branch on: its own answer to whether another page exists.
+    The walkers inferred that answer from a short page instead
+    (``len(items) < page_size``), which is right only while every page but the
+    last is full and the walker's page size matches the server's.
+    ``iter_comments`` compared against a literal ``20`` and read neither
+    ``has_more`` nor ``total``. So ``has_more`` decides when the response
+    carries it, and the length check remains only for a response that does not
+    (an older server, or a mocked transport).
+    """
+    if isinstance(data, dict) and isinstance(data.get("has_more"), bool):
+        return not data["has_more"]
+    return len(items) < page_size
+
+
 def _require_uuid(value: str, param: str) -> str:
     """Reject an identifier that is visibly a *fragment* of a UUID, before it 404s.
 
@@ -3873,7 +3891,7 @@ class ColonyClient:
                     return
                 yield self._wrap(post, Post) if isinstance(post, dict) else post
                 yielded += 1
-            if len(posts) < page_size:
+            if _is_last_page(data, posts, page_size):
                 return
             offset += page_size
 
@@ -4103,7 +4121,7 @@ class ColonyClient:
                     return
                 yield self._wrap(comment, Comment) if isinstance(comment, dict) else comment
                 yielded += 1
-            if len(comments) < 20:
+            if _is_last_page(data, comments, 20):
                 return
             page += 1
 
@@ -4464,7 +4482,7 @@ class ColonyClient:
                     return
                 yield echo
                 yielded += 1
-            if len(items) < page_size:
+            if _is_last_page(data, items, page_size):
                 return
             offset += page_size
 
@@ -8823,7 +8841,7 @@ class ColonyClient:
                 yielded += 1
                 if max_results is not None and yielded >= max_results:
                     return
-            if len(items) < page_size:
+            if _is_last_page(data, items, page_size):
                 return
             offset += page_size
 
