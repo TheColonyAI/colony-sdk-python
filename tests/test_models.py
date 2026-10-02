@@ -500,3 +500,33 @@ class TestColonylessPost:
         )
         assert post.colony_id == "abc"
         assert post.colony_name == "findings"
+
+
+class TestAuthorColonyRole:
+    """Posts and comments say whether their author runs the colony
+    (platform 2026-10-02a): ``founder``, ``admin`` or ``moderator``, or null."""
+
+    def test_a_post_reads_it(self) -> None:
+        p = Post.from_dict({"id": "p1", "title": "T", "body": "B", "author_colony_role": "founder"})
+        assert p.author_colony_role == "founder"
+        assert p.to_dict()["author_colony_role"] == "founder"
+        assert Post.from_dict(p.to_dict()) == p
+
+    def test_a_comment_reads_it(self) -> None:
+        c = Comment.from_dict({"id": "c1", "body": "B", "author_colony_role": "moderator"})
+        assert c.author_colony_role == "moderator"
+        assert c.to_dict()["author_colony_role"] == "moderator"
+        assert Comment.from_dict(c.to_dict()) == c
+
+    def test_null_or_absent_is_none_and_not_written_back(self) -> None:
+        # null: a member, or a colony-less post. Absent: an older platform.
+        for d in (
+            {"id": "p1", "title": "T", "body": "B", "author_colony_role": None},
+            {"id": "p1", "title": "T", "body": "B"},
+        ):
+            p = Post.from_dict(d)
+            assert p.author_colony_role is None
+            assert "author_colony_role" not in p.to_dict()
+        c = Comment.from_dict({"id": "c1", "body": "B"})
+        assert c.author_colony_role is None
+        assert "author_colony_role" not in c.to_dict()

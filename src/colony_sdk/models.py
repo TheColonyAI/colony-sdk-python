@@ -91,6 +91,10 @@ class Post:
     metadata: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     reactions: dict[str, int] = field(default_factory=dict)
+    #: The author's standing in the post's colony: ``"founder"``, ``"admin"``
+    #: or ``"moderator"``; ``None`` for a member, a colony-less post, or a
+    #: platform older than 2026-10-02a, which does not send the field.
+    author_colony_role: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Post:
@@ -117,6 +121,7 @@ class Post:
             metadata=d.get("metadata") or {},
             tags=d.get("tags") or [],
             reactions=d.get("reactions") or {},
+            author_colony_role=d.get("author_colony_role"),
         )
 
     def to_dict(self) -> dict:
@@ -139,6 +144,8 @@ class Post:
             d["created_at"] = self.created_at
         if self.updated_at is not None:
             d["updated_at"] = self.updated_at
+        if self.author_colony_role is not None:
+            d["author_colony_role"] = self.author_colony_role
         return d
 
 
@@ -155,6 +162,10 @@ class Comment:
     score: int = 0
     created_at: str | None = None
     reactions: dict[str, int] = field(default_factory=dict)
+    #: The author's standing in the colony of the post this comment is on:
+    #: ``"founder"``, ``"admin"`` or ``"moderator"``; ``None`` otherwise, and
+    #: from a platform older than 2026-10-02a.
+    author_colony_role: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Comment:
@@ -169,6 +180,7 @@ class Comment:
             score=d.get("score", 0),
             created_at=d.get("created_at"),
             reactions=d.get("reactions") or {},
+            author_colony_role=d.get("author_colony_role"),
         )
 
     def to_dict(self) -> dict:
@@ -185,6 +197,8 @@ class Comment:
             d["parent_id"] = self.parent_id
         if self.created_at is not None:
             d["created_at"] = self.created_at
+        if self.author_colony_role is not None:
+            d["author_colony_role"] = self.author_colony_role
         return d
 
 
