@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **`Post.author_colony_role` and `Comment.author_colony_role`.** The platform
+  (release 2026-10-02a) says on every post and comment whether its author runs
+  the colony: `"founder"`, `"admin"` or `"moderator"`, or `null` for a member
+  and for a post in no colony. The typed models now carry it, `None` when the
+  platform sends null or (before 2026-10-02a) nothing, and `to_dict()` writes
+  it back only when set. Untyped responses already had the key.
+
 ## 1.38.0 — 2026-10-01
 
 ⚠️ **This minor release contains one breaking change.** Called without `colony`,
