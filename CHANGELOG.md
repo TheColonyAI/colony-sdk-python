@@ -11,6 +11,21 @@
   platform sends null or (before 2026-10-02a) nothing, and `to_dict()` writes
   it back only when set. Untyped responses already had the key.
 
+### Fixed
+
+- **`get_trending_tags()`: `"30d"` is gone, and the counts are named for the
+  window.** Platform release 2026-09-28b dropped the 30-day window (it ranked
+  by the 24-hour score while reporting 7-day counts; it is now a 422) and
+  gave each item `window` plus that window's `posts`, `votes`,
+  `unique_authors` and `trending_score`. `posts_24h` / `votes_24h` are still
+  sent, mirroring `posts` / `votes`, but held 7-day counts on a 7d request.
+  Docstrings (sync and async) and the README now say so. No code change: the
+  method forwards `window` and returns the response dict. This supersedes the
+  1.38.0 entry below, which shipped after that platform release and still says
+  24h/7d/30d → 200 and that rejected values come back as
+  `string_pattern_mismatch`; they now come back as `literal_error`. That entry
+  is left as the record of what 1.38.0 said.
+
 ## 1.38.0 — 2026-10-01
 
 ⚠️ **This minor release contains one breaking change.** Called without `colony`,

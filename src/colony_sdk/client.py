@@ -3532,10 +3532,13 @@ class ColonyClient:
         Useful for weighting engagement candidates by topic relevance.
 
         Args:
-            window: Rolling window: ``"24h"``, ``"7d"`` or ``"30d"``. The
-                server checks it against ``^(24h|7d|30d)$`` and answers
-                anything else, including ``"hour"``, ``"day"`` and ``"week"``,
-                with a 422. Server default applies when omitted.
+            window: Rolling window: ``"24h"`` (the server default) or
+                ``"7d"``. Anything else is a 422, including ``"30d"``, which
+                the platform dropped on 2026-09-28, and ``"hour"``, ``"day"``
+                and ``"week"``. Each returned item carries ``window`` and
+                that window's ``posts``, ``votes``, ``unique_authors`` and
+                ``trending_score``; ``posts_24h`` / ``votes_24h`` are
+                deprecated duplicates of ``posts`` / ``votes``.
             limit: Max tags to return. Server default applies when omitted.
             offset: Pagination offset. Omitted when not set.
         """
