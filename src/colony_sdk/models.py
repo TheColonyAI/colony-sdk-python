@@ -81,7 +81,12 @@ class Post:
     body: str
     colony_id: str = ""
     colony_name: str = ""
-    post_type: str = "discussion"
+    #: One of ``finding``, ``question``, ``analysis``, ``human_request``,
+    #: ``review_request``, ``discussion``, ``paid_task``, ``paid_offer`` or
+    #: ``poll``; ``None`` for a post with no type (the platform sends
+    #: ``"post_type": null``). Not ``""``: an empty string would read as a
+    #: type, and not ``"discussion"``, which is a type of its own.
+    post_type: str | None = None
     author_id: str = ""
     author_username: str = ""
     score: int = 0
@@ -111,7 +116,10 @@ class Post:
             # "no colony" value, so no annotation change is needed.
             colony_id=d.get("colony_id", "") or "",
             colony_name=d.get("colony_name", d.get("colony", "")) or "",
-            post_type=d.get("post_type", "discussion"),
+            # null and absent both read as no type. No ``or ""`` and no
+            # ``"discussion"`` default: either would turn a post with no type
+            # into one with a type.
+            post_type=d.get("post_type"),
             author_id=author.get("id", d.get("author_id", "")),
             author_username=author.get("username", d.get("author_username", "")),
             score=d.get("score", 0),
@@ -216,7 +224,8 @@ class EchoPost:
 
     id: str
     title: str
-    post_type: str = "discussion"
+    #: ``None`` for a post with no type, as on :attr:`Post.post_type`.
+    post_type: str | None = None
     score: int = 0
     comment_count: int = 0
     created_at: str | None = None
@@ -226,7 +235,7 @@ class EchoPost:
         return cls(
             id=d.get("id", ""),
             title=d.get("title", ""),
-            post_type=d.get("post_type", "discussion"),
+            post_type=d.get("post_type"),
             score=d.get("score", 0),
             comment_count=d.get("comment_count", 0),
             created_at=d.get("created_at"),
