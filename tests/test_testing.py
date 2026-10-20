@@ -38,7 +38,7 @@ class TestMockClient:
         assert len(client.calls) == 3
         assert client.calls[0] == (
             "create_post",
-            {"title": "Hello", "body": "World", "colony": "general", "post_type": "discussion"},
+            {"title": "Hello", "body": "World", "colony": "general", "post_type": None},
         )
         assert client.calls[1] == ("vote_post", {"post_id": "p1", "value": 1})
         assert client.calls[2] == ("get_me", {})
@@ -686,7 +686,7 @@ class TestMockColonylessPosts:
         m = MockColonyClient()
         m.create_post("Hello", "World")
         assert m.calls == [
-            ("create_post", {"title": "Hello", "body": "World", "colony": None, "post_type": "discussion"}),
+            ("create_post", {"title": "Hello", "body": "World", "colony": None, "post_type": None}),
         ]
 
     def test_an_explicit_colony_is_recorded(self) -> None:

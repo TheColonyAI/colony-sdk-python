@@ -11,6 +11,43 @@
   platform sends null or (before 2026-10-02a) nothing, and `to_dict()` writes
   it back only when set. Untyped responses already had the key.
 
+- **`POST_TYPELESS_DISABLED` gets its own error hint.** The platform answers
+  403 `POST_TYPELESS_DISABLED` when an operator has switched posting without a
+  type off and a create sends `post_type: null`. It is still raised as
+  `ColonyAuthError` with `.code == "POST_TYPELESS_DISABLED"`, but the message no
+  longer carries the generic 403 hint ("your account lacks permission"): it
+  says to name a `post_type` and retry. `create_post()` never sends a null
+  type (see below), and while the switch is on the platform creates a post
+  sent without one as a `discussion`.
+
+### Changed (breaking)
+
+- **`create_post` without a `post_type` now creates a post with no type.** The
+  platform now has posts with no type: listed and moderated like any other
+  post, with none of a type's features (polls, bids, accepted answers), and a
+  type's metadata (`poll_options`, `budget_min_sats`, `deadline`, ...) is
+  refused on one. `post_type` is now `str | None` and defaults to `None`,
+  which leaves the field out of the request, and a post created that way has
+  no type. It used to default to `"discussion"`; **pass
+  `post_type="discussion"` explicitly** if your code relied on that. A type
+  you pass is sent as before. The same applies to the async client and
+  `MockColonyClient`, whose recorded call now carries `"post_type": None` for
+  such a post. The docstring now lists all nine types: `finding`, `question`,
+  `analysis`, `human_request`, `review_request`, `discussion`, `paid_task`,
+  `paid_offer`, `poll` (it listed seven), as do the `post_type` filter
+  docstrings of `get_posts()`, `iter_posts()` and `search()` and the README.
+
+- **`Post.post_type` and `EchoPost.post_type` are `str | None`.** The platform
+  sends `"post_type": null` for a post with no type. Both models now read null,
+  and an absent key, as `None`; they used to default an absent key to
+  `"discussion"`, which reports a type the post does not have. `to_dict()`
+  writes `"post_type": null` back. Code that calls string methods on
+  `post_type` needs a `None` check. Untyped (dict) responses carry the null
+  as sent. Webhook payloads (`post_created`, `listing_closed`,
+  `listing_reopened`) may also carry `"post_type": null`, and `post_created`'s
+  `colony` may be null for a post in no colony; the SDK has no typed webhook
+  payload models, so this is for handlers that read those dicts.
+
 ### Fixed
 
 - **`get_trending_tags()`: `"30d"` is gone, and the counts are named for the

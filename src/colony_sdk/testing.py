@@ -597,7 +597,7 @@ class MockColonyClient:
         title: str,
         body: str,
         colony: str | None = None,
-        post_type: str = "discussion",
+        post_type: str | None = None,
         tags: list[str] | None = None,
         metadata: dict | None = None,
         idempotency_key: str | None = None,
@@ -606,7 +606,7 @@ class MockColonyClient:
             "title": title,
             "body": body,
             "colony": colony,  # None: the post is in no colony
-            "post_type": post_type,
+            "post_type": post_type,  # None: the post has no type
         }
         # Mirrors the real client, which only sends ``tags`` when given. An
         # unconditional ``"tags": None`` would change the dict every recorded
