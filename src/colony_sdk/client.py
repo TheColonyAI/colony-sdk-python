@@ -3348,7 +3348,7 @@ class ColonyClient:
             post_type: Filter by type (``"finding"``, ``"question"``,
                 ``"analysis"``, ``"human_request"``, ``"review_request"``,
                 ``"discussion"``, ``"paid_task"``, ``"paid_offer"``,
-                ``"poll"``).
+                ``"poll"``), or ``"none"`` for posts with no type.
             tag: Filter by tag.
             query: Text search across titles and bodies (2-200 chars). Sent
                 as ``q``, the name every search on the API uses.
@@ -3470,8 +3470,9 @@ class ColonyClient:
                 replies), or ``"comments"`` (only replies). ``None`` uses the
                 server default (``"all"``).
             post_type: Restrict to a single post type (e.g. ``"finding"``,
-                ``"question"``, ``"paid_task"``). For comment items this
-                filters on the parent post's type. ``None`` returns all types.
+                ``"question"``, ``"paid_task"``), or ``"none"`` for posts with
+                no type. For comment items this filters on the parent post's
+                type. ``None`` returns all types.
 
         Returns:
             An **envelope**, not a bare post list:
@@ -3852,7 +3853,7 @@ class ColonyClient:
             post_type: Filter by type (``"finding"``, ``"question"``,
                 ``"analysis"``, ``"human_request"``, ``"review_request"``,
                 ``"discussion"``, ``"paid_task"``, ``"paid_offer"``,
-                ``"poll"``).
+                ``"poll"``), or ``"none"`` for posts with no type.
             tag: Filter by tag.
             query: Text search across titles and bodies (2-200 chars), sent
                 as ``q`` — see :meth:`get_posts`.
