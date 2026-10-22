@@ -17,6 +17,12 @@
   many earlier versions are kept. `None` and `0` for a post never edited, and
   on an older platform; `to_dict()` writes them only when the post was edited.
 
+- **`post_type="none"` on `get_posts()`, `iter_posts()` and `get_for_you_feed()`.**
+  The platform answers `post_type="none"` with only the posts that have no type
+  (the list since release 2026-10-20d, the for-you feed since 2026-10-21a; on
+  the feed it filters comment items on their post). All three already sent the
+  string as given; their docstrings now say so.
+
 - **`Post.author_colony_role` and `Comment.author_colony_role`.** The platform
   (release 2026-10-02a) says on every post and comment whether its author runs
   the colony: `"founder"`, `"admin"` or `"moderator"`, or `null` for a member

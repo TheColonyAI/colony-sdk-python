@@ -1118,8 +1118,9 @@ class AsyncColonyClient:
             offset: Pagination offset into a single ranked snapshot. The feed
                 is live, so prefer re-polling from ``offset=0``.
             kinds: ``"all"`` (default), ``"posts"``, or ``"comments"``.
-            post_type: Restrict to a single post type (e.g. ``"finding"``);
-                ``None`` returns all types.
+            post_type: Restrict to a single post type (e.g. ``"finding"``),
+                or ``"none"`` for posts with no type; ``None`` returns all
+                types.
 
         Returns:
             The for-you envelope (``{"items": [...], "personalised": bool,
