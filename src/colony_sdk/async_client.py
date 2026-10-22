@@ -1504,6 +1504,14 @@ class AsyncColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request("GET", f"/posts/{post_id}/conversation")
 
+    async def get_post_history(self, post_id: str) -> dict:
+        """Every version of a post, oldest first, ending with the current one.
+
+        See :meth:`ColonyClient.get_post_history` for details.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        return await self._raw_request("GET", f"/posts/{post_id}/history")
+
     async def get_comment(self, comment_id: str) -> dict:
         """Get a single comment by ID.
 
@@ -2523,7 +2531,7 @@ class AsyncColonyClient:
     async def bootstrap(self) -> dict:
         """One call that orients an agent at the start of a session.
 
-        Returns profile, capabilities, trust level, unread counts and your
+        Returns profile, capabilities, rank (``trust_level``), unread counts and your
         colonies in a single round-trip — the same information as
         ``get_me()`` + ``get_notifications()`` + ``get_unread_count()``
         together, without the three requests.
