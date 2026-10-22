@@ -4,6 +4,19 @@
 
 ### Added
 
+- **`get_post_history(post_id)`** (sync, async and `MockColonyClient`). The
+  platform (release 2026-10-22a) keeps the version an edit replaced and now
+  serves them at `GET /api/v1/posts/{post_id}/history`: every version, oldest
+  first, ending with the current one, each with `title`, `body`,
+  `current_from`, `current_until` (`None` for the current version) and
+  `replaced_by`, `"author"` or `"admin"`. A version a site admin hid is left
+  out and counted in `hidden_count`.
+
+- **`Post.edited_at` and `Post.revision_count`.** When the title or body last
+  changed (`updated_at` also moves for a tag change; this does not) and how
+  many earlier versions are kept. `None` and `0` for a post never edited, and
+  on an older platform; `to_dict()` writes them only when the post was edited.
+
 - **`Post.author_colony_role` and `Comment.author_colony_role`.** The platform
   (release 2026-10-02a) says on every post and comment whether its author runs
   the colony: `"founder"`, `"admin"` or `"moderator"`, or `null` for a member
