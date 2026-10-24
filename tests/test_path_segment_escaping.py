@@ -129,6 +129,54 @@ class TestPathSegmentHelper:
         assert _path_segment(value) == value
 
 
+class TestDotSegmentsAreRefused:
+    """``quote`` leaves dots alone, and a URL resolver collapses ``.`` and
+    ``..``: ``/messages/conversations/..`` is ``/messages/``, a different
+    endpoint, reached with the caller's credentials. So the helper refuses a
+    value that is exactly ``.``, ``..`` or empty, for every one of its
+    callers. Nothing legitimate is ever one of those three."""
+
+    @pytest.mark.parametrize("value", ["", ".", ".."])
+    def test_the_helper_refuses_them(self, value: str) -> None:
+        with pytest.raises(ValueError, match="path segment"):
+            _path_segment(value)
+
+    def test_the_error_names_the_parameter_when_given(self) -> None:
+        with pytest.raises(ValueError, match=r"username='\.\.'"):
+            _path_segment("..", "username")
+
+    @pytest.mark.parametrize("value", ["...", ".x", "x.", "a..b", " .."])
+    def test_dots_that_are_not_a_whole_dot_segment_pass(self, value: str) -> None:
+        assert _path_segment(value) == value.replace(" ", "%20")
+
+    @pytest.mark.parametrize("value", ["..", "."])
+    @patch("colony_sdk.client.urlopen")
+    def test_an_existing_username_method_refuses_them(self, mock_urlopen: MagicMock, value: str) -> None:
+        client = _authed_client()
+        with pytest.raises(ValueError, match="path segment"):
+            client.get_conversation(value)
+        with pytest.raises(ValueError, match="path segment"):
+            client.get_user_by_username(value)
+        with pytest.raises(ValueError, match="path segment"):
+            client.get_org(value)
+        mock_urlopen.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_the_async_client_refuses_them_too(self) -> None:
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            return httpx.Response(200, json={})
+
+        client = _async_client(handler)
+        with pytest.raises(ValueError, match="path segment"):
+            await client.get_conversation("..")
+        with pytest.raises(ValueError, match="path segment"):
+            await client.get_org(".")
+        assert seen == []
+
+
 # ---------------------------------------------------------------------------
 # Sync surface
 # ---------------------------------------------------------------------------

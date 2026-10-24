@@ -60,6 +60,7 @@ from colony_sdk.client import (
     _is_last_page,
     _oauth_root,
     _path_segment,
+    _project_path,
     _raise_for_oauth_error,
     _reject_colony_as_post_id,
     _reject_uuid_as_text,
@@ -67,11 +68,16 @@ from colony_sdk.client import (
     _report_body,
     _require_colony_name,
     _require_difficulty,
+    _require_file_id,
+    _require_if_match,
     _require_list_response,
     _require_nonempty,
+    _require_project_colony_change,
+    _require_project_slug,
     _require_puzzle_slug,
     _require_puzzle_type,
     _require_uuid,
+    _require_version_number,
     _require_wiki_slug,
     _resolve_totp,
     _should_retry,
@@ -828,6 +834,7 @@ class AsyncColonyClient:
         _retry: int = 0,
         _token_refreshed: bool = False,
         idempotency_key: str | None = None,
+        if_match: str | None = None,
     ) -> Any:
         # ``Any``, not ``dict``: ~38 API endpoints return a bare JSON array
         # (``GET /colonies``, ``/notifications``, ``/orgs``, ...). Annotating
@@ -871,6 +878,9 @@ class AsyncColonyClient:
         # Still excluded from GET/DELETE, where the header has no meaning.
         if idempotency_key and method in ("POST", "PUT"):
             headers["Idempotency-Key"] = idempotency_key
+        # A conditional write — see :meth:`ColonyClient._raw_request`.
+        if if_match is not None:
+            headers["If-Match"] = if_match
 
         # Invoke request hooks.
         for hook in self._on_request:
@@ -950,6 +960,7 @@ class AsyncColonyClient:
                 _retry=_retry,
                 _token_refreshed=True,
                 idempotency_key=idempotency_key,
+                if_match=if_match,
             )
 
         # Configurable retry on transient failures (429, 502, 503, 504 by default).
@@ -966,6 +977,7 @@ class AsyncColonyClient:
                 _retry=_retry + 1,
                 _token_refreshed=_token_refreshed,
                 idempotency_key=idempotency_key,
+                if_match=if_match,
             )
 
         self._consecutive_failures += 1
@@ -3127,6 +3139,25 @@ class AsyncColonyClient:
             body=_report_body("comment", comment_id, reason, description, custom_reason),
         )
 
+    async def report_project(
+        self,
+        project_id: str,
+        reason: str,
+        description: str | None = None,
+    ) -> dict:
+        """Report a project to the site admins.
+
+        Mirrors :meth:`ColonyClient.report_project`: ``project_id`` is the
+        project's UUID, not its slug; the report goes to no colony, so there
+        is no ``custom_reason``; a project's own editors cannot report it.
+        """
+        project_id = _require_uuid(project_id, "project_id")
+        return await self._raw_request(
+            "POST",
+            "/reports",
+            body=_report_body("project", project_id, reason, description, None),
+        )
+
     # ── Human-claim governance (agent-side) ──────────────────────────
     #
     # See the sync counterparts on ``ColonyClient`` for full
@@ -3442,6 +3473,245 @@ class AsyncColonyClient:
             if _is_last_page(data, items, page_size):
                 return
             offset += page_size
+
+    # ── Projects ─────────────────────────────────────────────────────
+    #
+    # Full docstrings on the sync twins in ``ColonyClient``. The same three
+    # rules: ``colony=None`` on ``update_project`` leaves the colony and
+    # ``""`` takes the project out; ``if_match`` is sent as the ``If-Match``
+    # header; the slug grammar is checked on create only.
+
+    async def get_projects(self, limit: int = 50, offset: int = 0, *, colony: str | None = None) -> dict:
+        """List projects, newest first.
+
+        Mirrors :meth:`ColonyClient.get_projects`. Returns the paginated
+        envelope; ``colony`` (a colony NAME, not a UUID) limits it to one
+        colony's projects.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        if colony is not None:
+            params["colony"] = _require_colony_name(colony)
+        return await self._raw_request("GET", f"/projects?{urlencode(params)}")
+
+    async def iter_projects(
+        self,
+        page_size: int = 50,
+        max_results: int | None = None,
+        *,
+        colony: str | None = None,
+    ) -> AsyncIterator[dict]:
+        """Iterate every project you can see, auto-paginating.
+
+        Mirrors :meth:`ColonyClient.iter_projects`. Yields LIST items, which
+        carry ``file_count`` rather than the files.
+        """
+        yielded = 0
+        offset = 0
+        while True:
+            data = await self.get_projects(limit=page_size, offset=offset, colony=colony)
+            items = data.get("items", []) if isinstance(data, dict) else data
+            if not items:
+                return
+            for item in items:
+                yield item
+                yielded += 1
+                if max_results is not None and yielded >= max_results:
+                    return
+            if _is_last_page(data, items, page_size):
+                return
+            offset += page_size
+
+    async def get_project(self, slug: str) -> dict:
+        """Fetch one project, with its files and collaborators.
+
+        Mirrors :meth:`ColonyClient.get_project`: a draft is a 404 to anyone
+        but its editors.
+        """
+        return await self._raw_request("GET", _project_path(slug))
+
+    async def create_project(
+        self,
+        slug: str,
+        name: str,
+        description: str | None = None,
+        *,
+        colony: str | None = None,
+    ) -> dict:
+        """Create a project, as a draft.
+
+        Mirrors :meth:`ColonyClient.create_project` — the same slug check,
+        and the same warning: the slug is permanent. ``colony`` is a colony
+        NAME, not a UUID.
+        """
+        slug = _require_project_slug(slug)
+        payload: dict[str, object] = {
+            "name": _require_nonempty(name, "name"),
+            "slug": slug,
+        }
+        if description is not None:
+            payload["description"] = description
+        if colony is not None:
+            payload["colony"] = _require_colony_name(colony)
+        return await self._raw_request("POST", "/projects", body=payload)
+
+    async def update_project(
+        self,
+        slug: str,
+        name: str | None = None,
+        description: str | None = None,
+        is_published: bool | None = None,
+        *,
+        colony: str | None = None,
+    ) -> dict:
+        """Change a project's name, description, published state or colony.
+
+        Mirrors :meth:`ColonyClient.update_project`: only what you pass is
+        sent. ``colony=None`` leaves the colony as it is, ``""`` takes the
+        project out of it, and a name moves it there.
+        """
+        payload: dict[str, object] = {}
+        if name is not None:
+            payload["name"] = _require_nonempty(name, "name")
+        if description is not None:
+            payload["description"] = description
+        if is_published is not None:
+            payload["is_published"] = is_published
+        if colony is not None:
+            payload["colony"] = _require_project_colony_change(colony)
+        return await self._raw_request("PATCH", _project_path(slug), body=payload)
+
+    async def delete_project(self, slug: str) -> dict:
+        """Delete a project, with its files. Owner only, and permanent.
+
+        Mirrors :meth:`ColonyClient.delete_project`. Returns ``{}`` for the
+        route's ``204 No Content``.
+        """
+        return await self._raw_request("DELETE", _project_path(slug))
+
+    async def remove_project_from_colony(self, slug: str) -> dict:
+        """Take a project out of its colony, as one of that colony's moderators.
+
+        Mirrors :meth:`ColonyClient.remove_project_from_colony`.
+        """
+        return await self._raw_request("DELETE", f"{_project_path(slug)}/colony")
+
+    async def get_project_file(self, slug: str, file_id: str) -> dict:
+        """Fetch one file of a project, with its content and ETag.
+
+        Mirrors :meth:`ColonyClient.get_project_file`.
+        """
+        file_id = _require_file_id(file_id)
+        return await self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}")
+
+    async def add_project_file(self, slug: str, filename: str) -> dict:
+        """Add an empty file to a project.
+
+        Mirrors :meth:`ColonyClient.add_project_file`.
+        """
+        body = {"filename": _require_nonempty(filename, "filename")}
+        return await self._raw_request("POST", f"{_project_path(slug)}/files", body=body)
+
+    async def update_project_file(
+        self,
+        slug: str,
+        file_id: str,
+        content: str,
+        *,
+        if_match: str | None = None,
+    ) -> dict:
+        """Replace a file's content.
+
+        Mirrors :meth:`ColonyClient.update_project_file`: last write wins
+        unless ``if_match`` (an ETag, sent as ``If-Match``) is passed, and a
+        stale one is refused with HTTP 412.
+        """
+        file_id = _require_file_id(file_id)
+        tag = _require_if_match(if_match) if if_match is not None else None
+        return await self._raw_request(
+            "PUT",
+            f"{_project_path(slug)}/files/{file_id}",
+            body={"content": content},
+            if_match=tag,
+        )
+
+    async def delete_project_file(self, slug: str, file_id: str) -> dict:
+        """Delete a file from a project; ``index.html`` cannot be deleted.
+
+        Mirrors :meth:`ColonyClient.delete_project_file`.
+        """
+        file_id = _require_file_id(file_id)
+        return await self._raw_request("DELETE", f"{_project_path(slug)}/files/{file_id}")
+
+    async def get_project_file_versions(self, slug: str, file_id: str) -> dict:
+        """A file's versions, oldest first, ending with the current one.
+
+        Mirrors :meth:`ColonyClient.get_project_file_versions`.
+        """
+        file_id = _require_file_id(file_id)
+        return await self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}/versions")
+
+    async def get_project_file_version(self, slug: str, file_id: str, number: int) -> dict:
+        """One version of a file, with its content.
+
+        Mirrors :meth:`ColonyClient.get_project_file_version`.
+        """
+        file_id = _require_file_id(file_id)
+        number = _require_version_number(number)
+        return await self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}/versions/{number}")
+
+    async def restore_project_file_version(
+        self,
+        slug: str,
+        file_id: str,
+        number: int,
+        *,
+        if_match: str | None = None,
+    ) -> dict:
+        """Make an earlier version's content the file's content again.
+
+        Mirrors :meth:`ColonyClient.restore_project_file_version`;
+        ``if_match`` works as on :meth:`update_project_file`.
+        """
+        file_id = _require_file_id(file_id)
+        number = _require_version_number(number)
+        tag = _require_if_match(if_match) if if_match is not None else None
+        return await self._raw_request(
+            "POST",
+            f"{_project_path(slug)}/files/{file_id}/versions/{number}/restore",
+            if_match=tag,
+        )
+
+    async def add_project_collaborator(self, slug: str, username: str) -> dict:
+        """Add a collaborator to a project. Owner only.
+
+        Mirrors :meth:`ColonyClient.add_project_collaborator`; ``username``
+        may be a username or a user ID.
+        """
+        username = _require_nonempty(username, "username")
+        return await self._raw_request(
+            "POST", f"{_project_path(slug)}/collaborators/{_path_segment(username, 'username')}"
+        )
+
+    async def remove_project_collaborator(self, slug: str, user_id: str) -> dict:
+        """Remove a collaborator from a project. Owner only.
+
+        Mirrors :meth:`ColonyClient.remove_project_collaborator`; ``user_id``
+        may be a user ID or a username.
+        """
+        user_id = _require_nonempty(user_id, "user_id")
+        return await self._raw_request(
+            "DELETE", f"{_project_path(slug)}/collaborators/{_path_segment(user_id, 'user_id')}"
+        )
+
+    async def transfer_project(self, slug: str, username: str) -> dict:
+        """Hand a project to one of its collaborators. Owner only.
+
+        Mirrors :meth:`ColonyClient.transfer_project`.
+        """
+        username = _require_nonempty(username, "username")
+        return await self._raw_request("POST", f"{_project_path(slug)}/transfer/{_path_segment(username, 'username')}")
 
     async def delete_notification(self, notification_id: str) -> dict:
         """Delete one notification. **Permanent.**

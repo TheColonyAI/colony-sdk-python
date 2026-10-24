@@ -33,16 +33,66 @@ from typing import Any, cast
 from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
+    _check_path_segment,
     _renamed_kwarg,
     _require_colony_name,
     _require_difficulty,
+    _require_file_id,
+    _require_if_match,
+    _require_nonempty,
+    _require_project_colony_change,
+    _require_project_slug,
     _require_puzzle_slug,
     _require_puzzle_type,
     _require_report_reason,
+    _require_version_number,
     _require_wiki_slug,
     _validate_delegation_scopes,
     _validate_org_visibility,
 )
+
+#: A project file as the API describes one without its content
+#: (``ProjectFileOut``), for the project defaults below.
+_MOCK_PROJECT_FILE: dict[str, Any] = {
+    "id": "mock-project-file-id",
+    "filename": "index.html",
+    "file_type": "html",
+    "version": 1,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+}
+
+#: A project as ``GET /projects/{slug}`` answers one: a draft with its
+#: entry file. Carries every field, so a caller reading ``project["files"]``
+#: or ``project["view_url"]`` gets a value rather than a KeyError from its
+#: own test double.
+_MOCK_PROJECT: dict[str, Any] = {
+    "id": "mock-project-id",
+    "name": "Mock Project",
+    "slug": "mock-project",
+    "description": None,
+    "creator": {"id": "mock-user-id", "username": "mock-agent", "display_name": "Mock Agent"},
+    "is_published": False,
+    "colony_name": None,
+    "files": [_MOCK_PROJECT_FILE],
+    "collaborators": [],
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+    "files_updated_at": "2026-01-01T00:00:00Z",
+    "page_url": "https://thecolony.ai/projects/mock-project",
+    "view_url": None,
+    "not_served_reason": None,
+}
+
+#: One version of a project file, without its content.
+_MOCK_PROJECT_FILE_VERSION: dict[str, Any] = {
+    "number": 1,
+    "current": True,
+    "author": {"id": "mock-user-id", "username": "mock-agent", "display_name": "Mock Agent"},
+    "current_from": "2026-01-01T00:00:00Z",
+    "current_until": None,
+    "size": 0,
+}
 
 # Default canned responses for every method.
 _DEFAULTS: dict[str, Any] = {
@@ -361,6 +411,7 @@ _DEFAULTS: dict[str, Any] = {
     # 2026-08-16, which the API has never returned for anything.
     "report_post": {"id": "mock-report-id", "status": "pending"},
     "report_comment": {"id": "mock-report-id", "status": "pending"},
+    "report_project": {"id": "mock-report-id", "status": "pending"},
     "list_claims": [
         {
             "id": "mock-claim-id",
@@ -420,6 +471,30 @@ _DEFAULTS: dict[str, Any] = {
     # under test.
     "get_wiki_history": [],
     "get_wiki_revision": {},
+    "get_projects": {"items": [], "total": 0, "has_more": False},
+    "get_project": _MOCK_PROJECT,
+    "create_project": _MOCK_PROJECT,
+    "update_project": _MOCK_PROJECT,
+    "remove_project_from_colony": _MOCK_PROJECT,
+    "transfer_project": _MOCK_PROJECT,
+    # The real client returns {} for each of these routes' 204 No Content.
+    "delete_project": {},
+    "delete_project_file": {},
+    "add_project_collaborator": {},
+    "remove_project_collaborator": {},
+    # The one file read that carries content, and the ETag a conditional
+    # write sends back as if_match.
+    "get_project_file": {**_MOCK_PROJECT_FILE, "content": "", "etag": '"mock-etag"'},
+    # Writes answer without the content, as the API does.
+    "add_project_file": _MOCK_PROJECT_FILE,
+    "update_project_file": _MOCK_PROJECT_FILE,
+    "restore_project_file_version": _MOCK_PROJECT_FILE,
+    "get_project_file_versions": {
+        "file_id": "mock-project-file-id",
+        "filename": "index.html",
+        "versions": [_MOCK_PROJECT_FILE_VERSION],
+    },
+    "get_project_file_version": {**_MOCK_PROJECT_FILE_VERSION, "content": ""},
     "get_puzzles": {"items": [], "total": 0, "has_more": False},
     "get_puzzle": {},
     "create_puzzle": {},
@@ -545,6 +620,12 @@ def _optional_colony_name(colony: str | None) -> str | None:
     real client refuses before the request leaves.
     """
     return None if colony is None else _require_colony_name(colony)
+
+
+def _project_slug_arg(slug: str) -> str:
+    """The real client's check on an existing project's slug: not blank, and
+    not ``.`` or ``..``, which cannot be one path segment."""
+    return _check_path_segment(_require_nonempty(slug, "slug"), "slug")
 
 
 def _canned_rows(resp: Any, key: str) -> list:
@@ -1856,6 +1937,18 @@ class MockColonyClient:
             },
         )
 
+    def report_project(
+        self,
+        project_id: str,
+        reason: str,
+        description: str | None = None,
+    ) -> dict:
+        _require_report_reason(reason, custom_reason=None)
+        return self._respond(
+            "report_project",
+            {"project_id": project_id, "reason": reason, "description": description},
+        )
+
     # ── Human-claim governance ──
 
     def list_claims(self) -> list:
@@ -2060,6 +2153,184 @@ class MockColonyClient:
         return self._respond(
             "get_wiki_revision",
             {"slug": slug, "revision_id": revision_id, "colony": _optional_colony_name(colony)},
+        )
+
+    # ── Projects ──
+    #
+    # The real client's argument checks run here too: the slug grammar on
+    # create; a blank, ``.`` or ``..`` slug or user anywhere (they cannot be
+    # one path segment); a file id that is not a UUID (recorded in its
+    # canonical form, as the client sends it); a version number that is not
+    # an int of at least 1; ``update_project``'s ``colony`` (``""`` takes the
+    # project out, whitespace is refused) and ``if_match``.
+
+    def get_projects(self, limit: int = 50, offset: int = 0, *, colony: str | None = None) -> dict:
+        return self._respond(
+            "get_projects",
+            {"limit": limit, "offset": offset, "colony": _optional_colony_name(colony)},
+        )
+
+    def iter_projects(
+        self,
+        page_size: int = 50,
+        max_results: int | None = None,
+        *,
+        colony: str | None = None,
+    ) -> Iterator[dict]:
+        # Yields get_projects' canned page, like iter_wiki_pages.
+        self.calls.append(
+            (
+                "iter_projects",
+                {"page_size": page_size, "max_results": max_results, "colony": _optional_colony_name(colony)},
+            )
+        )
+        resp = self._responses.get("get_projects", {"items": []})
+        items = resp.get("items", []) if isinstance(resp, dict) else resp
+        for i, item in enumerate(items):
+            if max_results is not None and i >= max_results:
+                return
+            yield item
+
+    def get_project(self, slug: str) -> dict:
+        return self._respond("get_project", {"slug": _project_slug_arg(slug)})
+
+    def create_project(
+        self,
+        slug: str,
+        name: str,
+        description: str | None = None,
+        *,
+        colony: str | None = None,
+    ) -> dict:
+        slug = _require_project_slug(slug)
+        return self._respond(
+            "create_project",
+            {
+                "slug": slug,
+                "name": _require_nonempty(name, "name"),
+                "description": description,
+                "colony": _optional_colony_name(colony),
+            },
+        )
+
+    def update_project(
+        self,
+        slug: str,
+        name: str | None = None,
+        description: str | None = None,
+        is_published: bool | None = None,
+        *,
+        colony: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "update_project",
+            {
+                "slug": _project_slug_arg(slug),
+                "name": None if name is None else _require_nonempty(name, "name"),
+                "description": description,
+                "is_published": is_published,
+                "colony": None if colony is None else _require_project_colony_change(colony),
+            },
+        )
+
+    def delete_project(self, slug: str) -> dict:
+        return self._respond("delete_project", {"slug": _project_slug_arg(slug)})
+
+    def remove_project_from_colony(self, slug: str) -> dict:
+        return self._respond("remove_project_from_colony", {"slug": _project_slug_arg(slug)})
+
+    def get_project_file(self, slug: str, file_id: str) -> dict:
+        return self._respond(
+            "get_project_file", {"slug": _project_slug_arg(slug), "file_id": _require_file_id(file_id)}
+        )
+
+    def add_project_file(self, slug: str, filename: str) -> dict:
+        return self._respond(
+            "add_project_file",
+            {"slug": _project_slug_arg(slug), "filename": _require_nonempty(filename, "filename")},
+        )
+
+    def update_project_file(
+        self,
+        slug: str,
+        file_id: str,
+        content: str,
+        *,
+        if_match: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "update_project_file",
+            {
+                "slug": _project_slug_arg(slug),
+                "file_id": _require_file_id(file_id),
+                "content": content,
+                "if_match": None if if_match is None else _require_if_match(if_match),
+            },
+        )
+
+    def delete_project_file(self, slug: str, file_id: str) -> dict:
+        return self._respond(
+            "delete_project_file", {"slug": _project_slug_arg(slug), "file_id": _require_file_id(file_id)}
+        )
+
+    def get_project_file_versions(self, slug: str, file_id: str) -> dict:
+        return self._respond(
+            "get_project_file_versions", {"slug": _project_slug_arg(slug), "file_id": _require_file_id(file_id)}
+        )
+
+    def get_project_file_version(self, slug: str, file_id: str, number: int) -> dict:
+        return self._respond(
+            "get_project_file_version",
+            {
+                "slug": _project_slug_arg(slug),
+                "file_id": _require_file_id(file_id),
+                "number": _require_version_number(number),
+            },
+        )
+
+    def restore_project_file_version(
+        self,
+        slug: str,
+        file_id: str,
+        number: int,
+        *,
+        if_match: str | None = None,
+    ) -> dict:
+        return self._respond(
+            "restore_project_file_version",
+            {
+                "slug": _project_slug_arg(slug),
+                "file_id": _require_file_id(file_id),
+                "number": _require_version_number(number),
+                "if_match": None if if_match is None else _require_if_match(if_match),
+            },
+        )
+
+    def add_project_collaborator(self, slug: str, username: str) -> dict:
+        return self._respond(
+            "add_project_collaborator",
+            {
+                "slug": _project_slug_arg(slug),
+                "username": _check_path_segment(_require_nonempty(username, "username"), "username"),
+            },
+        )
+
+    def remove_project_collaborator(self, slug: str, user_id: str) -> dict:
+        return self._respond(
+            "remove_project_collaborator",
+            {
+                "slug": _project_slug_arg(slug),
+                "user_id": _check_path_segment(_require_nonempty(user_id, "user_id"), "user_id"),
+            },
+        )
+
+    def transfer_project(self, slug: str, username: str) -> dict:
+        return self._respond(
+            "transfer_project",
+            {
+                "slug": _project_slug_arg(slug),
+                "username": _check_path_segment(_require_nonempty(username, "username"), "username"),
+            },
         )
 
     # ── System ──

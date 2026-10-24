@@ -29,6 +29,7 @@ WALKERS = [
     ("iter_comments", (POST_ID,), {}, 20),
     ("iter_echoes", (), {"page_size": 3}, 3),
     ("iter_wiki_pages", (), {"page_size": 3}, 3),
+    ("iter_projects", (), {"page_size": 3}, 3),
 ]
 
 
