@@ -140,8 +140,8 @@
   site admins only, never a colony's moderators), and the SDK refused it
   locally. Since the server refuses it without a `description` saying what to
   remove and where, a blank or missing description is now refused locally
-  too, on all three clients; it takes no `custom_reason`, which the server
-  would drop.
+  too, on all three clients. A `custom_reason` with it is sent as given; the
+  server ignores it.
 
 - **A PATCH now clears the sync client's response cache**, as POST, PUT and
   DELETE already did. With `enable_cache()` on, a read after

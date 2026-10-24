@@ -81,15 +81,18 @@ class TestTheReasons:
             "description": PI_DESCRIPTION,
         }
 
-    def test_personal_information_takes_no_custom_reason(self) -> None:
-        """It goes to site admins, not a colony, and the server drops a
-        colony label on it; the message must not send the caller to
-        reason='other', which would file a different report."""
-        with pytest.raises(ValueError, match="site admins") as exc:
-            _authed_client().report_post(
-                "p1", "personal_information", description=PI_DESCRIPTION, custom_reason="Doxxing"
-            )
-        assert "reason='other'" not in str(exc.value)
+    @patch("colony_sdk.client.urlopen")
+    def test_personal_information_with_a_custom_reason_is_sent(self, mock_urlopen: MagicMock) -> None:
+        """The server accepts it: ``create_report`` ignores the label on a
+        personal-information report and routes it to the site admins. So the
+        "custom_reason needs reason='other'" rule must not refuse it here."""
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
+
+        _authed_client().report_post("p1", "personal_information", description=PI_DESCRIPTION, custom_reason="Doxxing")
+
+        assert _last_body(mock_urlopen)["reason"] == "personal_information"
+        assert _last_body(mock_urlopen)["custom_reason"] == "Doxxing"
+        MockColonyClient().report_comment("c1", "personal_information", description=PI_DESCRIPTION, custom_reason="X")
 
     def test_the_free_text_hint_names_personal_information(self) -> None:
         with pytest.raises(ValueError, match="personal_information"):

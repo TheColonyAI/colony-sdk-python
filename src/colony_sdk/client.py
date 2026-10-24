@@ -1699,6 +1699,8 @@ def _require_report_reason(
     ``reason="personal_information"`` needs a ``description`` that is not
     blank: the server refuses one without it (it strips the description and
     asks what to remove, and where), so this checks exactly what it checks.
+    A ``custom_reason`` alongside it is passed through: the server accepts the
+    call, ignores the label and routes the report to the site admins.
     """
     if not isinstance(reason, str):
         raise TypeError(f"reason must be a str, got {type(reason).__name__}.")
@@ -1709,12 +1711,8 @@ def _require_report_reason(
                 "information should be removed, and where, so a site admin can act on it. "
                 "This report goes to the site admins only, never to a colony's moderators."
             )
-        if custom_reason is not None:
-            raise ValueError(
-                f"custom_reason={custom_reason!r} was given with reason='personal_information'. "
-                "A personal-information report goes to the site admins, not to a colony, so a "
-                "colony-defined label does not apply (the server drops it); leave custom_reason out."
-            )
+        # Returned before the custom_reason rule below: the server accepts a
+        # label here (it ignores it), so refusing one would refuse a call it takes.
         return reason
     if reason in REPORT_REASONS:
         if custom_reason is not None and reason != "other":
@@ -7194,8 +7192,8 @@ class ColonyClient:
                 the thread. ``"personal_information"`` (content exposing
                 someone's personal information) goes to the site admins
                 only, never the colony's moderators, and needs a
-                ``description`` saying what to remove and where; it takes no
-                ``custom_reason``.
+                ``description`` saying what to remove and where. The server
+                ignores a ``custom_reason`` sent with it.
             description: Optional free-text context for the moderators, up to
                 1000 characters. This is where an explanation goes. Required
                 with ``reason="personal_information"``.
