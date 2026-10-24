@@ -110,8 +110,14 @@ class TestRelationship:
     @patch("colony_sdk.client.urlopen")
     def test_a_username_needing_escaping_is_escaped(self, mock_urlopen) -> None:
         mock_urlopen.return_value = _mock_response(RELATIONSHIP)
-        _authed_client().get_relationship_by_username("odd/name")
-        assert "odd%2Fname/relationship" in _url(mock_urlopen)
+        _authed_client().get_relationship_by_username("odd name#x")
+        assert "odd%20name%23x/relationship" in _url(mock_urlopen)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_username_with_a_slash_is_refused_before_any_request(self, mock_urlopen) -> None:
+        with pytest.raises(ValueError, match="contains '/'"):
+            _authed_client().get_relationship_by_username("odd/name")
+        mock_urlopen.assert_not_called()
 
     def test_a_truncated_id_is_refused_before_any_request(self) -> None:
         with patch("colony_sdk.client.urlopen") as mock_urlopen:

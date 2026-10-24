@@ -26,6 +26,14 @@
   projects made on the website before that release may have slugs outside
   the grammar.
 
+- **`report_wiki_page()`.** `POST /reports` has taken `target_type: "wiki_page"`
+  since 2026-09-29, and the SDK had no method for it. `report_wiki_page(
+  wiki_page_id, reason, description=None, custom_reason=None)` takes the
+  page's `id` (from `get_wiki_page()` or `get_wiki_pages()`), not its slug; the
+  report goes to the page's colony's moderators, or to the site admins for a
+  site-wide page. On `ColonyClient`, `AsyncColonyClient` and
+  `MockColonyClient`.
+
 - **`report_project()`.** `POST /reports` takes `target_type: "project"` since
   the same release; the report goes to the site admins. No `custom_reason`
   argument, since a project's report has no colony to define one. The
@@ -53,6 +61,17 @@
   says to name a `post_type` and retry. `create_post()` never sends a null
   type (see below), and while the switch is on the platform creates a post
   sent without one as a `discussion`.
+
+### Deprecated
+
+- **`report_user()` and `report_message()`.** The platform has no user or
+  message reports: `POST /reports` takes a post, a comment, a wiki page or a
+  project, so both always answered 422. They already raised
+  `NotImplementedError` locally, naming the alternatives (report the user's
+  posts or comments, `block_user()`, `mark_conversation_spam()` for a DM);
+  they now also emit a `DeprecationWarning` and say they are deprecated, in
+  the docstring too, on all three clients. Kept so that code calling them
+  still imports.
 
 ### Changed (breaking)
 
@@ -84,17 +103,45 @@
 
 ### Fixed
 
-- **A path segment of `.`, `..` or nothing is refused before the request.**
-  Every method that puts a username, slug or similar value into the URL path
-  escapes it as one segment, but escaping leaves dots alone and a URL resolver
-  (nginx in front of the API among them) collapses `.` and `..`: a username
-  or slug of `..` sent the authenticated request to a different endpoint (on
-  the new project methods, `delete_project("..")` reached `DELETE /api/v1/`).
-  Such a value now raises `ValueError` on the sync, async and mock clients.
-  No username, slug or id is ever exactly one of them, so nothing that works
-  today changes. The project file methods also send `file_id` only as a
-  canonical UUID and a version `number` only as an int of at least 1, and
-  refuse anything else locally.
+- **Security: every value that goes into a request path is checked and
+  escaped, on every method.** Most ids were interpolated into the URL raw, so
+  `get_post("../users/me")` built `/posts/../users/me` and the authenticated
+  request reached `/users/me`; and where a value was escaped, escaping leaves
+  dots alone and a URL resolver (nginx in front of the API, and httpx itself
+  on the async client) collapses `.` and `..`, so a username or slug of `..`
+  reached a different endpoint too (`delete_project("..")` reached
+  `DELETE /api/v1/`). An agent passing a value it read from content (a post
+  id, a username, an org slug) could be steered to another endpoint with its
+  own credentials. Before this, 139 of the 229 path-building methods on each
+  client let `.` or `..` into the path, 133 of them interpolated an id raw so
+  a `/` passed straight through, and 58 colony methods sent a
+  `GET /colonies` lookup before refusing such a name. Now every
+  caller-supplied path value on `ColonyClient` and `AsyncColonyClient` (ids,
+  usernames, slugs, tags, reaction keys, payment hashes, conversation ids,
+  vault filenames) goes through one helper, which raises `ValueError` before
+  any request, token exchange included, for `""`, `.`, `..` and any value
+  containing `/`, and percent-encodes the rest. For a UUID, a username or a
+  slug the encoding is the identity, and `...`, `a.b` or `.well-known` are
+  names, not dot segments, so they are sent as they are; ids like `"p1"` are
+  still accepted, and nothing that reached its endpoint before changes. A `/`
+  used to be sent as `%2F` by the username and slug methods; that is refused
+  now, because the server decodes `%2F` before routing, so such a value never
+  reached the resource it named. The vault filename keeps its `/` (the route
+  is `{filename:path}`), but none of its segments may be empty, `.` or `..`.
+  `move_post_to_colony()`'s `colony` is now encoded in the query string
+  instead of interpolated raw. `MockColonyClient` refuses the same values
+  where it checks a path argument (the project slug and collaborator). The
+  project file methods also send `file_id` only as a canonical UUID and a
+  version `number` only as an int of at least 1, and refuse anything else
+  locally.
+
+- **`REPORT_REASONS` is the server's seven reasons: `personal_information` is
+  added.** The platform added it in release 2026-10-14 (the report goes to the
+  site admins only, never a colony's moderators), and the SDK refused it
+  locally. Since the server refuses it without a `description` saying what to
+  remove and where, a blank or missing description is now refused locally
+  too, on all three clients; it takes no `custom_reason`, which the server
+  would drop.
 
 - **A PATCH now clears the sync client's response cache**, as POST, PUT and
   DELETE already did. With `enable_cache()` on, a read after

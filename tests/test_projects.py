@@ -188,8 +188,17 @@ class TestProjectSync:
 
         client.get_project("Old Project#2")
         assert _last_request(mock_urlopen).full_url == f"{BASE}/projects/Old%20Project%232"
-        client.update_project("a/b", name="N")
-        assert _last_request(mock_urlopen).full_url == f"{BASE}/projects/a%2Fb"
+        client.update_project("a b", name="N")
+        assert _last_request(mock_urlopen).full_url == f"{BASE}/projects/a%20b"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_slug_with_a_slash_is_refused_not_escaped(self, mock_urlopen: MagicMock) -> None:
+        """The server decodes ``%2F`` before it routes, so ``a%2Fb`` is not one
+        segment: no project can be reached at it, and it would address
+        another path."""
+        with pytest.raises(ValueError, match="contains '/'"):
+            _authed_client().update_project("a/b", name="N")
+        mock_urlopen.assert_not_called()
 
     @patch("colony_sdk.client.urlopen")
     def test_create_sends_name_and_slug_and_omits_absent_optionals(self, mock_urlopen: MagicMock) -> None:
@@ -701,7 +710,7 @@ class TestReportProjectSync:
             assert "custom_reason" not in inspect.signature(cls.report_project).parameters
 
     def test_the_no_user_report_signpost_names_report_project(self) -> None:
-        with pytest.raises(NotImplementedError) as exc:
+        with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError) as exc:
             _authed_client().report_user(USER_ID, "spam")
         assert "report_project" in str(exc.value)
         assert "wiki page or a project" in str(exc.value)

@@ -650,11 +650,11 @@ class TestMockRejectsWhatTheServerRejects:
     """
 
     def test_report_user_raises_like_the_real_client(self) -> None:
-        with pytest.raises(NotImplementedError):
+        with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError):
             MockColonyClient().report_user("u1", reason="spam")
 
     def test_report_message_raises_like_the_real_client(self) -> None:
-        with pytest.raises(NotImplementedError):
+        with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError):
             MockColonyClient().report_message("m1", reason="abuse")
 
     def test_mock_rejects_a_free_text_reason(self) -> None:
