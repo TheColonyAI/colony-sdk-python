@@ -68,6 +68,7 @@ from colony_sdk.client import (
     _report_body,
     _require_colony_name,
     _require_difficulty,
+    _require_file_id,
     _require_if_match,
     _require_list_response,
     _require_nonempty,
@@ -76,6 +77,7 @@ from colony_sdk.client import (
     _require_puzzle_slug,
     _require_puzzle_type,
     _require_uuid,
+    _require_version_number,
     _require_wiki_slug,
     _resolve_totp,
     _should_retry,
@@ -3600,7 +3602,7 @@ class AsyncColonyClient:
 
         Mirrors :meth:`ColonyClient.get_project_file`.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
         return await self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}")
 
     async def add_project_file(self, slug: str, filename: str) -> dict:
@@ -3625,7 +3627,7 @@ class AsyncColonyClient:
         unless ``if_match`` (an ETag, sent as ``If-Match``) is passed, and a
         stale one is refused with HTTP 412.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
         tag = _require_if_match(if_match) if if_match is not None else None
         return await self._raw_request(
             "PUT",
@@ -3639,7 +3641,7 @@ class AsyncColonyClient:
 
         Mirrors :meth:`ColonyClient.delete_project_file`.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
         return await self._raw_request("DELETE", f"{_project_path(slug)}/files/{file_id}")
 
     async def get_project_file_versions(self, slug: str, file_id: str) -> dict:
@@ -3647,7 +3649,7 @@ class AsyncColonyClient:
 
         Mirrors :meth:`ColonyClient.get_project_file_versions`.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
         return await self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}/versions")
 
     async def get_project_file_version(self, slug: str, file_id: str, number: int) -> dict:
@@ -3655,7 +3657,8 @@ class AsyncColonyClient:
 
         Mirrors :meth:`ColonyClient.get_project_file_version`.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
+        number = _require_version_number(number)
         return await self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}/versions/{number}")
 
     async def restore_project_file_version(
@@ -3671,7 +3674,8 @@ class AsyncColonyClient:
         Mirrors :meth:`ColonyClient.restore_project_file_version`;
         ``if_match`` works as on :meth:`update_project_file`.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
+        number = _require_version_number(number)
         tag = _require_if_match(if_match) if if_match is not None else None
         return await self._raw_request(
             "POST",
@@ -3686,7 +3690,9 @@ class AsyncColonyClient:
         may be a username or a user ID.
         """
         username = _require_nonempty(username, "username")
-        return await self._raw_request("POST", f"{_project_path(slug)}/collaborators/{_path_segment(username)}")
+        return await self._raw_request(
+            "POST", f"{_project_path(slug)}/collaborators/{_path_segment(username, 'username')}"
+        )
 
     async def remove_project_collaborator(self, slug: str, user_id: str) -> dict:
         """Remove a collaborator from a project. Owner only.
@@ -3695,7 +3701,9 @@ class AsyncColonyClient:
         may be a user ID or a username.
         """
         user_id = _require_nonempty(user_id, "user_id")
-        return await self._raw_request("DELETE", f"{_project_path(slug)}/collaborators/{_path_segment(user_id)}")
+        return await self._raw_request(
+            "DELETE", f"{_project_path(slug)}/collaborators/{_path_segment(user_id, 'user_id')}"
+        )
 
     async def transfer_project(self, slug: str, username: str) -> dict:
         """Hand a project to one of its collaborators. Owner only.
@@ -3703,7 +3711,7 @@ class AsyncColonyClient:
         Mirrors :meth:`ColonyClient.transfer_project`.
         """
         username = _require_nonempty(username, "username")
-        return await self._raw_request("POST", f"{_project_path(slug)}/transfer/{_path_segment(username)}")
+        return await self._raw_request("POST", f"{_project_path(slug)}/transfer/{_path_segment(username, 'username')}")
 
     async def delete_notification(self, notification_id: str) -> dict:
         """Delete one notification. **Permanent.**

@@ -1011,6 +1011,182 @@ class TestMock:
 
 
 # ---------------------------------------------------------------------------
+# Path traversal: nothing a caller passes may leave its own path segment
+#
+# Escaping leaves dots alone, and nginx (like any URL resolver) collapses dot
+# segments, so a slug or user of ``..`` built ``/projects/..`` and an
+# authenticated DELETE reached ``/api/v1/``. A raw ``file_id`` or ``number``
+# could carry ``../`` itself. Each is refused before any request.
+# ---------------------------------------------------------------------------
+
+#: (method, args after the slug) for every method that takes an existing slug.
+SLUG_METHODS = [
+    ("get_project", ()),
+    ("update_project", ()),
+    ("delete_project", ()),
+    ("remove_project_from_colony", ()),
+    ("get_project_file", (FILE_ID,)),
+    ("add_project_file", ("app.js",)),
+    ("update_project_file", (FILE_ID, "x")),
+    ("delete_project_file", (FILE_ID,)),
+    ("get_project_file_versions", (FILE_ID,)),
+    ("get_project_file_version", (FILE_ID, 1)),
+    ("restore_project_file_version", (FILE_ID, 1)),
+    ("add_project_collaborator", ("alice",)),
+    ("remove_project_collaborator", ("alice",)),
+    ("transfer_project", ("alice",)),
+]
+USER_METHODS = ["add_project_collaborator", "remove_project_collaborator", "transfer_project"]
+#: (method, args after the file id) for every method that takes a file id.
+FILE_METHODS = [
+    ("get_project_file", ()),
+    ("update_project_file", ("x",)),
+    ("delete_project_file", ()),
+    ("get_project_file_versions", ()),
+    ("get_project_file_version", (1,)),
+    ("restore_project_file_version", (1,)),
+]
+NUMBER_METHODS = ["get_project_file_version", "restore_project_file_version"]
+NOT_A_SEGMENT = ["", ".", ".."]
+NOT_A_FILE_ID = ["../../users/x", "../" + FILE_ID, FILE_ID + "/../..", "p1", "index.html", "x" * 36]
+NOT_A_NUMBER = [True, False, "3", "1/../..", 0, -1, 1.0, None]
+
+
+class TestPathTraversalSync:
+    @pytest.mark.parametrize("bad", NOT_A_SEGMENT)
+    @pytest.mark.parametrize("method,args", SLUG_METHODS)
+    @patch("colony_sdk.client.urlopen")
+    def test_a_slug_that_is_not_one_segment_is_refused(
+        self, mock_urlopen: MagicMock, method: str, args: tuple, bad: str
+    ) -> None:
+        with pytest.raises(ValueError):
+            getattr(_authed_client(), method)(bad, *args)
+        mock_urlopen.assert_not_called()
+
+    @pytest.mark.parametrize("bad", [".", ".."])
+    @patch("colony_sdk.client.urlopen")
+    def test_the_error_names_the_slug_and_the_reason(self, mock_urlopen: MagicMock, bad: str) -> None:
+        with pytest.raises(ValueError) as exc:
+            _authed_client().delete_project(bad)
+        assert f"slug={bad!r}" in str(exc.value) and "path segment" in str(exc.value)
+        mock_urlopen.assert_not_called()
+
+    @pytest.mark.parametrize("bad", NOT_A_SEGMENT)
+    @pytest.mark.parametrize("method", USER_METHODS)
+    @patch("colony_sdk.client.urlopen")
+    def test_a_user_that_is_not_one_segment_is_refused(self, mock_urlopen: MagicMock, method: str, bad: str) -> None:
+        with pytest.raises(ValueError):
+            getattr(_authed_client(), method)("star-map", bad)
+        mock_urlopen.assert_not_called()
+
+    @pytest.mark.parametrize("bad", NOT_A_FILE_ID)
+    @pytest.mark.parametrize("method,args", FILE_METHODS)
+    @patch("colony_sdk.client.urlopen")
+    def test_a_file_id_that_is_not_a_uuid_is_refused(
+        self, mock_urlopen: MagicMock, method: str, args: tuple, bad: str
+    ) -> None:
+        with pytest.raises(ValueError, match="file_id"):
+            getattr(_authed_client(), method)("star-map", bad, *args)
+        mock_urlopen.assert_not_called()
+
+    @pytest.mark.parametrize("method,args", FILE_METHODS)
+    @patch("colony_sdk.client.urlopen")
+    def test_a_file_id_is_sent_in_its_canonical_form(self, mock_urlopen: MagicMock, method: str, args: tuple) -> None:
+        """Uppercase, braces or no hyphens all name the same UUID; what goes
+        into the path is ``str(uuid.UUID(...))`` and nothing else."""
+        mock_urlopen.return_value = _mock_response({})
+
+        getattr(_authed_client(), method)("star-map", "{" + FILE_ID.upper() + "}", *args)
+
+        assert f"/projects/star-map/files/{FILE_ID}" in _last_request(mock_urlopen).full_url
+
+    @pytest.mark.parametrize("bad", NOT_A_NUMBER)
+    @pytest.mark.parametrize("method", NUMBER_METHODS)
+    @patch("colony_sdk.client.urlopen")
+    def test_a_number_that_is_not_a_positive_int_is_refused(
+        self, mock_urlopen: MagicMock, method: str, bad: object
+    ) -> None:
+        with pytest.raises(ValueError, match="number="):
+            getattr(_authed_client(), method)("star-map", FILE_ID, bad)
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_good_number_is_sent_as_an_int(self, mock_urlopen: MagicMock) -> None:
+        """Anti-vacuity: a guard that refused everything passes every test above."""
+        mock_urlopen.return_value = _mock_response({})
+
+        _authed_client().get_project_file_version("star-map", FILE_ID, 12)
+
+        assert _last_request(mock_urlopen).full_url.endswith(f"/files/{FILE_ID}/versions/12")
+
+    @pytest.mark.parametrize("value", ["...", ".well-known", "v1.2", "a..b"])
+    @patch("colony_sdk.client.urlopen")
+    def test_dots_inside_a_value_are_not_refused(self, mock_urlopen: MagicMock, value: str) -> None:
+        """Only a segment that is EXACTLY ``.`` or ``..`` is collapsed."""
+        mock_urlopen.return_value = _mock_response({})
+
+        _authed_client().get_project(value)
+
+        assert _last_request(mock_urlopen).full_url == f"{BASE}/projects/{value}"
+
+
+class TestPathTraversalAsync:
+    async def test_the_same_values_are_refused_before_the_request(self) -> None:
+        rec = _Recorder()
+        client = _make_client(rec)
+        for bad in NOT_A_SEGMENT:
+            for method, args in SLUG_METHODS:
+                with pytest.raises(ValueError):
+                    await getattr(client, method)(bad, *args)
+            for method in USER_METHODS:
+                with pytest.raises(ValueError):
+                    await getattr(client, method)("star-map", bad)
+        for bad_id in NOT_A_FILE_ID:
+            for method, args in FILE_METHODS:
+                with pytest.raises(ValueError, match="file_id"):
+                    await getattr(client, method)("star-map", bad_id, *args)
+        for bad_number in NOT_A_NUMBER:
+            for method in NUMBER_METHODS:
+                with pytest.raises(ValueError, match="number="):
+                    await getattr(client, method)("star-map", FILE_ID, bad_number)
+        await client.aclose()
+        assert rec.seen == [], "nothing may reach the transport"
+
+    async def test_the_file_id_is_canonical_and_the_number_an_int(self) -> None:
+        rec = _Recorder()
+        client = _make_client(rec)
+        await client.restore_project_file_version("star-map", FILE_ID.upper(), 4)
+        await client.aclose()
+        assert str(rec.seen[0].url) == f"{BASE}/projects/star-map/files/{FILE_ID}/versions/4/restore"
+
+
+class TestPathTraversalMock:
+    def test_the_mock_refuses_the_same_values(self) -> None:
+        m = MockColonyClient()
+        for bad in NOT_A_SEGMENT:
+            for method, args in SLUG_METHODS:
+                with pytest.raises(ValueError):
+                    getattr(m, method)(bad, *args)
+            for method in USER_METHODS:
+                with pytest.raises(ValueError):
+                    getattr(m, method)("star-map", bad)
+        for bad_id in NOT_A_FILE_ID:
+            for method, args in FILE_METHODS:
+                with pytest.raises(ValueError, match="file_id"):
+                    getattr(m, method)("star-map", bad_id, *args)
+        for bad_number in NOT_A_NUMBER:
+            for method in NUMBER_METHODS:
+                with pytest.raises(ValueError, match="number="):
+                    getattr(m, method)("star-map", FILE_ID, bad_number)
+        assert m.calls == []
+
+    def test_the_mock_records_the_canonical_file_id(self) -> None:
+        m = MockColonyClient()
+        m.get_project_file_version("star-map", FILE_ID.upper(), 2)
+        assert m.calls[-1] == ("get_project_file_version", {"slug": "star-map", "file_id": FILE_ID, "number": 2})
+
+
+# ---------------------------------------------------------------------------
 # Signature parity across the three clients
 # ---------------------------------------------------------------------------
 

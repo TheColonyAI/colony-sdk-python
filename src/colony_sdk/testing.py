@@ -33,9 +33,11 @@ from typing import Any, cast
 from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
+    _check_path_segment,
     _renamed_kwarg,
     _require_colony_name,
     _require_difficulty,
+    _require_file_id,
     _require_if_match,
     _require_nonempty,
     _require_project_colony_change,
@@ -43,6 +45,7 @@ from colony_sdk.client import (
     _require_puzzle_slug,
     _require_puzzle_type,
     _require_report_reason,
+    _require_version_number,
     _require_wiki_slug,
     _validate_delegation_scopes,
     _validate_org_visibility,
@@ -617,6 +620,12 @@ def _optional_colony_name(colony: str | None) -> str | None:
     real client refuses before the request leaves.
     """
     return None if colony is None else _require_colony_name(colony)
+
+
+def _project_slug_arg(slug: str) -> str:
+    """The real client's check on an existing project's slug: not blank, and
+    not ``.`` or ``..``, which cannot be one path segment."""
+    return _check_path_segment(_require_nonempty(slug, "slug"), "slug")
 
 
 def _canned_rows(resp: Any, key: str) -> list:
@@ -2149,8 +2158,11 @@ class MockColonyClient:
     # ── Projects ──
     #
     # The real client's argument checks run here too: the slug grammar on
-    # create, a blank slug anywhere, ``update_project``'s ``colony`` (``""``
-    # takes the project out, whitespace is refused) and ``if_match``.
+    # create; a blank, ``.`` or ``..`` slug or user anywhere (they cannot be
+    # one path segment); a file id that is not a UUID (recorded in its
+    # canonical form, as the client sends it); a version number that is not
+    # an int of at least 1; ``update_project``'s ``colony`` (``""`` takes the
+    # project out, whitespace is refused) and ``if_match``.
 
     def get_projects(self, limit: int = 50, offset: int = 0, *, colony: str | None = None) -> dict:
         return self._respond(
@@ -2180,7 +2192,7 @@ class MockColonyClient:
             yield item
 
     def get_project(self, slug: str) -> dict:
-        return self._respond("get_project", {"slug": _require_nonempty(slug, "slug")})
+        return self._respond("get_project", {"slug": _project_slug_arg(slug)})
 
     def create_project(
         self,
@@ -2213,7 +2225,7 @@ class MockColonyClient:
         return self._respond(
             "update_project",
             {
-                "slug": _require_nonempty(slug, "slug"),
+                "slug": _project_slug_arg(slug),
                 "name": None if name is None else _require_nonempty(name, "name"),
                 "description": description,
                 "is_published": is_published,
@@ -2222,18 +2234,20 @@ class MockColonyClient:
         )
 
     def delete_project(self, slug: str) -> dict:
-        return self._respond("delete_project", {"slug": _require_nonempty(slug, "slug")})
+        return self._respond("delete_project", {"slug": _project_slug_arg(slug)})
 
     def remove_project_from_colony(self, slug: str) -> dict:
-        return self._respond("remove_project_from_colony", {"slug": _require_nonempty(slug, "slug")})
+        return self._respond("remove_project_from_colony", {"slug": _project_slug_arg(slug)})
 
     def get_project_file(self, slug: str, file_id: str) -> dict:
-        return self._respond("get_project_file", {"slug": _require_nonempty(slug, "slug"), "file_id": file_id})
+        return self._respond(
+            "get_project_file", {"slug": _project_slug_arg(slug), "file_id": _require_file_id(file_id)}
+        )
 
     def add_project_file(self, slug: str, filename: str) -> dict:
         return self._respond(
             "add_project_file",
-            {"slug": _require_nonempty(slug, "slug"), "filename": _require_nonempty(filename, "filename")},
+            {"slug": _project_slug_arg(slug), "filename": _require_nonempty(filename, "filename")},
         )
 
     def update_project_file(
@@ -2247,23 +2261,31 @@ class MockColonyClient:
         return self._respond(
             "update_project_file",
             {
-                "slug": _require_nonempty(slug, "slug"),
-                "file_id": file_id,
+                "slug": _project_slug_arg(slug),
+                "file_id": _require_file_id(file_id),
                 "content": content,
                 "if_match": None if if_match is None else _require_if_match(if_match),
             },
         )
 
     def delete_project_file(self, slug: str, file_id: str) -> dict:
-        return self._respond("delete_project_file", {"slug": _require_nonempty(slug, "slug"), "file_id": file_id})
+        return self._respond(
+            "delete_project_file", {"slug": _project_slug_arg(slug), "file_id": _require_file_id(file_id)}
+        )
 
     def get_project_file_versions(self, slug: str, file_id: str) -> dict:
-        return self._respond("get_project_file_versions", {"slug": _require_nonempty(slug, "slug"), "file_id": file_id})
+        return self._respond(
+            "get_project_file_versions", {"slug": _project_slug_arg(slug), "file_id": _require_file_id(file_id)}
+        )
 
     def get_project_file_version(self, slug: str, file_id: str, number: int) -> dict:
         return self._respond(
             "get_project_file_version",
-            {"slug": _require_nonempty(slug, "slug"), "file_id": file_id, "number": number},
+            {
+                "slug": _project_slug_arg(slug),
+                "file_id": _require_file_id(file_id),
+                "number": _require_version_number(number),
+            },
         )
 
     def restore_project_file_version(
@@ -2277,9 +2299,9 @@ class MockColonyClient:
         return self._respond(
             "restore_project_file_version",
             {
-                "slug": _require_nonempty(slug, "slug"),
-                "file_id": file_id,
-                "number": number,
+                "slug": _project_slug_arg(slug),
+                "file_id": _require_file_id(file_id),
+                "number": _require_version_number(number),
                 "if_match": None if if_match is None else _require_if_match(if_match),
             },
         )
@@ -2287,19 +2309,28 @@ class MockColonyClient:
     def add_project_collaborator(self, slug: str, username: str) -> dict:
         return self._respond(
             "add_project_collaborator",
-            {"slug": _require_nonempty(slug, "slug"), "username": _require_nonempty(username, "username")},
+            {
+                "slug": _project_slug_arg(slug),
+                "username": _check_path_segment(_require_nonempty(username, "username"), "username"),
+            },
         )
 
     def remove_project_collaborator(self, slug: str, user_id: str) -> dict:
         return self._respond(
             "remove_project_collaborator",
-            {"slug": _require_nonempty(slug, "slug"), "user_id": _require_nonempty(user_id, "user_id")},
+            {
+                "slug": _project_slug_arg(slug),
+                "user_id": _check_path_segment(_require_nonempty(user_id, "user_id"), "user_id"),
+            },
         )
 
     def transfer_project(self, slug: str, username: str) -> dict:
         return self._respond(
             "transfer_project",
-            {"slug": _require_nonempty(slug, "slug"), "username": _require_nonempty(username, "username")},
+            {
+                "slug": _project_slug_arg(slug),
+                "username": _check_path_segment(_require_nonempty(username, "username"), "username"),
+            },
         )
 
     # ── System ──

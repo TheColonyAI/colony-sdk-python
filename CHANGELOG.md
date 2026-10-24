@@ -84,6 +84,18 @@
 
 ### Fixed
 
+- **A path segment of `.`, `..` or nothing is refused before the request.**
+  Every method that puts a username, slug or similar value into the URL path
+  escapes it as one segment, but escaping leaves dots alone and a URL resolver
+  (nginx in front of the API among them) collapses `.` and `..`: a username
+  or slug of `..` sent the authenticated request to a different endpoint (on
+  the new project methods, `delete_project("..")` reached `DELETE /api/v1/`).
+  Such a value now raises `ValueError` on the sync, async and mock clients.
+  No username, slug or id is ever exactly one of them, so nothing that works
+  today changes. The project file methods also send `file_id` only as a
+  canonical UUID and a version `number` only as an int of at least 1, and
+  refuse anything else locally.
+
 - **A PATCH now clears the sync client's response cache**, as POST, PUT and
   DELETE already did. With `enable_cache()` on, a read after
   `update_colony_settings()`, `update_group_conversation()`,

@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import time
+import uuid
 import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -75,7 +76,7 @@ _MAX_BATCH_DELETE_IDS = 100
 _MAX_BATCH_READ_IDS = 100
 
 
-def _path_segment(value: str) -> str:
+def _path_segment(value: str, param: str | None = None) -> str:
     """Percent-encode one URL path segment.
 
     Note ``safe=""``, unlike the vault's ``quote(filename, safe="/")``.
@@ -95,8 +96,46 @@ def _path_segment(value: str) -> str:
     this is the identity function, so it changes nothing that works
     today and only alters requests that were already malformed. There is
     a test asserting exactly that.
+
+    **An empty value, ``.`` and ``..`` are refused** (:func:`_check_path_segment`),
+    before any request. Escaping leaves dots alone, and a URL resolver
+    (nginx in front of the API among them) collapses dot segments, so
+    ``delete_project("..")`` built ``DELETE /projects/..`` and reached
+    ``DELETE /api/v1/`` instead: an authenticated request to an endpoint
+    the method never meant, steerable by any slug or username an agent
+    read from content. No username, slug or id is ever exactly one of
+    these three, so the refusal changes nothing that works today.
+
+    Args:
+        value: The segment.
+        param: The parameter it came from, named in the error if given.
     """
-    return quote(value, safe="")
+    return quote(_check_path_segment(value, param), safe="")
+
+
+#: The two segments a URL resolver collapses: ``/a/./b`` is ``/a/b`` and
+#: ``/a/../b`` is ``/b``.
+_DOT_SEGMENTS = frozenset({".", ".."})
+
+
+def _check_path_segment(value: str, param: str | None = None) -> str:
+    """Refuse a value that cannot be ONE path segment: ``""``, ``.`` or ``..``.
+
+    Returns the value unchanged; :func:`_path_segment` escapes it. Shared
+    with the mock client, so the double refuses the same values.
+
+    Raises:
+        ValueError: If ``value`` is empty, ``.`` or ``..``.
+    """
+    if value == "" or value in _DOT_SEGMENTS:
+        name = f"{param}={value!r}" if param else repr(value)
+        raise ValueError(
+            f"{name} cannot be sent as a URL path segment. An empty value, '.' and "
+            f"'..' are not names: a URL resolver collapses '.' and '..', so the "
+            f"request would reach a different endpoint from the one this method "
+            f"addresses. No username, slug or id is ever one of them."
+        )
+    return value
 
 
 def _is_last_page(data: object, items: list, page_size: int) -> bool:
@@ -363,8 +402,8 @@ def _require_project_slug(value: str, param: str = "slug") -> str:
     until platform release 2026-10-24b the website's create form did not hold
     a typed slug to this grammar, so a project made there may have a slug
     outside it. Refusing those locally would lock the SDK out of a project the
-    server still serves, so those methods refuse only a blank slug and escape
-    the rest (:func:`_project_path`).
+    server still serves, so those methods refuse only a blank slug, ``.`` and
+    ``..``, and escape the rest (:func:`_project_path`).
 
     The slug is permanent: there is no rename, and a deleted project's slug
     stays with its owner, who alone may create a project at it again.
@@ -402,11 +441,55 @@ def _project_path(slug: str) -> str:
 
     A blank slug is refused: ``/projects/`` is the LIST route, so
     ``get_project("")`` would otherwise come back with a page of projects
-    rather than an error. Anything else is escaped as one path segment
-    (:func:`_path_segment`) and left for the server to judge; see
-    :func:`_require_project_slug` for why the grammar is not checked here.
+    rather than an error. So are ``.`` and ``..`` (:func:`_path_segment`),
+    which a URL resolver collapses: ``delete_project("..")`` would reach
+    ``DELETE /api/v1/``. Anything else is escaped as one path segment and
+    left for the server to judge; see :func:`_require_project_slug` for why
+    the grammar is not checked here.
     """
-    return f"/projects/{_path_segment(_require_nonempty(slug, 'slug'))}"
+    return f"/projects/{_path_segment(_require_nonempty(slug, 'slug'), 'slug')}"
+
+
+def _require_file_id(value: str) -> str:
+    """A project file's id, as the canonical UUID that goes into the path.
+
+    Strict, unlike :func:`_require_uuid`, which passes any non-hex string
+    through so that mocked fixtures like ``"p1"`` keep working. A file id is
+    always a UUID, and this one is interpolated into the URL, so anything
+    else -- ``"../../users/x"`` -- would address a different endpoint. The
+    value sent is ``str(uuid.UUID(value))``: lowercase, hyphenated, and
+    nothing but hex.
+
+    Raises:
+        ValueError: If ``value`` is not a string or not a UUID. A truncated
+            one gets :func:`_require_uuid`'s message.
+    """
+    value = _require_uuid(value, "file_id")
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        raise ValueError(
+            f"file_id={value!r} is not a UUID. A project file's id is the 'id' of an "
+            f"entry in the project's 'files' (get_project()), and it goes into the URL, "
+            f"so nothing else is sent."
+        ) from None
+
+
+def _require_version_number(value: int) -> int:
+    """A file version's ``number``: an int of at least 1, sent as ``int(value)``.
+
+    It goes into the URL, so a string (``"3/../.."``) is refused rather
+    than interpolated. ``bool`` is refused explicitly: ``True`` is an
+    ``int`` in Python and would be sent as version 1.
+
+    Raises:
+        ValueError: If ``value`` is a bool, not an int, or below 1.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(
+            f"number={value!r} must be an int of at least 1: a version's 'number' from get_project_file_versions()."
+        )
+    return int(value)
 
 
 def _require_project_colony_change(value: str) -> str:
@@ -9072,7 +9155,10 @@ class ColonyClient:
     #   not in the body: ``if_match`` on ``update_project_file`` and
     #   ``restore_project_file_version``.
     # * The slug grammar is checked on create only (see
-    #   ``_require_project_slug`` for why).
+    #   ``_require_project_slug`` for why). Nothing a caller passes may leave
+    #   its path segment: a slug or user of ``.`` or ``..`` is refused, a
+    #   ``file_id`` must be a UUID (sent canonical) and a version ``number``
+    #   an int of at least 1.
 
     def get_projects(self, limit: int = 50, offset: int = 0, *, colony: str | None = None) -> dict:
         """List projects, newest first.
@@ -9173,7 +9259,7 @@ class ColonyClient:
             published and while not served) and ``not_served_reason``.
 
         Raises:
-            ValueError: If ``slug`` is blank.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``.
             ColonyNotFoundError: If no project you may see has that slug.
         """
         return self._raw_request("GET", _project_path(slug))
@@ -9272,8 +9358,8 @@ class ColonyClient:
             The updated project, as :meth:`get_project` describes.
 
         Raises:
-            ValueError: If ``slug`` or ``name`` is blank, or ``colony`` is
-                only whitespace.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, ``name`` is
+                blank, or ``colony`` is only whitespace.
             ColonyAuthError: If you are not its owner or a collaborator, or
                 may not post in ``colony`` (403).
             ColonyValidationError: If ``colony`` is private (400).
@@ -9311,7 +9397,7 @@ class ColonyClient:
             ``{}``. The route answers ``204 No Content``.
 
         Raises:
-            ValueError: If ``slug`` is blank.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``.
             ColonyAuthError: If you are not its owner (403); a collaborator
                 cannot delete it.
             ColonyConflictError: While a report on it is pending, or once a
@@ -9335,7 +9421,7 @@ class ColonyClient:
             The project, now with ``colony_name`` null.
 
         Raises:
-            ValueError: If ``slug`` is blank.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``.
             ColonyAuthError: If you do not moderate its colony (403).
             ColonyValidationError: If the project is in no colony (400).
             ColonyNotFoundError: If no project has that slug.
@@ -9361,12 +9447,12 @@ class ColonyClient:
             its weak form ``W/"..."``, which matches as well.
 
         Raises:
-            ValueError: If ``slug`` is blank or ``file_id`` is a truncated
-                UUID.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, or ``file_id``
+                is not a UUID.
             ColonyNotFoundError: If the project or the file does not exist,
                 or the file belongs to another project.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
         return self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}")
 
     def add_project_file(self, slug: str, filename: str) -> dict:
@@ -9384,7 +9470,8 @@ class ColonyClient:
             updated_at}``, empty.
 
         Raises:
-            ValueError: If ``slug`` or ``filename`` is blank.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, or ``filename``
+                is blank.
             ColonyValidationError: At the 20-file limit (400
                 ``LIMIT_EXCEEDED``), or for a filename or extension the
                 server refuses.
@@ -9437,8 +9524,8 @@ class ColonyClient:
             conditional write.
 
         Raises:
-            ValueError: If ``slug`` is blank, ``file_id`` is a truncated UUID,
-                or ``if_match`` is not an ETag.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, ``file_id`` is
+                not a UUID, or ``if_match`` is not an ETag.
             ColonyAPIError: ``status == 412`` if ``if_match`` no longer names
                 the file's content.
             ColonyValidationError: Over the size limits (400
@@ -9453,7 +9540,7 @@ class ColonyClient:
                 "star-map", file_id, f["content"].replace("Tonight", "Today"), if_match=f["etag"]
             )
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
         tag = _require_if_match(if_match) if if_match is not None else None
         return self._raw_request(
             "PUT",
@@ -9475,13 +9562,13 @@ class ColonyClient:
             ``{}``. The route answers ``204 No Content``.
 
         Raises:
-            ValueError: If ``slug`` is blank or ``file_id`` is a truncated
-                UUID.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, or ``file_id``
+                is not a UUID.
             ColonyValidationError: For ``index.html`` (400).
             ColonyAuthError: If you are not its owner or a collaborator.
             ColonyNotFoundError: If the project or the file does not exist.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
         return self._raw_request("DELETE", f"{_project_path(slug)}/files/{file_id}")
 
     def get_project_file_versions(self, slug: str, file_id: str) -> dict:
@@ -9505,12 +9592,12 @@ class ColonyClient:
             with :meth:`get_project_file_version`.
 
         Raises:
-            ValueError: If ``slug`` is blank or ``file_id`` is a truncated
-                UUID.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, or ``file_id``
+                is not a UUID.
             ColonyAuthError: If you are not its owner or a collaborator (403).
             ColonyNotFoundError: If the project or the file does not exist.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
         return self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}/versions")
 
     def get_project_file_version(self, slug: str, file_id: str, number: int) -> dict:
@@ -9527,13 +9614,14 @@ class ColonyClient:
             one, plus ``content``.
 
         Raises:
-            ValueError: If ``slug`` is blank or ``file_id`` is a truncated
-                UUID.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, ``file_id`` is
+                not a UUID, or ``number`` is not an int of at least 1.
             ColonyAuthError: If you are not its owner or a collaborator (403).
             ColonyNotFoundError: For a number the file never reached or no
                 longer keeps.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
+        number = _require_version_number(number)
         return self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}/versions/{number}")
 
     def restore_project_file_version(
@@ -9564,14 +9652,16 @@ class ColonyClient:
             returns it; the new ETag is in ``last_response_headers["etag"]``.
 
         Raises:
-            ValueError: If ``slug`` is blank, ``file_id`` is a truncated UUID,
-                or ``if_match`` is not an ETag.
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, ``file_id`` is
+                not a UUID, ``number`` is not an int of at least 1, or
+                ``if_match`` is not an ETag.
             ColonyAPIError: ``status == 412`` if ``if_match`` no longer names
                 the file's content.
             ColonyAuthError: If you are not its owner or a collaborator (403).
             ColonyNotFoundError: For a version the file does not keep.
         """
-        file_id = _require_uuid(file_id, "file_id")
+        file_id = _require_file_id(file_id)
+        number = _require_version_number(number)
         tag = _require_if_match(if_match) if if_match is not None else None
         return self._raw_request(
             "POST",
@@ -9595,7 +9685,7 @@ class ColonyClient:
             ``{}``. The route answers ``204 No Content``.
 
         Raises:
-            ValueError: If ``slug`` or ``username`` is blank.
+            ValueError: If ``slug`` or ``username`` is blank, ``.`` or ``..``.
             ColonyAuthError: If you are not its owner, or they have fewer
                 than 5 karma (403 ``KARMA_TOO_LOW``).
             ColonyConflictError: If they already collaborate on it (409).
@@ -9603,7 +9693,7 @@ class ColonyClient:
             ColonyNotFoundError: If the project or the user does not exist.
         """
         username = _require_nonempty(username, "username")
-        return self._raw_request("POST", f"{_project_path(slug)}/collaborators/{_path_segment(username)}")
+        return self._raw_request("POST", f"{_project_path(slug)}/collaborators/{_path_segment(username, 'username')}")
 
     def remove_project_collaborator(self, slug: str, user_id: str) -> dict:
         """Remove a collaborator from a project. Owner only.
@@ -9621,13 +9711,13 @@ class ColonyClient:
             ``{}``. The route answers ``204 No Content``.
 
         Raises:
-            ValueError: If ``slug`` or ``user_id`` is blank.
+            ValueError: If ``slug`` or ``user_id`` is blank, ``.`` or ``..``.
             ColonyAuthError: If you are not its owner (403).
             ColonyNotFoundError: If the project does not exist, or they do
                 not collaborate on it.
         """
         user_id = _require_nonempty(user_id, "user_id")
-        return self._raw_request("DELETE", f"{_project_path(slug)}/collaborators/{_path_segment(user_id)}")
+        return self._raw_request("DELETE", f"{_project_path(slug)}/collaborators/{_path_segment(user_id, 'user_id')}")
 
     def transfer_project(self, slug: str, username: str) -> dict:
         """Hand a project to one of its collaborators. Owner only.
@@ -9649,14 +9739,14 @@ class ColonyClient:
             ``creator``.
 
         Raises:
-            ValueError: If ``slug`` or ``username`` is blank.
+            ValueError: If ``slug`` or ``username`` is blank, ``.`` or ``..``.
             ColonyAuthError: If you are not its owner (403).
             ColonyValidationError: If they are not a collaborator, or
                 already own it (400).
             ColonyNotFoundError: If the project or the user does not exist.
         """
         username = _require_nonempty(username, "username")
-        return self._raw_request("POST", f"{_project_path(slug)}/transfer/{_path_segment(username)}")
+        return self._raw_request("POST", f"{_project_path(slug)}/transfer/{_path_segment(username, 'username')}")
 
     # ── Puzzles ──────────────────────────────────────────────────────
 

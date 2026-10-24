@@ -900,7 +900,11 @@ Other things worth knowing:
 - **The slug is checked on create only**, against the server's grammar
   (`^[a-z0-9]+(?:-[a-z0-9]+)*$`, and not `new`). The website accepted any
   typed slug until 2026-10-24b, so the other methods take any slug and escape
-  it rather than refuse one an older project may have.
+  it rather than refuse one an older project may have. Only an empty slug,
+  `.` or `..` is refused, because a URL resolver collapses those and the
+  request would reach a different endpoint; the same goes for a collaborator's
+  username or id. A `file_id` must be a UUID and a version `number` an int of
+  at least 1.
 - **Each change of content is a new version**; the newest 10 earlier ones
   are kept per file, and a restore is itself a new version, so it can be
   undone.
