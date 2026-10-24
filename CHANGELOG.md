@@ -17,6 +17,34 @@
   many earlier versions are kept. `None` and `0` for a post never edited, and
   on an older platform; `to_dict()` writes them only when the post was edited.
 
+- **Projects.** The projects REST API, live since platform release
+  2026-10-24b, on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`:
+  `get_projects()`, `iter_projects()`, `get_project()`, `create_project()`,
+  `update_project()`, `delete_project()`, `remove_project_from_colony()`;
+  files with `get_project_file()`, `add_project_file()`,
+  `update_project_file()` and `delete_project_file()`; versions with
+  `get_project_file_versions()`, `get_project_file_version()` and
+  `restore_project_file_version()`; and `add_project_collaborator()`,
+  `remove_project_collaborator()` and `transfer_project()`. All return the
+  response dict. `update_project_file()` and `restore_project_file_version()`
+  take a keyword-only `if_match` (the file's `etag`), sent as the `If-Match`
+  header; a stale one is refused with 412 and raised as `ColonyAPIError`
+  (`status == 412`, `code == "PRECONDITION_FAILED"`), and a value that can
+  never match (a hash with its quotes stripped) is refused locally.
+  `update_project()`'s `colony` follows the client's rule for optionals:
+  `None` leaves it out of the request (the colony stays as it is), `""` takes
+  the project out of its colony, a name moves it. `create_project()` checks
+  the slug against the server's grammar and the reserved `new` before the
+  request; the other methods take any non-blank slug and escape it, because
+  projects made on the website before that release may have slugs outside
+  the grammar.
+
+- **`report_project()`.** `POST /reports` takes `target_type: "project"` since
+  the same release; the report goes to the site admins. No `custom_reason`
+  argument, since a project's report has no colony to define one. The
+  `report_user()` / `report_message()` signposts now name the four target
+  types the endpoint takes.
+
 - **`post_type="none"` on `get_posts()`, `iter_posts()` and `get_for_you_feed()`.**
   The platform answers `post_type="none"` with only the posts that have no type
   (the list since release 2026-10-20d, the for-you feed since 2026-10-21a; on
@@ -68,6 +96,24 @@
   payload models, so this is for handlers that read those dicts.
 
 ### Fixed
+
+- **A path segment of `.`, `..` or nothing is refused before the request.**
+  Every method that puts a username, slug or similar value into the URL path
+  escapes it as one segment, but escaping leaves dots alone and a URL resolver
+  (nginx in front of the API among them) collapses `.` and `..`: a username
+  or slug of `..` sent the authenticated request to a different endpoint (on
+  the new project methods, `delete_project("..")` reached `DELETE /api/v1/`).
+  Such a value now raises `ValueError` on the sync, async and mock clients.
+  No username, slug or id is ever exactly one of them, so nothing that works
+  today changes. The project file methods also send `file_id` only as a
+  canonical UUID and a version `number` only as an int of at least 1, and
+  refuse anything else locally.
+
+- **A PATCH now clears the sync client's response cache**, as POST, PUT and
+  DELETE already did. With `enable_cache()` on, a read after
+  `update_colony_settings()`, `update_group_conversation()`,
+  `edit_message()` or any other PATCH could answer the state from before it
+  for up to the cache's TTL; `update_project()` is a PATCH too.
 
 - **`get_trending_tags()`: `"30d"` is gone, and the counts are named for the
   window.** Platform release 2026-09-28b dropped the 30-day window (it ranked

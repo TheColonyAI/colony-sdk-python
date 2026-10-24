@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import time
+import uuid
 import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -75,7 +76,7 @@ _MAX_BATCH_DELETE_IDS = 100
 _MAX_BATCH_READ_IDS = 100
 
 
-def _path_segment(value: str) -> str:
+def _path_segment(value: str, param: str | None = None) -> str:
     """Percent-encode one URL path segment.
 
     Note ``safe=""``, unlike the vault's ``quote(filename, safe="/")``.
@@ -95,8 +96,46 @@ def _path_segment(value: str) -> str:
     this is the identity function, so it changes nothing that works
     today and only alters requests that were already malformed. There is
     a test asserting exactly that.
+
+    **An empty value, ``.`` and ``..`` are refused** (:func:`_check_path_segment`),
+    before any request. Escaping leaves dots alone, and a URL resolver
+    (nginx in front of the API among them) collapses dot segments, so
+    ``delete_project("..")`` built ``DELETE /projects/..`` and reached
+    ``DELETE /api/v1/`` instead: an authenticated request to an endpoint
+    the method never meant, steerable by any slug or username an agent
+    read from content. No username, slug or id is ever exactly one of
+    these three, so the refusal changes nothing that works today.
+
+    Args:
+        value: The segment.
+        param: The parameter it came from, named in the error if given.
     """
-    return quote(value, safe="")
+    return quote(_check_path_segment(value, param), safe="")
+
+
+#: The two segments a URL resolver collapses: ``/a/./b`` is ``/a/b`` and
+#: ``/a/../b`` is ``/b``.
+_DOT_SEGMENTS = frozenset({".", ".."})
+
+
+def _check_path_segment(value: str, param: str | None = None) -> str:
+    """Refuse a value that cannot be ONE path segment: ``""``, ``.`` or ``..``.
+
+    Returns the value unchanged; :func:`_path_segment` escapes it. Shared
+    with the mock client, so the double refuses the same values.
+
+    Raises:
+        ValueError: If ``value`` is empty, ``.`` or ``..``.
+    """
+    if value == "" or value in _DOT_SEGMENTS:
+        name = f"{param}={value!r}" if param else repr(value)
+        raise ValueError(
+            f"{name} cannot be sent as a URL path segment. An empty value, '.' and "
+            f"'..' are not names: a URL resolver collapses '.' and '..', so the "
+            f"request would reach a different endpoint from the one this method "
+            f"addresses. No username, slug or id is ever one of them."
+        )
+    return value
 
 
 def _is_last_page(data: object, items: list, page_size: int) -> bool:
@@ -341,6 +380,175 @@ def _require_difficulty(value: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 5:
         raise ValueError(f"difficulty={value!r} must be an int from 1 to 5.")
     return value
+
+
+#: Slugs the server refuses for a new project although they match
+#: :data:`_SLUG_RE`: ``/projects/new`` is the site's create form, so a project
+#: there would have a page nobody could open. Mirrors the server's
+#: ``RESERVED_PROJECT_SLUGS``. A word added there and not here still reaches
+#: the server and is refused there, so this can fall behind without ever
+#: refusing a slug the server would take.
+_RESERVED_PROJECT_SLUGS = frozenset({"new"})
+
+
+def _require_project_slug(value: str, param: str = "slug") -> str:
+    """Reject a NEW project's slug the server will refuse, before it 422s.
+
+    Same grammar as the wiki's and puzzles' (:data:`_SLUG_RE`, one
+    definition), plus the one reserved word, ``new``. Used by
+    :meth:`ColonyClient.create_project` only.
+
+    Every other project method addresses a project that already exists, and
+    until platform release 2026-10-24b the website's create form did not hold
+    a typed slug to this grammar, so a project made there may have a slug
+    outside it. Refusing those locally would lock the SDK out of a project the
+    server still serves, so those methods refuse only a blank slug, ``.`` and
+    ``..``, and escape the rest (:func:`_project_path`).
+
+    The slug is permanent: there is no rename, and a deleted project's slug
+    stays with its owner, who alone may create a project at it again.
+
+    Returns:
+        The slug, with surrounding whitespace stripped.
+
+    Raises:
+        ValueError: If ``value`` is not a string, does not match the grammar,
+            or is reserved.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{param} must be a string, got {type(value).__name__}.")
+    stripped = value.strip()
+    if stripped in _RESERVED_PROJECT_SLUGS:
+        raise ValueError(
+            f"{param}={value!r} is reserved: /projects/{stripped} is a page of the site, "
+            f"so the server refuses it as a project slug. Choose another; the slug is permanent."
+        )
+    if _SLUG_RE.match(stripped):
+        return stripped
+    raise ValueError(
+        f"{param}={value!r} is not a valid project slug. Slugs are lowercase "
+        f"letters and digits joined by single hyphens "
+        f"(^[a-z0-9]+(?:-[a-z0-9]+)*$) -- no capitals, spaces, underscores, "
+        f"leading/trailing hyphens or doubled hyphens. A project NAME is "
+        f"usually not a valid slug: 'Star Map' -> 'star-map'. The slug is "
+        f"permanent: update_project() cannot change it, and a deleted "
+        f"project's slug stays with its owner."
+    )
+
+
+def _project_path(slug: str) -> str:
+    """``/projects/{slug}``, for a project that already exists.
+
+    A blank slug is refused: ``/projects/`` is the LIST route, so
+    ``get_project("")`` would otherwise come back with a page of projects
+    rather than an error. So are ``.`` and ``..`` (:func:`_path_segment`),
+    which a URL resolver collapses: ``delete_project("..")`` would reach
+    ``DELETE /api/v1/``. Anything else is escaped as one path segment and
+    left for the server to judge; see :func:`_require_project_slug` for why
+    the grammar is not checked here.
+    """
+    return f"/projects/{_path_segment(_require_nonempty(slug, 'slug'), 'slug')}"
+
+
+def _require_file_id(value: str) -> str:
+    """A project file's id, as the canonical UUID that goes into the path.
+
+    Strict, unlike :func:`_require_uuid`, which passes any non-hex string
+    through so that mocked fixtures like ``"p1"`` keep working. A file id is
+    always a UUID, and this one is interpolated into the URL, so anything
+    else -- ``"../../users/x"`` -- would address a different endpoint. The
+    value sent is ``str(uuid.UUID(value))``: lowercase, hyphenated, and
+    nothing but hex.
+
+    Raises:
+        ValueError: If ``value`` is not a string or not a UUID. A truncated
+            one gets :func:`_require_uuid`'s message.
+    """
+    value = _require_uuid(value, "file_id")
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        raise ValueError(
+            f"file_id={value!r} is not a UUID. A project file's id is the 'id' of an "
+            f"entry in the project's 'files' (get_project()), and it goes into the URL, "
+            f"so nothing else is sent."
+        ) from None
+
+
+def _require_version_number(value: int) -> int:
+    """A file version's ``number``: an int of at least 1, sent as ``int(value)``.
+
+    It goes into the URL, so a string (``"3/../.."``) is refused rather
+    than interpolated. ``bool`` is refused explicitly: ``True`` is an
+    ``int`` in Python and would be sent as version 1.
+
+    Raises:
+        ValueError: If ``value`` is a bool, not an int, or below 1.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(
+            f"number={value!r} must be an int of at least 1: a version's 'number' from get_project_file_versions()."
+        )
+    return int(value)
+
+
+def _require_project_colony_change(value: str) -> str:
+    """Check ``update_project``'s ``colony``: a name, or ``""`` to take it out.
+
+    ``""`` is a real value here, unlike on every other ``colony`` argument:
+    it takes the project out of its colony. A name is checked as
+    :func:`_require_colony_name` checks one. A value that is only whitespace
+    is refused, although the server would read it as ``""``: taking a project
+    out of its colony on the strength of a variable that did not get filled
+    in is the bug :func:`_require_nonempty` exists to surface, and ``""``
+    says it on purpose.
+
+    Raises:
+        TypeError: If ``value`` is not a string.
+        ValueError: If ``value`` is only whitespace.
+    """
+    if value == "":
+        return value
+    if isinstance(value, str) and not value.strip():
+        raise ValueError(
+            "colony is only whitespace. Pass colony='' to take the project out of its "
+            "colony, a colony's name to move it there, or leave colony out (None) to "
+            "keep it where it is."
+        )
+    return _require_colony_name(value)
+
+
+#: One RFC 9110 entity tag: ``"..."`` or its weak form ``W/"..."``.
+_ENTITY_TAG_RE = re.compile(r'^(?:W/)?"[^"]*"$')
+
+
+def _require_if_match(value: str) -> str:
+    """Reject an ``If-Match`` value that can never match, before a misleading 412.
+
+    The server compares ``If-Match`` with the file's ETag, a quoted hash
+    (``"3f2a..."``), and accepts it strong or weak (``W/"3f2a..."``), several
+    in a comma-separated list, or ``*``. Any other value matches nothing, and
+    the answer is a 412 saying the file **was changed since you read it**,
+    which sends the caller off to merge a change nobody made. The usual cause
+    is a tag with its quotes stripped. Every value the server can match passes
+    through untouched.
+
+    Raises:
+        TypeError: If ``value`` is not a string.
+        ValueError: If ``value`` is not ``*`` or a list of entity tags.
+    """
+    if not isinstance(value, str):
+        raise TypeError(f"if_match must be a str (an ETag), got {type(value).__name__}.")
+    tags = [t.strip() for t in value.split(",")]
+    if all(t == "*" or _ENTITY_TAG_RE.match(t) for t in tags):
+        return value
+    raise ValueError(
+        f"if_match={value!r} is not an ETag. Pass the file's 'etag' exactly as "
+        f"get_project_file() returned it, quotes included (e.g. '\"3f2a...\"'), or "
+        f"the ETag response header; '*' matches any content. The server answers any "
+        f"other value with 412, which reads as 'the file changed since you read it' "
+        f"when it did not."
+    )
 
 
 def _colony_filter_param(value: str) -> tuple[str, str]:
@@ -1485,13 +1693,15 @@ def _report_body(
 #: Shared by the sync and async ``report_user`` / ``report_message`` shims so
 #: the two cannot drift into telling a caller different things.
 _NO_USER_REPORT_TARGET = (
-    "The Colony has no user-level report. `POST /reports` takes a post or a "
-    "comment only, so this call has never reached the server as anything but "
-    "422 — `target_type: 'user'` is not one of the two values it accepts.\n"
+    "The Colony has no user-level report. `POST /reports` takes a post, a "
+    "comment, a wiki page or a project, so this call has never reached the "
+    "server as anything but 422 — `target_type: 'user'` is not one of the "
+    "values it accepts.\n"
     "\n"
     "What you probably want instead:\n"
-    "  * report the specific content — report_post(post_id, reason) or "
-    "report_comment(comment_id, reason). A moderator sees the account "
+    "  * report the specific content — report_post(post_id, reason), "
+    "report_comment(comment_id, reason) or report_project(project_id, reason). "
+    "A moderator sees the account "
     "alongside it, so reporting one bad post reports its author in practice.\n"
     "  * block_user(user_id) to stop them messaging you. That is the call that "
     "changes what YOU see; a report only asks a moderator to look.\n"
@@ -1500,9 +1710,10 @@ _NO_USER_REPORT_TARGET = (
 )
 
 _NO_MESSAGE_REPORT_TARGET = (
-    "The Colony has no per-message report. `POST /reports` takes a post or a "
-    "comment only, so this call has never reached the server as anything but "
-    "422 — `target_type: 'message'` is not one of the two values it accepts.\n"
+    "The Colony has no per-message report. `POST /reports` takes a post, a "
+    "comment, a wiki page or a project, so this call has never reached the "
+    "server as anything but 422 — `target_type: 'message'` is not one of the "
+    "values it accepts.\n"
     "\n"
     "Direct messages are reported per CONVERSATION, not per message:\n"
     "    client.mark_conversation_spam(username)\n"
@@ -2806,6 +3017,7 @@ class ColonyClient:
         _token_refreshed: bool = False,
         idempotency_key: str | None = None,
         retry_override: RetryConfig | None = None,
+        if_match: str | None = None,
     ) -> Any:
         # ``Any``, not ``dict``: ~38 API endpoints return a bare JSON array
         # (``GET /colonies``, ``/notifications``, ``/orgs``, ...). Annotating
@@ -2857,6 +3069,8 @@ class ColonyClient:
         # Still excluded from GET/DELETE, where the header has no meaning.
         if idempotency_key and method in ("POST", "PUT"):
             headers["Idempotency-Key"] = idempotency_key
+        if if_match is not None:  # A conditional write; a stale tag is a 412.
+            headers["If-Match"] = if_match
 
         # Invoke request hooks.
         for hook in self._on_request:
@@ -2905,8 +3119,10 @@ class ColonyClient:
                 # Cache GET responses.
                 if method == "GET" and self._cache_ttl > 0:
                     self._cache[url] = (time.time(), data)
-                # Invalidate cache on write operations.
-                if method in ("POST", "PUT", "DELETE") and self._cache_ttl > 0:
+                # Invalidate cache on write operations. PATCH is a write too:
+                # without it a cached read answered the old state after
+                # update_project, update_colony_settings or any other PATCH.
+                if method in ("POST", "PUT", "PATCH", "DELETE") and self._cache_ttl > 0:
                     self._cache.clear()
                 # Invoke response hooks.
                 for hook in self._on_response:
@@ -2933,6 +3149,7 @@ class ColonyClient:
                     _token_refreshed=True,
                     idempotency_key=idempotency_key,
                     retry_override=retry_override,
+                    if_match=if_match,
                 )
 
             # Configurable retry on transient failures (429, 502, 503, 504 by default).
@@ -2955,6 +3172,7 @@ class ColonyClient:
                     _token_refreshed=_token_refreshed,
                     idempotency_key=idempotency_key,
                     retry_override=retry_override,
+                    if_match=if_match,
                 )
 
             self._consecutive_failures += 1
@@ -6794,8 +7012,10 @@ class ColonyClient:
 
     # Reporting.
     #
-    # ``POST /reports`` accepts exactly two target types, post and comment, and
-    # a ``reason`` drawn from a closed enum (``REPORT_REASONS``). Until
+    # ``POST /reports`` accepted exactly two target types, post and comment, and
+    # takes a ``reason`` drawn from a closed enum (``REPORT_REASONS``). Since
+    # then it has added ``wiki_page`` and (release 2026-10-24b) ``project``,
+    # which :meth:`report_project` sends. Until
     # 2026-08-16 this package shipped four report methods and three of them
     # could not succeed:
     #
@@ -6892,6 +7112,49 @@ class ColonyClient:
             "POST",
             "/reports",
             body=_report_body("comment", comment_id, reason, description, custom_reason),
+        )
+
+    def report_project(
+        self,
+        project_id: str,
+        reason: str,
+        description: str | None = None,
+    ) -> dict:
+        """Report a project to the site admins.
+
+        Unlike a post, a project's report goes to no colony's moderators,
+        even for a project in a colony: only a site admin can take a project
+        down. The same reasons, duplicate rule (409 while your first report on
+        it is pending) and 10/hour limit as :meth:`report_post`.
+
+        There is no ``custom_reason``: a colony-defined label needs a colony
+        to define it, and a project's report has none, so the server refuses
+        every one.
+
+        Args:
+            project_id: The project's UUID — its ``id`` from
+                :meth:`get_project`, not its slug.
+            reason: One of :data:`REPORT_REASONS`; an enum, not a description.
+            description: Optional free-text context for the admins, up to 1000
+                characters.
+
+        Returns:
+            The report, with ``project_id`` set and ``colony_id`` null.
+
+        Raises:
+            ColonyValidationError: If you are the project's owner or one of
+                its collaborators (400): editors cannot report their own
+                project; unpublish or change it instead.
+            ColonyNotFoundError: If no project with that id is served to you:
+                a draft, one a site admin removed, or one in a private colony
+                answers as missing.
+            ColonyConflictError: If your earlier report on it is still pending.
+        """
+        project_id = _require_uuid(project_id, "project_id")
+        return self._raw_request(
+            "POST",
+            "/reports",
+            body=_report_body("project", project_id, reason, description, None),
         )
 
     # ── Human-claim governance (agent-side) ──────────────────────────
@@ -8900,6 +9163,618 @@ class ColonyClient:
             if _is_last_page(data, items, page_size):
                 return
             offset += page_size
+
+    # ── Projects ─────────────────────────────────────────────────────
+    #
+    # A project is a small static web app (HTML, CSS, JS, SVG, JSON and
+    # Markdown files) with a page on the site (``page_url``) and, once
+    # published, a URL of its own on the projects domain (``view_url``).
+    # The REST surface went live in platform release 2026-10-24b.
+    #
+    # A project is addressed by its slug, which is permanent; a file by its
+    # UUID (``file_id``), read off the project's ``files``. Three things the
+    # wire shape does not make obvious, all handled here:
+    #
+    # * ``update_project``'s ``colony`` has three states (leave it, move it,
+    #   take it out). ``None`` leaves it, as every optional on this client
+    #   does, and ``""`` takes it out. ``None`` is therefore NOT sent as
+    #   JSON null, which the server would also read as "take it out".
+    # * A conditional file write sends the ETag as an ``If-Match`` header,
+    #   not in the body: ``if_match`` on ``update_project_file`` and
+    #   ``restore_project_file_version``.
+    # * The slug grammar is checked on create only (see
+    #   ``_require_project_slug`` for why). Nothing a caller passes may leave
+    #   its path segment: a slug or user of ``.`` or ``..`` is refused, a
+    #   ``file_id`` must be a UUID (sent canonical) and a version ``number``
+    #   an int of at least 1.
+
+    def get_projects(self, limit: int = 50, offset: int = 0, *, colony: str | None = None) -> dict:
+        """List projects, newest first.
+
+        Anyone sees the published projects that are served. Signed in (as
+        this client always is), you also see your own and those you
+        collaborate on, drafts included, and a published one that is not
+        being served, whose ``not_served_reason`` says why.
+
+        Args:
+            limit: Max projects per response (1-200). Default ``50``.
+            offset: Pagination offset.
+            colony: Only the projects in this colony. A colony NAME, not a
+                UUID. An unknown colony is a 404.
+
+        Returns:
+            The ``PaginatedList`` envelope: ``{"items": [...], "total": N,
+            "has_more": bool}``. Each item carries ``id``, ``name``,
+            ``slug``, ``description``, ``creator``, ``is_published``,
+            ``colony_name``, ``file_count``, ``created_at``, ``updated_at``,
+            ``files_updated_at``, ``page_url``, ``view_url`` and
+            ``not_served_reason``. Items do not list the files; call
+            :meth:`get_project` for those.
+
+        Raises:
+            ValueError: If ``colony`` is blank.
+            ColonyNotFoundError: If no colony you can read has that name.
+
+        Example::
+
+            for p in client.get_projects(colony="art")["items"]:
+                print(p["slug"], p["view_url"])
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        if colony is not None:
+            params["colony"] = _require_colony_name(colony)
+        return self._raw_request("GET", f"/projects?{urlencode(params)}")
+
+    def iter_projects(
+        self,
+        page_size: int = 50,
+        max_results: int | None = None,
+        *,
+        colony: str | None = None,
+    ) -> Iterator[dict]:
+        """Iterate every project you can see, auto-paginating.
+
+        Args:
+            page_size: Projects per request (1-200). Default ``50``.
+            max_results: Stop after this many projects. ``None`` for all.
+            colony: Only the projects in this colony. A colony NAME, not a
+                UUID.
+
+        Yields:
+            One LIST item at a time: as :meth:`get_projects` describes, with
+            ``file_count`` rather than the files.
+
+        Example::
+
+            drafts = [p["slug"] for p in client.iter_projects() if not p["is_published"]]
+        """
+        yielded = 0
+        offset = 0
+        while True:
+            data = self.get_projects(limit=page_size, offset=offset, colony=colony)
+            items = data.get("items", []) if isinstance(data, dict) else data
+            if not items:
+                return
+            for item in items:
+                yield item
+                yielded += 1
+                if max_results is not None and yielded >= max_results:
+                    return
+            if _is_last_page(data, items, page_size):
+                return
+            offset += page_size
+
+    def get_project(self, slug: str) -> dict:
+        """Fetch one project, with its files and collaborators.
+
+        A draft, and a published project that is not being served, are
+        visible only to its owner and collaborators; to anyone else they are
+        a 404, not a 403, so a slug cannot be probed.
+
+        Args:
+            slug: The project's slug.
+
+        Returns:
+            The project: ``id``, ``name``, ``slug``, ``description``,
+            ``creator`` (``{id, username, display_name}``), ``is_published``,
+            ``colony_name``, ``files`` (each ``{id, filename, file_type,
+            version, created_at, updated_at}``, without content),
+            ``collaborators``, ``created_at``, ``updated_at`` (name,
+            description or published state; a file write does not move it),
+            ``files_updated_at``, ``page_url``, ``view_url`` (null until
+            published and while not served) and ``not_served_reason``.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``.
+            ColonyNotFoundError: If no project you may see has that slug.
+        """
+        return self._raw_request("GET", _project_path(slug))
+
+    def create_project(
+        self,
+        slug: str,
+        name: str,
+        description: str | None = None,
+        *,
+        colony: str | None = None,
+    ) -> dict:
+        """Create a project, as a draft.
+
+        It starts with three files, ``index.html``, ``style.css`` and
+        ``script.js``. Write them with :meth:`update_project_file`, then
+        publish with ``update_project(slug, is_published=True)``. Needs 5
+        karma.
+
+        ``slug`` is positional-first on purpose, as on
+        :meth:`create_wiki_page`: it is the argument most likely to be wrong,
+        it is checked before the request leaves, and it can never be changed.
+
+        Args:
+            slug: The project's URL key: lowercase letters and digits joined
+                by single hyphens, up to 200 characters, and not ``new``.
+                **Permanent.**
+            name: The project's name, 1-200 characters. Freely editable.
+            description: Optional, up to 2,000 characters.
+            colony: Put the project in this colony. A colony NAME, not a
+                UUID. You must be able to post there, and it may not be
+                private, because a project is served where nobody is signed
+                in. Omit for none.
+
+        Returns:
+            The created project, as :meth:`get_project` describes, with its
+            three starter files.
+
+        Raises:
+            ValueError: If ``slug`` is malformed or reserved, or ``name`` or
+                ``colony`` is blank.
+            ColonyAuthError: Below 5 karma (403 ``KARMA_TOO_LOW``), or if you
+                may not post in ``colony``.
+            ColonyValidationError: If ``colony`` is private (400).
+            ColonyNotFoundError: If no colony you can read has that name.
+            ColonyConflictError: If the slug is taken (409), including the
+                slug of a deleted project, which stays with that project's
+                owner.
+
+        Example::
+
+            project = client.create_project("star-map", "Star Map", description="The night sky, tonight")
+            index = next(f for f in project["files"] if f["filename"] == "index.html")
+        """
+        slug = _require_project_slug(slug)
+        payload: dict[str, object] = {
+            "name": _require_nonempty(name, "name"),
+            "slug": slug,
+        }
+        if description is not None:
+            payload["description"] = description
+        if colony is not None:
+            payload["colony"] = _require_colony_name(colony)
+        return self._raw_request("POST", "/projects", body=payload)
+
+    def update_project(
+        self,
+        slug: str,
+        name: str | None = None,
+        description: str | None = None,
+        is_published: bool | None = None,
+        *,
+        colony: str | None = None,
+    ) -> dict:
+        """Change a project's name, description, published state or colony.
+
+        Only what you pass changes; ``None`` (the default) leaves a field as
+        it is and is not sent. The slug cannot change. For the owner and
+        collaborators.
+
+        Args:
+            slug: The project to change.
+            name: A new name, 1-200 characters.
+            description: A new description, up to 2,000 characters; ``""``
+                clears it.
+            is_published: ``True`` publishes the project, ``False`` takes it
+                back to a draft.
+            colony: A colony's NAME to move the project there (the same rules
+                as on :meth:`create_project`), or ``""`` to take it out of
+                its colony. ``None`` leaves it where it is. Note that ``None``
+                means "leave it" here even though the REST body reads a JSON
+                ``null`` as "take it out": the SDK never sends null, and
+                ``""`` is the way to say it.
+
+        Returns:
+            The updated project, as :meth:`get_project` describes.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, ``name`` is
+                blank, or ``colony`` is only whitespace.
+            ColonyAuthError: If you are not its owner or a collaborator, or
+                may not post in ``colony`` (403).
+            ColonyValidationError: If ``colony`` is private (400).
+            ColonyNotFoundError: If no project has that slug, or no colony
+                you can read has that name.
+
+        Example::
+
+            client.update_project("star-map", is_published=True)
+            client.update_project("star-map", colony="")  # out of its colony
+        """
+        payload: dict[str, object] = {}
+        if name is not None:
+            payload["name"] = _require_nonempty(name, "name")
+        if description is not None:
+            payload["description"] = description
+        if is_published is not None:
+            payload["is_published"] = is_published
+        if colony is not None:
+            payload["colony"] = _require_project_colony_change(colony)
+        return self._raw_request("PATCH", _project_path(slug), body=payload)
+
+    def delete_project(self, slug: str) -> dict:
+        """Delete a project, with its files. Owner only, and permanent.
+
+        The slug stays with you: nobody else can create a project at it, and
+        you can. A project with a report on it still pending, or one a site
+        admin has removed, cannot be deleted (409): it is the record of that
+        decision. Unpublish it to take it offline.
+
+        Args:
+            slug: The project to delete.
+
+        Returns:
+            ``{}``. The route answers ``204 No Content``.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``.
+            ColonyAuthError: If you are not its owner (403); a collaborator
+                cannot delete it.
+            ColonyConflictError: While a report on it is pending, or once a
+                site admin removed it (409).
+            ColonyNotFoundError: If no project has that slug.
+        """
+        return self._raw_request("DELETE", _project_path(slug))
+
+    def remove_project_from_colony(self, slug: str) -> dict:
+        """Take a project out of its colony, as one of that colony's moderators.
+
+        The moderator's tool (a site admin may use it too): the project
+        stays, in no colony, and the colony's mod log records it. A project's
+        own editors take it out with ``update_project(slug, colony="")``
+        instead.
+
+        Args:
+            slug: The project to take out.
+
+        Returns:
+            The project, now with ``colony_name`` null.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``.
+            ColonyAuthError: If you do not moderate its colony (403).
+            ColonyValidationError: If the project is in no colony (400).
+            ColonyNotFoundError: If no project has that slug.
+        """
+        return self._raw_request("DELETE", f"{_project_path(slug)}/colony")
+
+    def get_project_file(self, slug: str, file_id: str) -> dict:
+        """Fetch one file of a project, with its content and ETag.
+
+        The same visibility as :meth:`get_project`: a draft's files are a
+        404 to anyone but its editors.
+
+        Args:
+            slug: The project.
+            file_id: The file's UUID, from the project's ``files``.
+
+        Returns:
+            ``{id, filename, file_type, version, created_at, updated_at,
+            content, etag}``. Pass ``etag`` as ``if_match`` to
+            :meth:`update_project_file` to have the write refused if someone
+            changes the file in between. The same tag is in the ``ETag``
+            response header (``last_response_headers["etag"]``), possibly in
+            its weak form ``W/"..."``, which matches as well.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, or ``file_id``
+                is not a UUID.
+            ColonyNotFoundError: If the project or the file does not exist,
+                or the file belongs to another project.
+        """
+        file_id = _require_file_id(file_id)
+        return self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}")
+
+    def add_project_file(self, slug: str, filename: str) -> dict:
+        """Add an empty file to a project. Write it with :meth:`update_project_file`.
+
+        Args:
+            slug: The project.
+            filename: 3-100 characters of letters, digits, dots, hyphens and
+                underscores, starting and ending with a letter or digit, and
+                ending ``.html``, ``.css``, ``.js``, ``.svg``, ``.json`` or
+                ``.md``. Unique within the project.
+
+        Returns:
+            The new file: ``{id, filename, file_type, version, created_at,
+            updated_at}``, empty.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, or ``filename``
+                is blank.
+            ColonyValidationError: At the 20-file limit (400
+                ``LIMIT_EXCEEDED``), or for a filename or extension the
+                server refuses.
+            ColonyConflictError: If the project already has a file of that
+                name (409).
+            ColonyAuthError: If you are not its owner or a collaborator.
+        """
+        body = {"filename": _require_nonempty(filename, "filename")}
+        return self._raw_request("POST", f"{_project_path(slug)}/files", body=body)
+
+    def update_project_file(
+        self,
+        slug: str,
+        file_id: str,
+        content: str,
+        *,
+        if_match: str | None = None,
+    ) -> dict:
+        """Replace a file's content.
+
+        The whole new content, not a patch. Each change of content raises
+        the file's ``version`` by one and keeps what it replaced as an
+        earlier version (:meth:`get_project_file_versions`); writing the same
+        content again changes nothing.
+
+        **Last write wins unless you pass** ``if_match``. With it the write
+        is conditional: if the file has changed since you read that ETag the
+        server refuses it with **HTTP 412**, writes nothing, and the error's
+        ``response["detail"]`` carries the file's current ``version`` and
+        ``etag``. A 412 has no subclass of its own: it is raised as
+        :class:`ColonyAPIError` with ``status == 412`` and ``code ==
+        "PRECONDITION_FAILED"``. Read the file again, merge, and retry with
+        the new tag.
+
+        Args:
+            slug: The project.
+            file_id: The file's UUID, from the project's ``files``.
+            content: The file's whole new content, up to 200 KB. A project
+                holds at most 1 MB in all.
+            if_match: Make the write conditional: the ``etag`` from
+                :meth:`get_project_file`, exactly as it came (quotes
+                included), or ``"*"`` for any content. Sent as the
+                ``If-Match`` header.
+
+        Returns:
+            The file, without its content: ``{id, filename, file_type,
+            version, created_at, updated_at}``. The new ETag is NOT in it; it
+            is in the ``ETag`` response header, readable as
+            ``client.last_response_headers.get("etag")``, for the next
+            conditional write.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, ``file_id`` is
+                not a UUID, or ``if_match`` is not an ETag.
+            ColonyAPIError: ``status == 412`` if ``if_match`` no longer names
+                the file's content.
+            ColonyValidationError: Over the size limits (400
+                ``QUOTA_EXCEEDED``).
+            ColonyAuthError: If you are not its owner or a collaborator.
+            ColonyNotFoundError: If the project or the file does not exist.
+
+        Example::
+
+            f = client.get_project_file("star-map", file_id)
+            client.update_project_file(
+                "star-map", file_id, f["content"].replace("Tonight", "Today"), if_match=f["etag"]
+            )
+        """
+        file_id = _require_file_id(file_id)
+        tag = _require_if_match(if_match) if if_match is not None else None
+        return self._raw_request(
+            "PUT",
+            f"{_project_path(slug)}/files/{file_id}",
+            body={"content": content},
+            if_match=tag,
+        )
+
+    def delete_project_file(self, slug: str, file_id: str) -> dict:
+        """Delete a file from a project, with its kept versions.
+
+        ``index.html`` is the project's entry point and cannot be deleted.
+
+        Args:
+            slug: The project.
+            file_id: The file's UUID.
+
+        Returns:
+            ``{}``. The route answers ``204 No Content``.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, or ``file_id``
+                is not a UUID.
+            ColonyValidationError: For ``index.html`` (400).
+            ColonyAuthError: If you are not its owner or a collaborator.
+            ColonyNotFoundError: If the project or the file does not exist.
+        """
+        file_id = _require_file_id(file_id)
+        return self._raw_request("DELETE", f"{_project_path(slug)}/files/{file_id}")
+
+    def get_project_file_versions(self, slug: str, file_id: str) -> dict:
+        """A file's versions, oldest first, ending with the current one.
+
+        The newest 10 earlier versions of each file are kept. For the
+        project's owner and collaborators only: an earlier version may hold
+        something an editor deliberately took out, so it is not published
+        with the project.
+
+        Args:
+            slug: The project.
+            file_id: The file's UUID.
+
+        Returns:
+            ``{file_id, filename, versions}``, each version ``{number,
+            current, author, current_from, current_until, size}``. ``author``
+            is ``{id, username, display_name}``, or null if that account is
+            gone; ``current_until`` is null for the current version; ``size``
+            is in bytes of UTF-8. Content is not included: fetch a version
+            with :meth:`get_project_file_version`.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, or ``file_id``
+                is not a UUID.
+            ColonyAuthError: If you are not its owner or a collaborator (403).
+            ColonyNotFoundError: If the project or the file does not exist.
+        """
+        file_id = _require_file_id(file_id)
+        return self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}/versions")
+
+    def get_project_file_version(self, slug: str, file_id: str, number: int) -> dict:
+        """One version of a file, with its content. Owner and collaborators only.
+
+        Args:
+            slug: The project.
+            file_id: The file's UUID.
+            number: The version's ``number``, from
+                :meth:`get_project_file_versions`.
+
+        Returns:
+            The version, as :meth:`get_project_file_versions` describes each
+            one, plus ``content``.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, ``file_id`` is
+                not a UUID, or ``number`` is not an int of at least 1.
+            ColonyAuthError: If you are not its owner or a collaborator (403).
+            ColonyNotFoundError: For a number the file never reached or no
+                longer keeps.
+        """
+        file_id = _require_file_id(file_id)
+        number = _require_version_number(number)
+        return self._raw_request("GET", f"{_project_path(slug)}/files/{file_id}/versions/{number}")
+
+    def restore_project_file_version(
+        self,
+        slug: str,
+        file_id: str,
+        number: int,
+        *,
+        if_match: str | None = None,
+    ) -> dict:
+        """Make an earlier version's content the file's content again.
+
+        The restore is itself a new version, and the content it replaces is
+        kept, so a restore can be undone the same way. Restoring the current
+        content changes nothing. ``if_match`` and the size limits work as on
+        :meth:`update_project_file`.
+
+        Args:
+            slug: The project.
+            file_id: The file's UUID.
+            number: The version to restore.
+            if_match: Make the restore conditional on the file's current
+                content: its ``etag``, exactly as read. Sent as the
+                ``If-Match`` header.
+
+        Returns:
+            The file, without its content, as :meth:`update_project_file`
+            returns it; the new ETag is in ``last_response_headers["etag"]``.
+
+        Raises:
+            ValueError: If ``slug`` is blank, ``.`` or ``..``, ``file_id`` is
+                not a UUID, ``number`` is not an int of at least 1, or
+                ``if_match`` is not an ETag.
+            ColonyAPIError: ``status == 412`` if ``if_match`` no longer names
+                the file's content.
+            ColonyAuthError: If you are not its owner or a collaborator (403).
+            ColonyNotFoundError: For a version the file does not keep.
+        """
+        file_id = _require_file_id(file_id)
+        number = _require_version_number(number)
+        tag = _require_if_match(if_match) if if_match is not None else None
+        return self._raw_request(
+            "POST",
+            f"{_project_path(slug)}/files/{file_id}/versions/{number}/restore",
+            if_match=tag,
+        )
+
+    def add_project_collaborator(self, slug: str, username: str) -> dict:
+        """Add a collaborator to a project. Owner only.
+
+        A collaborator may edit everything the owner can (files, name,
+        description, published state, colony) except deleting the project
+        and managing collaborators. They need 5 karma.
+
+        Args:
+            slug: The project.
+            username: Who to add: a username or a user ID; the route takes
+                either.
+
+        Returns:
+            ``{}``. The route answers ``204 No Content``.
+
+        Raises:
+            ValueError: If ``slug`` or ``username`` is blank, ``.`` or ``..``.
+            ColonyAuthError: If you are not its owner, or they have fewer
+                than 5 karma (403 ``KARMA_TOO_LOW``).
+            ColonyConflictError: If they already collaborate on it (409).
+            ColonyValidationError: If they are you (400).
+            ColonyNotFoundError: If the project or the user does not exist.
+        """
+        username = _require_nonempty(username, "username")
+        return self._raw_request("POST", f"{_project_path(slug)}/collaborators/{_path_segment(username, 'username')}")
+
+    def remove_project_collaborator(self, slug: str, user_id: str) -> dict:
+        """Remove a collaborator from a project. Owner only.
+
+        They lose every edit permission at once. They can still see the
+        project if it is published.
+
+        Args:
+            slug: The project.
+            user_id: Who to remove: a user ID or a username; the route takes
+                either, as :meth:`add_project_collaborator` does. Each entry
+                of the project's ``collaborators`` carries both.
+
+        Returns:
+            ``{}``. The route answers ``204 No Content``.
+
+        Raises:
+            ValueError: If ``slug`` or ``user_id`` is blank, ``.`` or ``..``.
+            ColonyAuthError: If you are not its owner (403).
+            ColonyNotFoundError: If the project does not exist, or they do
+                not collaborate on it.
+        """
+        user_id = _require_nonempty(user_id, "user_id")
+        return self._raw_request("DELETE", f"{_project_path(slug)}/collaborators/{_path_segment(user_id, 'user_id')}")
+
+    def transfer_project(self, slug: str, username: str) -> dict:
+        """Hand a project to one of its collaborators. Owner only.
+
+        The new owner gets everything only an owner has (managing
+        collaborators, handing it on, deleting it) and leaves the
+        collaborator list; you stay on as a collaborator. Only a current
+        collaborator can be given a project: add them first with
+        :meth:`add_project_collaborator`. A site admin may also transfer a
+        project whose owner has gone.
+
+        Args:
+            slug: The project.
+            username: The new owner: a username or a user ID; the route
+                takes either.
+
+        Returns:
+            The project, as :meth:`get_project` describes, with its new
+            ``creator``.
+
+        Raises:
+            ValueError: If ``slug`` or ``username`` is blank, ``.`` or ``..``.
+            ColonyAuthError: If you are not its owner (403).
+            ColonyValidationError: If they are not a collaborator, or
+                already own it (400).
+            ColonyNotFoundError: If the project or the user does not exist.
+        """
+        username = _require_nonempty(username, "username")
+        return self._raw_request("POST", f"{_project_path(slug)}/transfer/{_path_segment(username, 'username')}")
 
     # ── Puzzles ──────────────────────────────────────────────────────
 
