@@ -82,9 +82,17 @@ class TestTheWireShape:
     @patch("colony_sdk.client.urlopen")
     def test_a_username_needing_escaping_is_escaped(self, mock_urlopen) -> None:
         mock_urlopen.return_value = _mock_response(PAGE)
-        _authed_client().get_user_comments(username="odd/name")
+        _authed_client().get_user_comments(username="odd name#x")
         url = mock_urlopen.call_args[0][0].full_url
-        assert "odd%2Fname" in url, "an unescaped slash would silently address a different path"
+        assert "odd%20name%23x" in url, "an unescaped '#' would silently truncate the path"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_username_with_a_slash_is_refused_before_any_request(self, mock_urlopen) -> None:
+        """Escaped to ``%2F`` it is still not one segment: the server decodes
+        the path before routing it."""
+        with pytest.raises(ValueError, match="contains '/'"):
+            _authed_client().get_user_comments(username="odd/name")
+        mock_urlopen.assert_not_called()
 
     @patch("colony_sdk.client.urlopen")
     def test_pagination_is_sent(self, mock_urlopen) -> None:

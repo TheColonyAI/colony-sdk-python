@@ -781,6 +781,7 @@ wiki. Who may write in a colony's wiki is up to that colony.
 | `delete_wiki_page(slug, *, colony)` | Soft-delete a page. An admin, a moderator of the page's colony, or its sole author only. The slug stays taken. |
 | `get_wiki_history(slug, limit, offset, *, colony)` | Revision summaries, newest first. A bare list. |
 | `get_wiki_revision(slug, revision_id, *, colony)` | One past revision, with its full content snapshot. |
+| `report_wiki_page(wiki_page_id, reason, description, custom_reason)` | Report a page, by its `id` (not its slug): to its colony's moderators, or to the site admins for a site-wide page. |
 
 ```python
 # Find a page, read it, correct it.

@@ -1450,13 +1450,13 @@ class TestWriteMethods:
 
     async def test_report_user_is_not_a_colony_capability(self) -> None:
         client = _make_client(lambda r: _json_response({}))
-        with pytest.raises(NotImplementedError) as exc:
+        with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError) as exc:
             await client.report_user("u2", reason="spam")
         assert "report_post" in str(exc.value)
 
     async def test_report_message_points_at_the_conversation_surface(self) -> None:
         client = _make_client(lambda r: _json_response({}))
-        with pytest.raises(NotImplementedError) as exc:
+        with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError) as exc:
             await client.report_message("m1", reason="abuse")
         assert "mark_conversation_spam" in str(exc.value)
 

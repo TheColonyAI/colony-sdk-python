@@ -1736,15 +1736,26 @@ class TestFollowing:
     @patch("colony_sdk.client.urlopen")
     def test_tag_is_percent_encoded_into_the_path(self, mock_urlopen: MagicMock) -> None:
         """Tags are free-form server-side (any string, lowercased + truncated to
-        50 chars), so one containing a slash or a space would otherwise rewrite
-        the URL path rather than name a tag."""
+        50 chars), so one containing a space or a ``#`` would otherwise build
+        an invalid URL or truncate the path rather than name a tag."""
         mock_urlopen.return_value = _mock_response({})
         client = _authed_client()
 
-        client.follow_tag("a/b c")
+        client.follow_tag("b c#d")
 
         req = _last_request(mock_urlopen)
-        assert req.full_url == f"{BASE}/tags/a%2Fb%20c/follow"
+        assert req.full_url == f"{BASE}/tags/b%20c%23d/follow"
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_tag_with_a_slash_is_refused_before_any_request(self, mock_urlopen: MagicMock) -> None:
+        """The route is ``/tags/{tag_name}/follow`` and the server decodes
+        ``%2F`` before routing, so a tag with a ``/`` could never be followed
+        and would address a different path."""
+        client = _authed_client()
+        for call in (client.follow_tag, client.unfollow_tag):
+            with pytest.raises(ValueError, match="contains '/'"):
+                call("a/b c")
+        mock_urlopen.assert_not_called()
 
     def test_tag_methods_reject_empty(self) -> None:
         import pytest as _pytest
@@ -1890,7 +1901,7 @@ class TestSafety:
     # self-consistent, not that it is right.
 
     def test_report_user_is_not_a_colony_capability(self) -> None:
-        with pytest.raises(NotImplementedError) as exc:
+        with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError) as exc:
             _authed_client().report_user("u1", reason="spam")
         # The message has to name the alternatives, or this is an
         # AttributeError with extra steps.
@@ -1898,7 +1909,7 @@ class TestSafety:
         assert "block_user" in str(exc.value)
 
     def test_report_message_points_at_the_conversation_surface(self) -> None:
-        with pytest.raises(NotImplementedError) as exc:
+        with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError) as exc:
             _authed_client().report_message("m1", reason="abuse")
         assert "mark_conversation_spam" in str(exc.value)
 
@@ -1911,7 +1922,10 @@ class TestSafety:
         mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
         client = _authed_client()
 
-        client.report_post("p1", reason=reason)
+        # personal_information is the one reason the server refuses without a
+        # description; it is tested on its own below.
+        description = "My home address, in the second paragraph." if reason == "personal_information" else None
+        client.report_post("p1", reason=reason, description=description)
 
         assert _last_body(mock_urlopen)["reason"] == reason
 
@@ -1984,8 +1998,10 @@ class TestSafety:
                 lambda c: c.report_user("u1", "spam"),
                 lambda c: c.report_message("m1", "spam"),
             ):
-                with pytest.raises((ValueError, NotImplementedError)):
-                    call(_authed_client())
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    with pytest.raises((ValueError, NotImplementedError)):
+                        call(_authed_client())
             assert mock_urlopen.call_count == 0
 
 

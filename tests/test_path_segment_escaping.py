@@ -91,7 +91,6 @@ class TestPathSegmentHelper:
         [
             ("bob smith", "bob%20smith"),
             ("bob#admin", "bob%23admin"),
-            ("a/b", "a%2Fb"),
             ("a?b", "a%3Fb"),
             ("100%", "100%25"),
             ("café", "caf%C3%A9"),
@@ -100,14 +99,17 @@ class TestPathSegmentHelper:
     def test_escapes_the_characters_that_break_a_path(self, raw: str, expected: str) -> None:
         assert _path_segment(raw) == expected
 
-    def test_the_separator_is_NOT_preserved(self) -> None:
-        """Deliberately unlike the vault's ``safe="/"``.
+    def test_the_separator_is_refused(self) -> None:
+        """Deliberately unlike the vault's ``path=True``.
 
         A vault filename may contain ``/`` because the vault has folders.
         A username with a ``/`` in it is a different path, not a nested
-        one, so here the separator must be encoded.
+        one. Encoding it as ``%2F`` (what this helper did until 2026-10-24)
+        is not enough, because the server decodes the path before routing
+        it, so the separator is refused.
         """
-        assert _path_segment("logs/day") == "logs%2Fday"
+        with pytest.raises(ValueError, match="contains '/'"):
+            _path_segment("logs/day")
 
     @pytest.mark.parametrize(
         "value",
