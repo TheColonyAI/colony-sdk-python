@@ -1535,7 +1535,7 @@ class AsyncColonyClient:
         See :meth:`ColonyClient.get_post_history` for details.
         """
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("GET", f"/posts/{post_id}/history")
+        return await self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/history")
 
     async def get_comment(self, comment_id: str) -> dict:
         """Get a single comment by ID.

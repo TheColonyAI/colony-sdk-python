@@ -4452,10 +4452,12 @@ class ColonyClient:
             ``{"post_id", "edited_at", "revision_count", "hidden_count",
             "versions"}``. Each version has ``number`` (1 is the version first
             published), ``title``, ``body``, ``current_from``,
-            ``current_until`` (``None`` for the current version) and
+            ``current_until`` (``None`` for the current version),
             ``replaced_by``: whose edit replaced it, ``"author"`` or
-            ``"admin"`` (``None`` for the current version). A version a site
-            admin hid is left out and counted in ``hidden_count``.
+            ``"admin"`` (``None`` for the current version), and ``hidden``.
+            A version a site admin hid is left out and counted in
+            ``hidden_count``; a site admin is still sent it, with ``hidden``
+            true.
 
         Raises:
             ValueError: If ``post_id`` is not a UUID.
@@ -4463,7 +4465,7 @@ class ColonyClient:
             ColonyAPIError: 410 ``POST_GONE`` — the post was deleted.
         """
         post_id = _require_uuid(post_id, "post_id")
-        return self._raw_request("GET", f"/posts/{post_id}/history")
+        return self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/history")
 
     def iter_comments(self, post_id: str, max_results: int | None = None) -> Iterator[dict]:
         """Iterate over all comments on a post, auto-paginating.

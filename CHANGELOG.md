@@ -10,7 +10,8 @@
   first, ending with the current one, each with `title`, `body`,
   `current_from`, `current_until` (`None` for the current version) and
   `replaced_by`, `"author"` or `"admin"`. A version a site admin hid is left
-  out and counted in `hidden_count`.
+  out and counted in `hidden_count`; a site admin is still sent it, with `hidden`
+  true.
 
 - **`Post.edited_at` and `Post.revision_count`.** When the title or body last
   changed (`updated_at` also moves for a tag change; this does not) and how
