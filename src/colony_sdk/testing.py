@@ -34,6 +34,7 @@ from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
     _check_path_segment,
+    _deprecated_report_shim,
     _renamed_kwarg,
     _require_colony_name,
     _require_difficulty,
@@ -412,6 +413,7 @@ _DEFAULTS: dict[str, Any] = {
     "report_post": {"id": "mock-report-id", "status": "pending"},
     "report_comment": {"id": "mock-report-id", "status": "pending"},
     "report_project": {"id": "mock-report-id", "status": "pending"},
+    "report_wiki_page": {"id": "mock-report-id", "status": "pending"},
     "list_claims": [
         {
             "id": "mock-claim-id",
@@ -623,8 +625,8 @@ def _optional_colony_name(colony: str | None) -> str | None:
 
 
 def _project_slug_arg(slug: str) -> str:
-    """The real client's check on an existing project's slug: not blank, and
-    not ``.`` or ``..``, which cannot be one path segment."""
+    """The real client's check on an existing project's slug: not blank, not
+    ``.`` or ``..``, and no ``/``, none of which can be one path segment."""
     return _check_path_segment(_require_nonempty(slug, "slug"), "slug")
 
 
@@ -1899,10 +1901,20 @@ class MockColonyClient:
     # double was actively reporting the bug as working.
 
     def report_user(self, user_id: str, reason: str) -> dict:
-        raise NotImplementedError(_NO_USER_REPORT_TARGET)
+        """Always raises ``NotImplementedError``, as the real clients do.
+
+        .. deprecated::
+            The platform has no user reports. Warns, then raises.
+        """
+        raise _deprecated_report_shim("report_user", _NO_USER_REPORT_TARGET)
 
     def report_message(self, message_id: str, reason: str) -> dict:
-        raise NotImplementedError(_NO_MESSAGE_REPORT_TARGET)
+        """Always raises ``NotImplementedError``, as the real clients do.
+
+        .. deprecated::
+            The platform has no message reports. Warns, then raises.
+        """
+        raise _deprecated_report_shim("report_message", _NO_MESSAGE_REPORT_TARGET)
 
     def report_post(
         self,
@@ -1911,7 +1923,7 @@ class MockColonyClient:
         description: str | None = None,
         custom_reason: str | None = None,
     ) -> dict:
-        _require_report_reason(reason, custom_reason=custom_reason)
+        _require_report_reason(reason, custom_reason=custom_reason, description=description)
         return self._respond(
             "report_post",
             {
@@ -1929,11 +1941,29 @@ class MockColonyClient:
         description: str | None = None,
         custom_reason: str | None = None,
     ) -> dict:
-        _require_report_reason(reason, custom_reason=custom_reason)
+        _require_report_reason(reason, custom_reason=custom_reason, description=description)
         return self._respond(
             "report_comment",
             {
                 "comment_id": comment_id,
+                "reason": reason,
+                "description": description,
+                "custom_reason": custom_reason,
+            },
+        )
+
+    def report_wiki_page(
+        self,
+        wiki_page_id: str,
+        reason: str,
+        description: str | None = None,
+        custom_reason: str | None = None,
+    ) -> dict:
+        _require_report_reason(reason, custom_reason=custom_reason, description=description)
+        return self._respond(
+            "report_wiki_page",
+            {
+                "wiki_page_id": wiki_page_id,
                 "reason": reason,
                 "description": description,
                 "custom_reason": custom_reason,
@@ -1946,7 +1976,7 @@ class MockColonyClient:
         reason: str,
         description: str | None = None,
     ) -> dict:
-        _require_report_reason(reason, custom_reason=None)
+        _require_report_reason(reason, custom_reason=None, description=description)
         return self._respond(
             "report_project",
             {"project_id": project_id, "reason": reason, "description": description},

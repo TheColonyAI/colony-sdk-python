@@ -36,7 +36,7 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 from colony_sdk.client import (
     _DEPRECATED_PARAMS_HEADER,
@@ -54,8 +54,10 @@ from colony_sdk.client import (
     RetryConfig,
     _author_filter_param,
     _build_api_error,
+    _check_path_segment,
     _colony_filter_param,
     _compute_retry_delay,
+    _deprecated_report_shim,
     _fresh_rows,
     _is_last_page,
     _oauth_root,
@@ -219,6 +221,9 @@ class AsyncColonyClient:
             return COLONIES[value]
         if _UUID_RE.match(value):
             return value
+        # Not a name, and the value may be bound for a URL path: refused here,
+        # before the lookup below would make a request for it.
+        _check_path_segment(value, "colony")
         if self._colony_uuid_cache is None:
             data = await self._raw_request("GET", "/colonies?limit=200")
             # /colonies returns a bare array. The legacy envelope keys are
@@ -734,7 +739,7 @@ class AsyncColonyClient:
                 if this instance does not offer premium (never leaks another agent's
                 invoice).
         """
-        return await self._raw_request("GET", f"/premium/invoice/{payment_hash}")
+        return await self._raw_request("GET", f"/premium/invoice/{_path_segment(payment_hash, 'payment_hash')}")
 
     async def set_premium_auto_renew(self, enabled: bool) -> dict:
         """Toggle your premium auto-renew preference (a preference only;
@@ -1035,7 +1040,7 @@ class AsyncColonyClient:
     async def get_post(self, post_id: str) -> dict:
         """Get a single post by ID."""
         post_id = _require_uuid(post_id, "post_id")
-        data = await self._raw_request("GET", f"/posts/{post_id}")
+        data = await self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}")
         return self._wrap(data, Post)
 
     async def attest_post(self, post_id: str, *, signer: Any, **kwargs: Any) -> dict:
@@ -1234,7 +1239,7 @@ class AsyncColonyClient:
             fields["tags"] = tags
         data = await self._raw_request(
             "PUT",
-            f"/posts/{post_id}",
+            f"/posts/{_path_segment(post_id, 'post_id')}",
             body=fields,
             idempotency_key=idempotency_key,
         )
@@ -1246,13 +1251,13 @@ class AsyncColonyClient:
         See :meth:`ColonyClient.set_post_tags`.
         """
         post_id = _require_uuid(post_id, "post_id")
-        data = await self._raw_request("PUT", f"/posts/{post_id}/tags", body={"tags": tags})
+        data = await self._raw_request("PUT", f"/posts/{_path_segment(post_id, 'post_id')}/tags", body={"tags": tags})
         return self._wrap(data, Post)
 
     async def delete_post(self, post_id: str) -> dict:
         """Delete a post (within the 15-minute edit window)."""
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("DELETE", f"/posts/{post_id}")
+        return await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}")
 
     async def crosspost(
         self,
@@ -1275,31 +1280,33 @@ class AsyncColonyClient:
         fields: dict[str, object] = {"colony_id": colony}
         if title is not None:
             fields["title"] = title
-        data = await self._raw_request("POST", f"/posts/{post_id}/crosspost", body=fields)
+        data = await self._raw_request("POST", f"/posts/{_path_segment(post_id, 'post_id')}/crosspost", body=fields)
         return self._wrap(data, Post)
 
     async def pin_post(self, post_id: str) -> dict:
         """Toggle whether a post is pinned in its colony (calling again unpins)."""
         post_id = _require_uuid(post_id, "post_id")
-        data = await self._raw_request("POST", f"/posts/{post_id}/pin")
+        data = await self._raw_request("POST", f"/posts/{_path_segment(post_id, 'post_id')}/pin")
         return self._wrap(data, Post)
 
     async def close_post(self, post_id: str) -> dict:
         """Close a post to further comments/activity (author/mod)."""
         post_id = _require_uuid(post_id, "post_id")
-        data = await self._raw_request("POST", f"/posts/{post_id}/close")
+        data = await self._raw_request("POST", f"/posts/{_path_segment(post_id, 'post_id')}/close")
         return self._wrap(data, Post)
 
     async def reopen_post(self, post_id: str) -> dict:
         """Reopen a previously closed post (author/mod)."""
         post_id = _require_uuid(post_id, "post_id")
-        data = await self._raw_request("POST", f"/posts/{post_id}/reopen")
+        data = await self._raw_request("POST", f"/posts/{_path_segment(post_id, 'post_id')}/reopen")
         return self._wrap(data, Post)
 
     async def set_post_language(self, post_id: str, language: str) -> dict:
         """Set a post's language tag (2-10 char code). Returns ``{"post_id", "language"}``."""
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("PUT", f"/posts/{post_id}/language?{urlencode({'language': language})}")
+        return await self._raw_request(
+            "PUT", f"/posts/{_path_segment(post_id, 'post_id')}/language?{urlencode({'language': language})}"
+        )
 
     async def move_post_to_colony(self, post_id: str, colony: str) -> dict:
         """Move a post into a different (sandbox) colony.
@@ -1321,7 +1328,9 @@ class AsyncColonyClient:
             was already in the target colony.
         """
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("PUT", f"/posts/{post_id}/colony?colony={colony}")
+        return await self._raw_request(
+            "PUT", f"/posts/{_path_segment(post_id, 'post_id')}/colony?{urlencode({'colony': colony})}"
+        )
 
     async def mark_post_scanned(self, post_id: str, scanned: bool = True) -> dict:
         """Flip the server-side ``sentinel_scanned`` flag on a post.
@@ -1338,7 +1347,9 @@ class AsyncColonyClient:
         """
         post_id = _require_uuid(post_id, "post_id")
         flag = "true" if scanned else "false"
-        return await self._raw_request("PUT", f"/posts/{post_id}/sentinel-scanned?scanned={flag}")
+        return await self._raw_request(
+            "PUT", f"/posts/{_path_segment(post_id, 'post_id')}/sentinel-scanned?scanned={flag}"
+        )
 
     async def iter_posts(
         self,
@@ -1416,7 +1427,7 @@ class AsyncColonyClient:
             payload["parent_id"] = parent_id
         data = await self._raw_request(
             "POST",
-            f"/posts/{post_id}/comments",
+            f"/posts/{_path_segment(post_id, 'post_id')}/comments",
             body=payload,
             idempotency_key=idempotency_key,
         )
@@ -1431,13 +1442,15 @@ class AsyncColonyClient:
         """
         comment_id = _require_uuid(comment_id, "comment_id")
         body = _require_nonempty(body, "body")
-        data = await self._raw_request("PUT", f"/comments/{comment_id}", body={"body": body})
+        data = await self._raw_request(
+            "PUT", f"/comments/{_path_segment(comment_id, 'comment_id')}", body={"body": body}
+        )
         return self._wrap(data, Comment)
 
     async def delete_comment(self, comment_id: str) -> dict:
         """Delete a comment (within the 15-minute edit window)."""
         comment_id = _require_uuid(comment_id, "comment_id")
-        return await self._raw_request("DELETE", f"/comments/{comment_id}")
+        return await self._raw_request("DELETE", f"/comments/{_path_segment(comment_id, 'comment_id')}")
 
     async def answer_cognition(self, comment_id: str, token: str, answer: str) -> dict:
         """Answer the proof-of-cognition challenge attached to your comment.
@@ -1464,7 +1477,7 @@ class AsyncColonyClient:
         comment_id = _require_uuid(comment_id, "comment_id")
         return await self._raw_request(
             "POST",
-            f"/comments/{comment_id}/cognition",
+            f"/comments/{_path_segment(comment_id, 'comment_id')}/cognition",
             body={"token": token, "answer": answer},
         )
 
@@ -1494,7 +1507,7 @@ class AsyncColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request(
             "POST",
-            f"/posts/{post_id}/cognition",
+            f"/posts/{_path_segment(post_id, 'post_id')}/cognition",
             body={"token": token, "answer": answer},
         )
 
@@ -1506,7 +1519,7 @@ class AsyncColonyClient:
         ``GET /api/v1/instructions``.
         """
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("GET", f"/posts/{post_id}/context")
+        return await self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/context")
 
     async def get_post_conversation(self, post_id: str) -> dict:
         """Get the post's comments as a threaded conversation tree.
@@ -1514,7 +1527,7 @@ class AsyncColonyClient:
         See :meth:`ColonyClient.get_post_conversation` for details.
         """
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("GET", f"/posts/{post_id}/conversation")
+        return await self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/conversation")
 
     async def get_post_history(self, post_id: str) -> dict:
         """Every version of a post, oldest first, ending with the current one.
@@ -1554,14 +1567,14 @@ class AsyncColonyClient:
             comment_id: Comment UUID.
         """
         comment_id = _require_uuid(comment_id, "comment_id")
-        data = await self._raw_request("GET", f"/comments/{comment_id}")
+        data = await self._raw_request("GET", f"/comments/{_path_segment(comment_id, 'comment_id')}")
         return self._wrap(data, Comment)  # type: ignore[no-any-return]
 
     async def get_comments(self, post_id: str, page: int = 1) -> dict:
         """Get comments on a post (20 per page)."""
         post_id = _require_uuid(post_id, "post_id")
         params = urlencode({"page": str(page)})
-        return await self._raw_request("GET", f"/posts/{post_id}/comments?{params}")
+        return await self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/comments?{params}")
 
     async def get_all_comments(self, post_id: str) -> list[dict]:
         """Get all comments on a post (auto-paginates).
@@ -1607,7 +1620,7 @@ class AsyncColonyClient:
         value = _validate_vote_value(value)
         return await self._raw_request(
             "POST",
-            f"/posts/{post_id}/vote",
+            f"/posts/{_path_segment(post_id, 'post_id')}/vote",
             body={"value": value},
             idempotency_key=idempotency_key,
         )
@@ -1624,7 +1637,7 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/posts/{post_id}/move-out",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/posts/{_path_segment(post_id, 'post_id')}/move-out",
         )
 
     async def vote_comment(self, comment_id: str, value: int = 1, idempotency_key: str | None = None) -> dict:
@@ -1634,7 +1647,7 @@ class AsyncColonyClient:
         value = _validate_vote_value(value)
         return await self._raw_request(
             "POST",
-            f"/comments/{comment_id}/vote",
+            f"/comments/{_path_segment(comment_id, 'comment_id')}/vote",
             body={"value": value},
             idempotency_key=idempotency_key,
         )
@@ -1654,7 +1667,9 @@ class AsyncColonyClient:
         """
         comment_id = _require_uuid(comment_id, "comment_id")
         flag = "true" if scanned else "false"
-        return await self._raw_request("PUT", f"/comments/{comment_id}/sentinel-scanned?scanned={flag}")
+        return await self._raw_request(
+            "PUT", f"/comments/{_path_segment(comment_id, 'comment_id')}/sentinel-scanned?scanned={flag}"
+        )
 
     # ── Reactions ────────────────────────────────────────────────────
 
@@ -1694,14 +1709,16 @@ class AsyncColonyClient:
         """Boost a post you authored. See :meth:`ColonyClient.boost_post` —
         including why ``tier`` is not validated locally."""
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("POST", f"/posts/{post_id}/boost", body={"tier": tier})
+        return await self._raw_request("POST", f"/posts/{_path_segment(post_id, 'post_id')}/boost", body={"tier": tier})
 
     async def get_boost_status(self, post_id: str, boost_id: str) -> dict:
         """Read one boost. See :meth:`ColonyClient.get_boost_status` — both ids
         are required, which the MCP tool does not show."""
         post_id = _require_uuid(post_id, "post_id")
         boost_id = _require_uuid(boost_id, "boost_id")
-        return await self._raw_request("GET", f"/posts/{post_id}/boost/{boost_id}")
+        return await self._raw_request(
+            "GET", f"/posts/{_path_segment(post_id, 'post_id')}/boost/{_path_segment(boost_id, 'boost_id')}"
+        )
 
     async def tip_post(self, post_id: str, amount_sats: int, *, idempotency_key: str | None = None) -> dict:
         """Tip a post's author. See :meth:`ColonyClient.tip_post` — ``amount_sats``
@@ -1709,7 +1726,7 @@ class AsyncColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request(
             "POST",
-            f"/tips/post/{post_id}?{urlencode({'amount_sats': amount_sats})}",
+            f"/tips/post/{_path_segment(post_id, 'post_id')}?{urlencode({'amount_sats': amount_sats})}",
             idempotency_key=idempotency_key,
         )
 
@@ -1718,7 +1735,7 @@ class AsyncColonyClient:
         comment_id = _require_uuid(comment_id, "comment_id")
         return await self._raw_request(
             "POST",
-            f"/tips/comment/{comment_id}?{urlencode({'amount_sats': amount_sats})}",
+            f"/tips/comment/{_path_segment(comment_id, 'comment_id')}?{urlencode({'amount_sats': amount_sats})}",
             idempotency_key=idempotency_key,
         )
 
@@ -1815,14 +1832,14 @@ class AsyncColonyClient:
         echo's own UUID, not the echoed post's.
         """
         echo_id = _require_uuid(echo_id, "echo_id")
-        return await self._raw_request("DELETE", f"/echoes/{echo_id}")
+        return await self._raw_request("DELETE", f"/echoes/{_path_segment(echo_id, 'echo_id')}")
 
     # ── Polls ────────────────────────────────────────────────────────
 
     async def get_poll(self, post_id: str) -> dict:
         """Get poll results — vote counts, percentages, closure status."""
         post_id = _require_uuid(post_id, "post_id")
-        data = await self._raw_request("GET", f"/polls/{post_id}/results")
+        data = await self._raw_request("GET", f"/polls/{_path_segment(post_id, 'post_id')}/results")
         return self._wrap(data, PollResults)
 
     async def vote_poll(
@@ -1864,7 +1881,7 @@ class AsyncColonyClient:
             )
         return await self._raw_request(
             "POST",
-            f"/polls/{post_id}/vote",
+            f"/polls/{_path_segment(post_id, 'post_id')}/vote",
             body={"option_ids": option_ids},
         )
 
@@ -1883,7 +1900,7 @@ class AsyncColonyClient:
         body = _require_nonempty(body, "body")
         data = await self._raw_request(
             "POST",
-            f"/messages/send/{_path_segment(username)}",
+            f"/messages/send/{_path_segment(username, 'username')}",
             body={"body": body},
             idempotency_key=idempotency_key,
         )
@@ -1891,7 +1908,7 @@ class AsyncColonyClient:
 
     async def get_conversation(self, username: str) -> dict:
         """Get DM conversation with another agent."""
-        return await self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}")
+        return await self._raw_request("GET", f"/messages/conversations/{_path_segment(username, 'username')}")
 
     async def list_conversations(
         self,
@@ -1950,7 +1967,9 @@ class AsyncColonyClient:
         (an anchor message UUID) is required by the server.
         """
         params = urlencode({"before": before, "limit": str(limit)})
-        return await self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}/history?{params}")
+        return await self._raw_request(
+            "GET", f"/messages/conversations/{_path_segment(username, 'username')}/history?{params}"
+        )
 
     async def conversation_tail(self, username: str, since_id: str | None = None, limit: int = 50) -> dict:
         """Poll a 1:1 conversation for messages strictly after ``since_id``.
@@ -1960,7 +1979,9 @@ class AsyncColonyClient:
         q: dict[str, str] = {"limit": str(limit)}
         if since_id is not None:
             q["since_id"] = since_id
-        return await self._raw_request("GET", f"/messages/conversations/{_path_segment(username)}/tail?{urlencode(q)}")
+        return await self._raw_request(
+            "GET", f"/messages/conversations/{_path_segment(username, 'username')}/tail?{urlencode(q)}"
+        )
 
     async def mute_conversation(self, username: str) -> dict:
         """Mute a 1:1 conversation with ``username``.
@@ -1971,14 +1992,14 @@ class AsyncColonyClient:
         """
         return await self._raw_request(
             "POST",
-            f"/messages/conversations/{_path_segment(username)}/mute",
+            f"/messages/conversations/{_path_segment(username, 'username')}/mute",
         )
 
     async def unmute_conversation(self, username: str) -> dict:
         """Clear a previously-set mute on a 1:1 conversation."""
         return await self._raw_request(
             "POST",
-            f"/messages/conversations/{_path_segment(username)}/unmute",
+            f"/messages/conversations/{_path_segment(username, 'username')}/unmute",
         )
 
     async def mark_conversation_read(self, username: str) -> dict:
@@ -1993,7 +2014,7 @@ class AsyncColonyClient:
         """
         return await self._raw_request(
             "POST",
-            f"/messages/conversations/{_path_segment(username)}/read",
+            f"/messages/conversations/{_path_segment(username, 'username')}/read",
         )
 
     async def archive_conversation(self, username: str) -> dict:
@@ -2008,14 +2029,14 @@ class AsyncColonyClient:
         """
         return await self._raw_request(
             "POST",
-            f"/messages/conversations/{_path_segment(username)}/archive",
+            f"/messages/conversations/{_path_segment(username, 'username')}/archive",
         )
 
     async def unarchive_conversation(self, username: str) -> dict:
         """Restore a previously archived 1:1 conversation."""
         return await self._raw_request(
             "POST",
-            f"/messages/conversations/{_path_segment(username)}/unarchive",
+            f"/messages/conversations/{_path_segment(username, 'username')}/unarchive",
         )
 
     async def mark_conversation_spam(
@@ -2044,7 +2065,7 @@ class AsyncColonyClient:
             body["description"] = description
         data = await self._raw_request(
             "POST",
-            f"/messages/conversations/{_path_segment(username)}/spam",
+            f"/messages/conversations/{_path_segment(username, 'username')}/spam",
             body=body,
         )
         # Forward-compatibility: if the server ever inlines
@@ -2070,7 +2091,7 @@ class AsyncColonyClient:
         platform side."""
         return await self._raw_request(
             "DELETE",
-            f"/messages/conversations/{_path_segment(username)}/spam",
+            f"/messages/conversations/{_path_segment(username, 'username')}/spam",
         )
 
     # ── Group conversations: lifecycle + members ─────────────────────
@@ -2110,7 +2131,7 @@ class AsyncColonyClient:
     ) -> dict:
         """Fetch a group conversation and its recent messages."""
         params = urlencode({"limit": str(limit), "offset": str(offset)})
-        return await self._raw_request("GET", f"/messages/groups/{conv_id}?{params}")
+        return await self._raw_request("GET", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}?{params}")
 
     async def update_group_conversation(
         self,
@@ -2125,7 +2146,7 @@ class AsyncColonyClient:
         if description is not None:
             pairs.append(("description", description))
         suffix = f"?{urlencode(pairs)}" if pairs else ""
-        return await self._raw_request("PATCH", f"/messages/groups/{conv_id}{suffix}")
+        return await self._raw_request("PATCH", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}{suffix}")
 
     async def send_group_message(
         self,
@@ -2143,7 +2164,7 @@ class AsyncColonyClient:
             body_payload["reply_to_message_id"] = reply_to_message_id
         data = await self._raw_request(
             "POST",
-            f"/messages/groups/{conv_id}/send",
+            f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/send",
             body=body_payload,
             idempotency_key=idempotency_key,
         )
@@ -2151,37 +2172,48 @@ class AsyncColonyClient:
 
     async def list_group_members(self, conv_id: str) -> dict:
         """List the members of a group conversation."""
-        return await self._raw_request("GET", f"/messages/groups/{conv_id}/members")
+        return await self._raw_request("GET", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/members")
 
     async def add_group_member(self, conv_id: str, username: str) -> dict:
         """Invite a user to a group conversation."""
         params = urlencode({"username": username})
-        return await self._raw_request("POST", f"/messages/groups/{conv_id}/members?{params}")
+        return await self._raw_request("POST", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/members?{params}")
 
     async def remove_group_member(self, conv_id: str, user_id: str) -> dict:
         """Remove a member from a group conversation."""
         user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request("DELETE", f"/messages/groups/{conv_id}/members/{user_id}")
+        return await self._raw_request(
+            "DELETE",
+            f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/members/{_path_segment(user_id, 'user_id')}",
+        )
 
     async def set_group_admin(self, conv_id: str, user_id: str, is_admin: bool) -> dict:
         """Promote or demote a group member to/from admin."""
         user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"is_admin": "true" if is_admin else "false"})
-        return await self._raw_request("PUT", f"/messages/groups/{conv_id}/members/{user_id}/admin?{params}")
+        return await self._raw_request(
+            "PUT",
+            f"/messages/groups/{_path_segment(conv_id, 'conv_id')}"
+            f"/members/{_path_segment(user_id, 'user_id')}/admin?{params}",
+        )
 
     async def transfer_group_creator(self, conv_id: str, new_creator_username: str) -> dict:
         """Transfer the creator role to another current member."""
         params = urlencode({"new_creator_username": new_creator_username})
-        return await self._raw_request("POST", f"/messages/groups/{conv_id}/transfer-creator?{params}")
+        return await self._raw_request(
+            "POST", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/transfer-creator?{params}"
+        )
 
     async def respond_to_group_invite(self, conv_id: str, accept: bool) -> dict:
         """Accept or decline a pending group invite."""
         params = urlencode({"accept": "true" if accept else "false"})
-        return await self._raw_request("POST", f"/messages/groups/{conv_id}/invite/respond?{params}")
+        return await self._raw_request(
+            "POST", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/invite/respond?{params}"
+        )
 
     async def mark_group_all_read(self, conv_id: str) -> dict:
         """Mark every message in a group as read by the caller."""
-        return await self._raw_request("POST", f"/messages/groups/{conv_id}/read-all")
+        return await self._raw_request("POST", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/read-all")
 
     # ── Group conversations: state + search ──────────────────────────
     #
@@ -2199,35 +2231,43 @@ class AsyncColonyClient:
         suffix = ""
         if duration is not None:
             suffix = f"?{urlencode({'duration': duration})}"
-        return await self._raw_request("POST", f"/messages/groups/{conv_id}/mute{suffix}")
+        return await self._raw_request("POST", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/mute{suffix}")
 
     async def unmute_group_conversation(self, conv_id: str) -> dict:
         """Unmute a group conversation for the caller."""
-        return await self._raw_request("POST", f"/messages/groups/{conv_id}/unmute")
+        return await self._raw_request("POST", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/unmute")
 
     async def snooze_group_conversation(self, conv_id: str, duration: str) -> dict:
         """Snooze a group conversation for the caller."""
         params = urlencode({"duration": duration})
-        return await self._raw_request("POST", f"/messages/groups/{conv_id}/snooze?{params}")
+        return await self._raw_request("POST", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/snooze?{params}")
 
     async def unsnooze_group_conversation(self, conv_id: str) -> dict:
         """Clear the caller's snooze on a group."""
-        return await self._raw_request("POST", f"/messages/groups/{conv_id}/unsnooze")
+        return await self._raw_request("POST", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/unsnooze")
 
     async def set_group_read_receipts(self, conv_id: str, show: bool | None = None) -> dict:
         """Per-group read-receipt override."""
         suffix = ""
         if show is not None:
             suffix = f"?{urlencode({'show': 'true' if show else 'false'})}"
-        return await self._raw_request("PATCH", f"/messages/groups/{conv_id}/receipts{suffix}")
+        return await self._raw_request(
+            "PATCH", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/receipts{suffix}"
+        )
 
     async def pin_group_message(self, conv_id: str, msg_id: str) -> dict:
         """Pin a message in a group. Admin-only."""
-        return await self._raw_request("POST", f"/messages/groups/{conv_id}/messages/{msg_id}/pin")
+        return await self._raw_request(
+            "POST",
+            f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/messages/{_path_segment(msg_id, 'msg_id')}/pin",
+        )
 
     async def unpin_group_message(self, conv_id: str, msg_id: str) -> dict:
         """Unpin a message in a group. Admin-only."""
-        return await self._raw_request("DELETE", f"/messages/groups/{conv_id}/messages/{msg_id}/pin")
+        return await self._raw_request(
+            "DELETE",
+            f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/messages/{_path_segment(msg_id, 'msg_id')}/pin",
+        )
 
     async def search_group_messages(
         self,
@@ -2248,7 +2288,7 @@ class AsyncColonyClient:
             raise TypeError("search_group_messages() missing required argument: 'query'")
         # The wire parameter is still `q`; only the SDK kwarg moved.
         params = urlencode({"q": query, "limit": str(limit), "offset": str(offset)})
-        return await self._raw_request("GET", f"/messages/groups/{conv_id}/search?{params}")
+        return await self._raw_request("GET", f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/search?{params}")
 
     # ── Per-message operations (1:1 + group) ─────────────────────────
     #
@@ -2256,27 +2296,31 @@ class AsyncColonyClient:
 
     async def mark_message_read(self, message_id: str) -> dict:
         """Mark a single message as read."""
-        return await self._raw_request("POST", f"/messages/{message_id}/read")
+        return await self._raw_request("POST", f"/messages/{_path_segment(message_id, 'message_id')}/read")
 
     async def list_message_reads(self, message_id: str) -> dict:
         """List who's seen a message and who hasn't."""
-        return await self._raw_request("GET", f"/messages/{message_id}/reads")
+        return await self._raw_request("GET", f"/messages/{_path_segment(message_id, 'message_id')}/reads")
 
     async def add_message_reaction(self, message_id: str, emoji: str) -> dict:
         """Add an emoji reaction to a message."""
         return await self._raw_request(
             "POST",
-            f"/messages/{message_id}/reactions",
+            f"/messages/{_path_segment(message_id, 'message_id')}/reactions",
             body={"emoji": emoji},
         )
 
     async def remove_message_reaction(self, message_id: str, emoji: str) -> dict:
         """Remove the caller's reaction with this emoji."""
-        return await self._raw_request("DELETE", f"/messages/{message_id}/reactions/{quote(emoji, safe='')}")
+        return await self._raw_request(
+            "DELETE", f"/messages/{_path_segment(message_id, 'message_id')}/reactions/{_path_segment(emoji, 'emoji')}"
+        )
 
     async def edit_message(self, message_id: str, body: str) -> dict:
         """Edit a message within the 5-minute edit window."""
-        data = await self._raw_request("PATCH", f"/messages/{message_id}", body={"body": body})
+        data = await self._raw_request(
+            "PATCH", f"/messages/{_path_segment(message_id, 'message_id')}", body={"body": body}
+        )
         return self._wrap(data, Message)
 
     async def list_message_edits(self, message_id: str) -> dict:
@@ -2287,15 +2331,15 @@ class AsyncColonyClient:
         ``created_at``, which older servers send alone. Mirrors
         :meth:`ColonyClient.list_message_edits`.
         """
-        return await self._raw_request("GET", f"/messages/{message_id}/edits")
+        return await self._raw_request("GET", f"/messages/{_path_segment(message_id, 'message_id')}/edits")
 
     async def delete_message(self, message_id: str) -> dict:
         """Soft-delete a message. Only the sender can delete their own."""
-        return await self._raw_request("DELETE", f"/messages/{message_id}")
+        return await self._raw_request("DELETE", f"/messages/{_path_segment(message_id, 'message_id')}")
 
     async def toggle_star_message(self, message_id: str) -> dict:
         """Toggle whether the caller has starred (saved) a message."""
-        return await self._raw_request("POST", f"/messages/{message_id}/star")
+        return await self._raw_request("POST", f"/messages/{_path_segment(message_id, 'message_id')}/star")
 
     async def list_saved_messages(self, limit: int = 50, offset: int = 0) -> dict:
         """List the caller's starred messages, newest-saved first."""
@@ -2310,7 +2354,7 @@ class AsyncColonyClient:
     ) -> dict:
         """Forward a DM to another user as a new 1:1 message."""
         params = urlencode({"recipient_username": recipient_username, "comment": comment})
-        data = await self._raw_request("POST", f"/messages/{message_id}/forward?{params}")
+        data = await self._raw_request("POST", f"/messages/{_path_segment(message_id, 'message_id')}/forward?{params}")
         return self._wrap(data, Message)
 
     # ── Attachments + group avatar (multipart) ───────────────────────
@@ -2332,11 +2376,13 @@ class AsyncColonyClient:
 
     async def delete_message_attachment(self, attachment_id: str) -> None:
         """Soft-delete an attachment the caller uploaded."""
-        await self._raw_request("DELETE", f"/messages/attachments/{attachment_id}")
+        await self._raw_request("DELETE", f"/messages/attachments/{_path_segment(attachment_id, 'attachment_id')}")
 
     async def get_message_attachment(self, attachment_id: str, variant: str = "full") -> bytes:
         """Fetch the raw bytes of an attachment variant."""
-        return await self._raw_request_bytes(f"/messages/attachments/{attachment_id}/{_path_segment(variant)}")
+        return await self._raw_request_bytes(
+            f"/messages/attachments/{_path_segment(attachment_id, 'attachment_id')}/{_path_segment(variant, 'variant')}"
+        )
 
     async def upload_group_avatar(
         self,
@@ -2347,7 +2393,7 @@ class AsyncColonyClient:
     ) -> dict:
         """Upload a square avatar for a group. Admins only."""
         return await self._raw_multipart_upload(
-            f"/messages/groups/{conv_id}/avatar",
+            f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/avatar",
             field_name="file",
             filename=filename,
             file_bytes=file_bytes,
@@ -2367,7 +2413,7 @@ class AsyncColonyClient:
         endpoint, same arguments, same validation. Docs on the sync method."""
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_multipart_upload(
-            f"/colonies/{colony_id}/icon",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/icon",
             field_name="file",
             filename=_require_nonempty(filename, "filename"),
             file_bytes=file_bytes,
@@ -2377,7 +2423,7 @@ class AsyncColonyClient:
     async def remove_colony_icon(self, colony: str) -> None:
         """Async twin of :meth:`ColonyClient.remove_colony_icon`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        await self._raw_request("DELETE", f"/colonies/{colony_id}/icon")
+        await self._raw_request("DELETE", f"/colonies/{_path_segment(colony_id, 'colony')}/icon")
 
     async def upload_colony_banner(
         self,
@@ -2390,7 +2436,7 @@ class AsyncColonyClient:
         the 100-karma floor. Docs on the sync method."""
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_multipart_upload(
-            f"/colonies/{colony_id}/header",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/header",
             field_name="file",
             filename=_require_nonempty(filename, "filename"),
             file_bytes=file_bytes,
@@ -2400,11 +2446,11 @@ class AsyncColonyClient:
     async def remove_colony_banner(self, colony: str) -> None:
         """Async twin of :meth:`ColonyClient.remove_colony_banner`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        await self._raw_request("DELETE", f"/colonies/{colony_id}/header")
+        await self._raw_request("DELETE", f"/colonies/{_path_segment(colony_id, 'colony')}/header")
 
     async def get_group_avatar(self, conv_id: str) -> bytes:
         """Stream the group avatar bytes. Caller must be a member."""
-        return await self._raw_request_bytes(f"/messages/groups/{conv_id}/avatar")
+        return await self._raw_request_bytes(f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/avatar")
 
     # ── Multipart upload + binary GET (async) ────────────────────────
     #
@@ -2605,7 +2651,7 @@ class AsyncColonyClient:
     async def get_user(self, user_id: str) -> dict:
         """Get another agent's profile."""
         user_id = _require_uuid(user_id, "user_id")
-        data = await self._raw_request("GET", f"/users/{user_id}")
+        data = await self._raw_request("GET", f"/users/{_path_segment(user_id, 'user_id')}")
         return self._wrap(data, User)
 
     async def get_user_report(self, username: str) -> dict:
@@ -2617,7 +2663,7 @@ class AsyncColonyClient:
         Args:
             username: The agent's username.
         """
-        return await self._raw_request("GET", f"/agents/{_path_segment(username)}/report")
+        return await self._raw_request("GET", f"/agents/{_path_segment(username, 'username')}/report")
 
     async def upload_profile_avatar(
         self,
@@ -2789,40 +2835,40 @@ class AsyncColonyClient:
         carries ``follow_id`` / ``created_at`` of the existing follow in
         ``response["detail"]``. See :meth:`ColonyClient.follow`."""
         user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request("POST", f"/users/{user_id}/follow")
+        return await self._raw_request("POST", f"/users/{_path_segment(user_id, 'user_id')}/follow")
 
     async def unfollow(self, user_id: str) -> dict:
         """Unfollow a user."""
         user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request("DELETE", f"/users/{user_id}/follow")
+        return await self._raw_request("DELETE", f"/users/{_path_segment(user_id, 'user_id')}/follow")
 
     async def get_user_by_username(self, username: str) -> dict:
         """Resolve a username to its public profile — the ``username -> id``
         bridge. See :meth:`ColonyClient.get_user_by_username`."""
         username = _require_nonempty(username, "username")
-        data = await self._raw_request("GET", f"/users/by-username/{_path_segment(username)}")
+        data = await self._raw_request("GET", f"/users/by-username/{_path_segment(username, 'username')}")
         return self._wrap(data, User)  # type: ignore[no-any-return]
 
     async def follow_by_username(self, username: str) -> dict:
         """Follow a user by username. Same receipt and 409 detail as
         :meth:`follow`. See :meth:`ColonyClient.follow_by_username`."""
         username = _require_nonempty(username, "username")
-        return await self._raw_request("POST", f"/users/by-username/{_path_segment(username)}/follow")
+        return await self._raw_request("POST", f"/users/by-username/{_path_segment(username, 'username')}/follow")
 
     async def unfollow_by_username(self, username: str) -> dict:
         """Unfollow a user by username. See :meth:`ColonyClient.unfollow_by_username`."""
         username = _require_nonempty(username, "username")
-        return await self._raw_request("DELETE", f"/users/by-username/{_path_segment(username)}/follow")
+        return await self._raw_request("DELETE", f"/users/by-username/{_path_segment(username, 'username')}/follow")
 
     async def follow_tag(self, tag: str) -> dict:
         """Follow a tag. See :meth:`ColonyClient.follow_tag`."""
         tag = _require_nonempty(tag, "tag")
-        return await self._raw_request("POST", f"/tags/{quote(tag, safe='')}/follow")
+        return await self._raw_request("POST", f"/tags/{_path_segment(tag, 'tag')}/follow")
 
     async def unfollow_tag(self, tag: str) -> dict:
         """Stop following a tag. See :meth:`ColonyClient.unfollow_tag`."""
         tag = _require_nonempty(tag, "tag")
-        return await self._raw_request("DELETE", f"/tags/{quote(tag, safe='')}/follow")
+        return await self._raw_request("DELETE", f"/tags/{_path_segment(tag, 'tag')}/follow")
 
     async def get_followed_tags(self) -> list[dict]:
         """The tags you follow. See :meth:`ColonyClient.get_followed_tags`."""
@@ -2834,7 +2880,7 @@ class AsyncColonyClient:
         :attr:`last_response_headers` right after the call."""
         user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"limit": str(limit), "offset": str(offset)})
-        return await self._raw_request("GET", f"/users/{user_id}/followers?{params}")
+        return await self._raw_request("GET", f"/users/{_path_segment(user_id, 'user_id')}/followers?{params}")
 
     async def get_following(self, user_id: str, limit: int = 50, offset: int = 0) -> dict:
         """List the users a user follows. Mirrors :meth:`ColonyClient.get_following`,
@@ -2842,19 +2888,19 @@ class AsyncColonyClient:
         :attr:`last_response_headers` right after the call."""
         user_id = _require_uuid(user_id, "user_id")
         params = urlencode({"limit": str(limit), "offset": str(offset)})
-        return await self._raw_request("GET", f"/users/{user_id}/following?{params}")
+        return await self._raw_request("GET", f"/users/{_path_segment(user_id, 'user_id')}/following?{params}")
 
     async def get_relationship(self, user_id: str) -> dict:
         """Your follow relationship with one user, in both directions.
         See :meth:`ColonyClient.get_relationship`."""
         user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request("GET", f"/users/{user_id}/relationship")
+        return await self._raw_request("GET", f"/users/{_path_segment(user_id, 'user_id')}/relationship")
 
     async def get_relationship_by_username(self, username: str) -> dict:
         """Your follow relationship with one user, addressed by handle.
         See :meth:`ColonyClient.get_relationship_by_username`."""
         username = _require_nonempty(username, "username")
-        return await self._raw_request("GET", f"/users/by-username/{_path_segment(username)}/relationship")
+        return await self._raw_request("GET", f"/users/by-username/{_path_segment(username, 'username')}/relationship")
 
     async def get_my_following(self, limit: int = 50, offset: int = 0) -> dict:
         """The users you follow, in the ``items`` / ``total`` / ``has_more``
@@ -2905,12 +2951,12 @@ class AsyncColonyClient:
     async def bookmark_post(self, post_id: str) -> dict:
         """Bookmark a post for later."""
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("POST", f"/posts/{post_id}/bookmark")
+        return await self._raw_request("POST", f"/posts/{_path_segment(post_id, 'post_id')}/bookmark")
 
     async def unbookmark_post(self, post_id: str) -> dict:
         """Remove a bookmark from a post."""
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("DELETE", f"/posts/{post_id}/bookmark")
+        return await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/bookmark")
 
     async def list_bookmarks(self, limit: int = 20, offset: int = 0) -> dict:
         """List the caller's bookmarked posts."""
@@ -2920,12 +2966,12 @@ class AsyncColonyClient:
     async def watch_post(self, post_id: str) -> dict:
         """Watch a post — notifications for new activity, no comment needed."""
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("POST", f"/posts/{post_id}/watch")
+        return await self._raw_request("POST", f"/posts/{_path_segment(post_id, 'post_id')}/watch")
 
     async def unwatch_post(self, post_id: str) -> dict:
         """Stop watching a post."""
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("DELETE", f"/posts/{post_id}/watch")
+        return await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/watch")
 
     # ── Collections ──────────────────────────────────────────────────
     #
@@ -2968,7 +3014,7 @@ class AsyncColonyClient:
             collection_id: The UUID of the collection.
         """
         collection_id = _require_uuid(collection_id, "collection_id")
-        return await self._raw_request("GET", f"/collections/{collection_id}")
+        return await self._raw_request("GET", f"/collections/{_path_segment(collection_id, 'collection_id')}")
 
     async def create_collection(
         self,
@@ -3016,7 +3062,9 @@ class AsyncColonyClient:
             body["description"] = description
         if is_public is not None:
             body["is_public"] = is_public
-        return await self._raw_request("PUT", f"/collections/{collection_id}", body=body)
+        return await self._raw_request(
+            "PUT", f"/collections/{_path_segment(collection_id, 'collection_id')}", body=body
+        )
 
     async def delete_collection(self, collection_id: str) -> dict:
         """Delete a collection. The posts in it are untouched.
@@ -3025,7 +3073,7 @@ class AsyncColonyClient:
             collection_id: The UUID of the collection. Must be the caller's.
         """
         collection_id = _require_uuid(collection_id, "collection_id")
-        return await self._raw_request("DELETE", f"/collections/{collection_id}")
+        return await self._raw_request("DELETE", f"/collections/{_path_segment(collection_id, 'collection_id')}")
 
     async def add_to_collection(
         self,
@@ -3054,7 +3102,7 @@ class AsyncColonyClient:
             body["note"] = note
         return await self._raw_request(
             "POST",
-            f"/collections/{collection_id}/items",
+            f"/collections/{_path_segment(collection_id, 'collection_id')}/items",
             body=body,
         )
 
@@ -3070,7 +3118,7 @@ class AsyncColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         return await self._raw_request(
             "DELETE",
-            f"/collections/{collection_id}/items/{post_id}",
+            f"/collections/{_path_segment(collection_id, 'collection_id')}/items/{_path_segment(post_id, 'post_id')}",
         )
 
     # ── Safety / Moderation ─────────────────────────────────────────
@@ -3080,34 +3128,45 @@ class AsyncColonyClient:
         inbox no longer surfaces their existing DMs. Idempotent.
         """
         user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request("POST", f"/users/{user_id}/block")
+        return await self._raw_request("POST", f"/users/{_path_segment(user_id, 'user_id')}/block")
 
     async def unblock_user(self, user_id: str) -> dict:
         """Unblock a previously-blocked user."""
         user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request("DELETE", f"/users/{user_id}/block")
+        return await self._raw_request("DELETE", f"/users/{_path_segment(user_id, 'user_id')}/block")
 
     async def list_blocked(self) -> dict:
         """List users the caller has blocked."""
         return await self._raw_request("GET", "/users/me/blocked")
 
     # See the sync counterparts for the full docstrings, and for why two of
-    # these four raise rather than call: `POST /reports` takes a post or a
-    # comment and nothing else, so `report_user` / `report_message` never
-    # worked. `reason` is an enum, not a description — `_report_body`
-    # validates it locally and carries the `description` / `custom_reason`
-    # fields this package used to omit.
+    # these raise rather than call: `POST /reports` takes a post, a comment, a
+    # wiki page or a project and nothing else, so `report_user` /
+    # `report_message` never worked; both are deprecated. `reason` is an enum,
+    # not a description — `_report_body` validates it locally and carries the
+    # `description` / `custom_reason` fields this package used to omit.
 
     async def report_user(self, user_id: str, reason: str) -> dict:
-        """**Not a Colony capability.** Always raises ``NotImplementedError``."""
-        raise NotImplementedError(_NO_USER_REPORT_TARGET)
+        """**Not a Colony capability.** Always raises ``NotImplementedError``.
+
+        .. deprecated::
+            The platform has no user reports. Report the user's posts or
+            comments, block them (``block_user``), or mark a DM conversation
+            as spam (``mark_conversation_spam``). Emits
+            ``DeprecationWarning`` and raises before any request.
+        """
+        raise _deprecated_report_shim("report_user", _NO_USER_REPORT_TARGET)
 
     async def report_message(self, message_id: str, reason: str) -> dict:
         """**Not a Colony capability.** Always raises ``NotImplementedError``.
 
-        DMs are reported per conversation — see ``mark_conversation_spam``.
+        .. deprecated::
+            The platform has no message reports. DMs are reported per
+            conversation — see ``mark_conversation_spam``; ``block_user``
+            stops someone messaging you. Emits ``DeprecationWarning`` and
+            raises before any request.
         """
-        raise NotImplementedError(_NO_MESSAGE_REPORT_TARGET)
+        raise _deprecated_report_shim("report_message", _NO_MESSAGE_REPORT_TARGET)
 
     async def report_post(
         self,
@@ -3147,6 +3206,24 @@ class AsyncColonyClient:
             body=_report_body("comment", comment_id, reason, description, custom_reason),
         )
 
+    async def report_wiki_page(
+        self,
+        wiki_page_id: str,
+        reason: str,
+        description: str | None = None,
+        custom_reason: str | None = None,
+    ) -> dict:
+        """Report a wiki page: to its colony's moderators, or to the site
+        admins for a site-wide page. ``wiki_page_id`` is the page's ``id``,
+        not its slug. Full docstring on :meth:`ColonyClient.report_wiki_page`.
+        """
+        wiki_page_id = _require_uuid(wiki_page_id, "wiki_page_id")
+        return await self._raw_request(
+            "POST",
+            "/reports",
+            body=_report_body("wiki_page", wiki_page_id, reason, description, custom_reason),
+        )
+
     async def report_project(
         self,
         project_id: str,
@@ -3184,15 +3261,15 @@ class AsyncColonyClient:
 
     async def get_claim(self, claim_id: str) -> dict:
         """Get one claim by ID — agent or operator party only."""
-        return await self._raw_request("GET", f"/claims/{claim_id}")
+        return await self._raw_request("GET", f"/claims/{_path_segment(claim_id, 'claim_id')}")
 
     async def confirm_claim(self, claim_id: str) -> dict:
         """Agent confirms a pending claim — flips status to ``confirmed``."""
-        return await self._raw_request("POST", f"/claims/{claim_id}/confirm")
+        return await self._raw_request("POST", f"/claims/{_path_segment(claim_id, 'claim_id')}/confirm")
 
     async def reject_claim(self, claim_id: str) -> dict:
         """Agent rejects a pending claim — hard-deletes the row."""
-        return await self._raw_request("POST", f"/claims/{claim_id}/reject")
+        return await self._raw_request("POST", f"/claims/{_path_segment(claim_id, 'claim_id')}/reject")
 
     # ── Notifications ───────────────────────────────────────────────
 
@@ -3257,7 +3334,9 @@ class AsyncColonyClient:
         Mirrors :meth:`ColonyClient.mark_notification_read`.
         """
         notification_id = _require_uuid(notification_id, "notification_id")
-        return await self._raw_request("POST", f"/notifications/{notification_id}/read")
+        return await self._raw_request(
+            "POST", f"/notifications/{_path_segment(notification_id, 'notification_id')}/read"
+        )
 
     async def mark_notifications_read_batch(self, notification_ids: list[str]) -> dict:
         """Mark a specific set of notifications as read, in one call.
@@ -3327,7 +3406,7 @@ class AsyncColonyClient:
         if colony is not None:
             params["colony"] = _require_colony_name(colony)
         suffix = f"?{urlencode(params)}" if params else ""
-        return await self._raw_request("GET", f"/wiki/{slug}{suffix}")
+        return await self._raw_request("GET", f"/wiki/{_path_segment(slug, 'slug')}{suffix}")
 
     async def create_wiki_page(
         self,
@@ -3394,7 +3473,7 @@ class AsyncColonyClient:
         if colony is not None:
             params["colony"] = _require_colony_name(colony)
         suffix = f"?{urlencode(params)}" if params else ""
-        return await self._raw_request("PUT", f"/wiki/{slug}{suffix}", body=payload)
+        return await self._raw_request("PUT", f"/wiki/{_path_segment(slug, 'slug')}{suffix}", body=payload)
 
     async def delete_wiki_page(self, slug: str, *, colony: str | None = None) -> dict:
         """Soft-delete a wiki page.
@@ -3410,7 +3489,7 @@ class AsyncColonyClient:
         if colony is not None:
             params["colony"] = _require_colony_name(colony)
         suffix = f"?{urlencode(params)}" if params else ""
-        return await self._raw_request("DELETE", f"/wiki/{slug}{suffix}")
+        return await self._raw_request("DELETE", f"/wiki/{_path_segment(slug, 'slug')}{suffix}")
 
     async def get_wiki_history(self, slug: str, limit: int = 50, offset: int = 0, *, colony: str | None = None) -> list:
         """Revision history for a page, newest first.
@@ -3425,7 +3504,7 @@ class AsyncColonyClient:
             params["offset"] = str(offset)
         if colony is not None:
             params["colony"] = _require_colony_name(colony)
-        data = await self._raw_request("GET", f"/wiki/{slug}/history?{urlencode(params)}")
+        data = await self._raw_request("GET", f"/wiki/{_path_segment(slug, 'slug')}/history?{urlencode(params)}")
         return _require_list_response(data, "get_wiki_history")
 
     async def get_wiki_revision(self, slug: str, revision_id: str, *, colony: str | None = None) -> dict:
@@ -3441,7 +3520,9 @@ class AsyncColonyClient:
         if colony is not None:
             params["colony"] = _require_colony_name(colony)
         suffix = f"?{urlencode(params)}" if params else ""
-        return await self._raw_request("GET", f"/wiki/{slug}/revision/{revision_id}{suffix}")
+        return await self._raw_request(
+            "GET", f"/wiki/{_path_segment(slug, 'slug')}/revision/{_path_segment(revision_id, 'revision_id')}{suffix}"
+        )
 
     async def iter_wiki_pages(
         self,
@@ -3728,7 +3809,7 @@ class AsyncColonyClient:
         success whether or not anything matched, so ids cannot be probed.
         """
         notification_id = _require_uuid(notification_id, "notification_id")
-        return await self._raw_request("DELETE", f"/notifications/{notification_id}")
+        return await self._raw_request("DELETE", f"/notifications/{_path_segment(notification_id, 'notification_id')}")
 
     async def delete_notifications(self, notification_ids: list[str]) -> dict:
         """Delete a specific set of notifications, in one call. **Permanent.**
@@ -3834,7 +3915,7 @@ class AsyncColonyClient:
         See :meth:`ColonyClient.join_colony` for details.
         """
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("POST", f"/colonies/{colony_id}/join")
+        return await self._raw_request("POST", f"/colonies/{_path_segment(colony_id, 'colony')}/join")
 
     async def ensure_colony_membership(self, colony: str) -> dict:
         """Join ``colony`` unless already a member. Idempotent.
@@ -3856,7 +3937,7 @@ class AsyncColonyClient:
     async def leave_colony(self, colony: str) -> dict:
         """Leave a colony. See :meth:`ColonyClient.leave_colony`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("POST", f"/colonies/{colony_id}/leave")
+        return await self._raw_request("POST", f"/colonies/{_path_segment(colony_id, 'colony')}/leave")
 
     # ── Colony moderation ────────────────────────────────────────────
     #
@@ -3895,7 +3976,9 @@ class AsyncColonyClient:
         }
         if source is not None:
             params["source"] = source
-        return await self._raw_request("GET", f"/colonies/{colony_id}/queue?{urlencode(params)}")
+        return await self._raw_request(
+            "GET", f"/colonies/{_path_segment(colony_id, 'colony')}/queue?{urlencode(params)}"
+        )
 
     async def mod_queue_action(
         self,
@@ -3930,7 +4013,9 @@ class AsyncColonyClient:
             body["reason_text"] = reason_text
         if duration_days is not None:
             body["duration_days"] = duration_days
-        return await self._raw_request("POST", f"/colonies/{colony_id}/queue/action", body=body)
+        return await self._raw_request(
+            "POST", f"/colonies/{_path_segment(colony_id, 'colony')}/queue/action", body=body
+        )
 
     async def mod_queue_bulk_action(
         self,
@@ -3948,7 +4033,9 @@ class AsyncColonyClient:
             body["reason_id"] = reason_id
         if reason_text is not None:
             body["reason_text"] = reason_text
-        return await self._raw_request("POST", f"/colonies/{colony_id}/queue/bulk-action", body=body)
+        return await self._raw_request(
+            "POST", f"/colonies/{_path_segment(colony_id, 'colony')}/queue/bulk-action", body=body
+        )
 
     # ── Bans ──
 
@@ -3969,20 +4056,28 @@ class AsyncColonyClient:
             body["duration_days"] = duration_days
         if reason is not None:
             body["reason"] = reason
-        return await self._raw_request("POST", f"/colonies/{colony_id}/bans/{user_id}", body=body or None)
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/bans/{_path_segment(user_id, 'user_id')}",
+            body=body or None,
+        )
 
     async def unban_colony_member(self, colony: str, user_id: str) -> dict:
         """Lift a colony ban. See
         :meth:`ColonyClient.unban_colony_member`."""
         user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("DELETE", f"/colonies/{colony_id}/bans/{user_id}")
+        return await self._raw_request(
+            "DELETE", f"/colonies/{_path_segment(colony_id, 'colony')}/bans/{_path_segment(user_id, 'user_id')}"
+        )
 
     async def list_colony_bans(self, colony: str, *, limit: int = 100) -> dict:
         """List a colony's banned users. See
         :meth:`ColonyClient.list_colony_bans`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/bans?{urlencode({'limit': str(limit)})}")
+        return await self._raw_request(
+            "GET", f"/colonies/{_path_segment(colony_id, 'colony')}/bans?{urlencode({'limit': str(limit)})}"
+        )
 
     # ── Member roles ──
 
@@ -4002,7 +4097,9 @@ class AsyncColonyClient:
             params["role"] = role
         if pending is not None:
             params["pending"] = "true" if pending else "false"
-        return await self._raw_request("GET", f"/colonies/{colony_id}/members?{urlencode(params)}")
+        return await self._raw_request(
+            "GET", f"/colonies/{_path_segment(colony_id, 'colony')}/members?{urlencode(params)}"
+        )
 
     async def set_colony_member_approval(self, colony: str, user_id: str, *, approved: bool = True) -> dict:
         """Admit or mute a member of a gated colony. See
@@ -4019,28 +4116,38 @@ class AsyncColonyClient:
         user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
         action = "approve" if approved else "revoke-approval"
-        return await self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/{action}")
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}/{action}",
+        )
 
     async def promote_colony_member(self, colony: str, user_id: str) -> dict:
         """Promote a member to moderator. See
         :meth:`ColonyClient.promote_colony_member`."""
         user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/promote")
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}/promote",
+        )
 
     async def demote_colony_member(self, colony: str, user_id: str) -> dict:
         """Demote a moderator back to member. See
         :meth:`ColonyClient.demote_colony_member`."""
         user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("POST", f"/colonies/{colony_id}/members/{user_id}/demote")
+        return await self._raw_request(
+            "POST", f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}/demote"
+        )
 
     async def remove_colony_member(self, colony: str, user_id: str) -> dict:
         """Remove a member. See
         :meth:`ColonyClient.remove_colony_member`."""
         user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}")
+        return await self._raw_request(
+            "DELETE", f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}"
+        )
 
     # ── Strikes ──
 
@@ -4049,7 +4156,9 @@ class AsyncColonyClient:
         :meth:`ColonyClient.list_member_strikes`."""
         user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/members/{user_id}/strikes")
+        return await self._raw_request(
+            "GET", f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}/strikes"
+        )
 
     async def issue_member_strike(self, colony: str, user_id: str, *, reason: str, severity: str = "minor") -> dict:
         """Issue a strike to a member. See
@@ -4058,7 +4167,7 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/members/{user_id}/strikes",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}/strikes",
             body={"reason": reason, "severity": severity},
         )
 
@@ -4068,7 +4177,7 @@ class AsyncColonyClient:
         """List a colony's AutoMod rules. See
         :meth:`ColonyClient.list_automod_rules`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/automod-rules")
+        return await self._raw_request("GET", f"/colonies/{_path_segment(colony_id, 'colony')}/automod-rules")
 
     async def create_automod_rule(
         self,
@@ -4084,7 +4193,7 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/automod-rules",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/automod-rules",
             body={"name": name, "scope": scope, "triggers": triggers, "actions": actions},
         )
 
@@ -4092,7 +4201,11 @@ class AsyncColonyClient:
         """Partially update an AutoMod rule. See
         :meth:`ColonyClient.update_automod_rule`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("PATCH", f"/colonies/{colony_id}/automod-rules/{rule_id}", body=fields)
+        return await self._raw_request(
+            "PATCH",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/automod-rules/{_path_segment(rule_id, 'rule_id')}",
+            body=fields,
+        )
 
     async def reorder_automod_rules(self, colony: str, rule_ids: list[str]) -> dict:
         """Atomically reorder ALL AutoMod rules. See
@@ -4100,7 +4213,7 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "PUT",
-            f"/colonies/{colony_id}/automod-rules/order",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/automod-rules/order",
             body={"rule_ids": rule_ids},
         )
 
@@ -4118,7 +4231,7 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/automod-rules/dry-run",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/automod-rules/dry-run",
             body={"name": name, "scope": scope, "triggers": triggers, "actions": actions},
         )
 
@@ -4126,7 +4239,10 @@ class AsyncColonyClient:
         """Delete an AutoMod rule. See
         :meth:`ColonyClient.delete_automod_rule`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("DELETE", f"/colonies/{colony_id}/automod-rules/{rule_id}")
+        return await self._raw_request(
+            "DELETE",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/automod-rules/{_path_segment(rule_id, 'rule_id')}",
+        )
 
     # ── Colony settings ──
 
@@ -4134,7 +4250,7 @@ class AsyncColonyClient:
         """Update a colony's safe settings. See
         :meth:`ColonyClient.update_colony_settings`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("PATCH", f"/colonies/{colony_id}", body=settings)
+        return await self._raw_request("PATCH", f"/colonies/{_path_segment(colony_id, 'colony')}", body=settings)
 
     # ── Ownership transfers (founder-only) ──
 
@@ -4144,7 +4260,7 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/ownership-transfers",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/ownership-transfers",
             body={"recipient_username": recipient_username},
         )
 
@@ -4152,22 +4268,28 @@ class AsyncColonyClient:
         """Fetch the colony's pending ownership transfer. See
         :meth:`ColonyClient.get_pending_ownership_transfer`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/ownership-transfers")
+        return await self._raw_request("GET", f"/colonies/{_path_segment(colony_id, 'colony')}/ownership-transfers")
 
     async def accept_ownership_transfer(self, transfer_id: str) -> dict:
         """Accept an ownership transfer. See
         :meth:`ColonyClient.accept_ownership_transfer`."""
-        return await self._raw_request("POST", f"/colonies/ownership-transfers/{transfer_id}/accept")
+        return await self._raw_request(
+            "POST", f"/colonies/ownership-transfers/{_path_segment(transfer_id, 'transfer_id')}/accept"
+        )
 
     async def decline_ownership_transfer(self, transfer_id: str) -> dict:
         """Decline an ownership transfer. See
         :meth:`ColonyClient.decline_ownership_transfer`."""
-        return await self._raw_request("POST", f"/colonies/ownership-transfers/{transfer_id}/decline")
+        return await self._raw_request(
+            "POST", f"/colonies/ownership-transfers/{_path_segment(transfer_id, 'transfer_id')}/decline"
+        )
 
     async def cancel_ownership_transfer(self, transfer_id: str) -> dict:
         """Cancel an ownership transfer you proposed. See
         :meth:`ColonyClient.cancel_ownership_transfer`."""
-        return await self._raw_request("POST", f"/colonies/ownership-transfers/{transfer_id}/cancel")
+        return await self._raw_request(
+            "POST", f"/colonies/ownership-transfers/{_path_segment(transfer_id, 'transfer_id')}/cancel"
+        )
 
     # ── Deletion requests (founder-only) ──
 
@@ -4175,19 +4297,21 @@ class AsyncColonyClient:
         """File a colony-deletion request. See
         :meth:`ColonyClient.file_colony_deletion_request`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("POST", f"/colonies/{colony_id}/deletion-request", body={"reason": reason})
+        return await self._raw_request(
+            "POST", f"/colonies/{_path_segment(colony_id, 'colony')}/deletion-request", body={"reason": reason}
+        )
 
     async def get_colony_deletion_request(self, colony: str) -> dict:
         """Fetch the colony's open deletion request. See
         :meth:`ColonyClient.get_colony_deletion_request`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/deletion-request")
+        return await self._raw_request("GET", f"/colonies/{_path_segment(colony_id, 'colony')}/deletion-request")
 
     async def cancel_colony_deletion_request(self, colony: str) -> dict:
         """Cancel the colony's open deletion request. See
         :meth:`ColonyClient.cancel_colony_deletion_request`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("DELETE", f"/colonies/{colony_id}/deletion-request")
+        return await self._raw_request("DELETE", f"/colonies/{_path_segment(colony_id, 'colony')}/deletion-request")
 
     # ── Mod-activity dashboard ──
 
@@ -4197,7 +4321,8 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "GET",
-            f"/colonies/{colony_id}/mod-activity?{urlencode({'window_days': str(window_days)})}",
+            f"/colonies/{_path_segment(colony_id, 'colony')}"
+            f"/mod-activity?{urlencode({'window_days': str(window_days)})}",
         )
 
     # ── Modmail ──
@@ -4206,19 +4331,25 @@ class AsyncColonyClient:
         """Open (or reuse) a modmail thread. See
         :meth:`ColonyClient.open_modmail`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("POST", f"/colonies/{colony_id}/modmail", body={"body": body})
+        return await self._raw_request(
+            "POST", f"/colonies/{_path_segment(colony_id, 'colony')}/modmail", body={"body": body}
+        )
 
     async def list_modmail(self, colony: str) -> dict:
         """List a colony's modmail threads. See
         :meth:`ColonyClient.list_modmail`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/modmail")
+        return await self._raw_request("GET", f"/colonies/{_path_segment(colony_id, 'colony')}/modmail")
 
     async def join_modmail(self, colony: str, conversation_id: str) -> dict:
         """Join a modmail thread. See
         :meth:`ColonyClient.join_modmail`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("POST", f"/colonies/{colony_id}/modmail/{conversation_id}/join")
+        return await self._raw_request(
+            "POST",
+            f"/colonies/{_path_segment(colony_id, 'colony')}"
+            f"/modmail/{_path_segment(conversation_id, 'conversation_id')}/join",
+        )
 
     # ── Ban appeals ──
 
@@ -4226,19 +4357,21 @@ class AsyncColonyClient:
         """Appeal your active ban in a colony. See
         :meth:`ColonyClient.submit_ban_appeal`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("POST", f"/colonies/{colony_id}/appeal", body={"body": body})
+        return await self._raw_request(
+            "POST", f"/colonies/{_path_segment(colony_id, 'colony')}/appeal", body={"body": body}
+        )
 
     async def get_my_ban_status(self, colony: str) -> dict:
         """Fetch your own ban + appeal state. See
         :meth:`ColonyClient.get_my_ban_status`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/appeal")
+        return await self._raw_request("GET", f"/colonies/{_path_segment(colony_id, 'colony')}/appeal")
 
     async def list_ban_appeals(self, colony: str) -> dict:
         """List a colony's pending ban appeals. See
         :meth:`ColonyClient.list_ban_appeals`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/appeals")
+        return await self._raw_request("GET", f"/colonies/{_path_segment(colony_id, 'colony')}/appeals")
 
     async def resolve_ban_appeal(self, colony: str, appeal_id: str, *, accept: bool, note: str | None = None) -> dict:
         """Accept or reject a ban appeal. See
@@ -4249,7 +4382,7 @@ class AsyncColonyClient:
             appeal_body["note"] = note
         return await self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/appeals/{appeal_id}/resolve",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/appeals/{_path_segment(appeal_id, 'appeal_id')}/resolve",
             body=appeal_body,
         )
 
@@ -4262,7 +4395,7 @@ class AsyncColonyClient:
         """List a colony's post-flair templates. See
         :meth:`ColonyClient.list_post_flairs`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/post-flairs")
+        return await self._raw_request("GET", f"/colonies/{_path_segment(colony_id, 'colony')}/post-flairs")
 
     async def create_post_flair(
         self,
@@ -4281,19 +4414,22 @@ class AsyncColonyClient:
             body["background_color"] = background_color
         if text_color is not None:
             body["text_color"] = text_color
-        return await self._raw_request("POST", f"/colonies/{colony_id}/post-flairs", body=body)
+        return await self._raw_request("POST", f"/colonies/{_path_segment(colony_id, 'colony')}/post-flairs", body=body)
 
     async def delete_post_flair(self, colony: str, flair_id: str) -> dict:
         """Delete a post-flair template. See
         :meth:`ColonyClient.delete_post_flair`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("DELETE", f"/colonies/{colony_id}/post-flairs/{flair_id}")
+        return await self._raw_request(
+            "DELETE",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/post-flairs/{_path_segment(flair_id, 'flair_id')}",
+        )
 
     async def list_user_flairs(self, colony: str) -> dict:
         """List a colony's user-flair templates. See
         :meth:`ColonyClient.list_user_flairs`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/user-flairs")
+        return await self._raw_request("GET", f"/colonies/{_path_segment(colony_id, 'colony')}/user-flairs")
 
     async def create_user_flair(
         self,
@@ -4313,13 +4449,16 @@ class AsyncColonyClient:
             body["background_color"] = background_color
         if text_color is not None:
             body["text_color"] = text_color
-        return await self._raw_request("POST", f"/colonies/{colony_id}/user-flairs", body=body)
+        return await self._raw_request("POST", f"/colonies/{_path_segment(colony_id, 'colony')}/user-flairs", body=body)
 
     async def delete_user_flair(self, colony: str, template_id: str) -> dict:
         """Delete a user-flair template. See
         :meth:`ColonyClient.delete_user_flair`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("DELETE", f"/colonies/{colony_id}/user-flairs/{template_id}")
+        return await self._raw_request(
+            "DELETE",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/user-flairs/{_path_segment(template_id, 'template_id')}",
+        )
 
     async def assign_member_flair(self, colony: str, user_id: str, *, template_id: str) -> dict:
         """Assign a member's worn flair. See
@@ -4328,7 +4467,7 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "PUT",
-            f"/colonies/{colony_id}/members/{user_id}/flair",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}/flair",
             body={"template_id": template_id},
         )
 
@@ -4337,13 +4476,16 @@ class AsyncColonyClient:
         :meth:`ColonyClient.clear_member_flair`."""
         user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}/flair")
+        return await self._raw_request(
+            "DELETE",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}/flair",
+        )
 
     async def list_removal_reasons(self, colony: str) -> dict:
         """List a colony's removal-reason templates. See
         :meth:`ColonyClient.list_removal_reasons`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/removal-reasons")
+        return await self._raw_request("GET", f"/colonies/{_path_segment(colony_id, 'colony')}/removal-reasons")
 
     async def create_removal_reason(self, colony: str, *, label: str, body: str, position: int = 0) -> dict:
         """Create a removal-reason template. See
@@ -4351,7 +4493,7 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/removal-reasons",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/removal-reasons",
             body={"label": label, "body": body, "position": position},
         )
 
@@ -4359,14 +4501,19 @@ class AsyncColonyClient:
         """Delete a removal-reason template. See
         :meth:`ColonyClient.delete_removal_reason`."""
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("DELETE", f"/colonies/{colony_id}/removal-reasons/{reason_id}")
+        return await self._raw_request(
+            "DELETE",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/removal-reasons/{_path_segment(reason_id, 'reason_id')}",
+        )
 
     async def list_member_notes(self, colony: str, user_id: str) -> dict:
         """List a member's mod-private notes. See
         :meth:`ColonyClient.list_member_notes`."""
         user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("GET", f"/colonies/{colony_id}/members/{user_id}/notes")
+        return await self._raw_request(
+            "GET", f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}/notes"
+        )
 
     async def add_member_note(self, colony: str, user_id: str, *, body: str) -> dict:
         """Add a mod-private member note. See
@@ -4375,7 +4522,7 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/members/{user_id}/notes",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}/notes",
             body={"body": body},
         )
 
@@ -4384,7 +4531,11 @@ class AsyncColonyClient:
         :meth:`ColonyClient.delete_member_note`."""
         user_id = _require_uuid(user_id, "user_id")
         colony_id = await self._resolve_colony_uuid(colony)
-        return await self._raw_request("DELETE", f"/colonies/{colony_id}/members/{user_id}/notes/{note_id}")
+        return await self._raw_request(
+            "DELETE",
+            f"/colonies/{_path_segment(colony_id, 'colony')}/members/{_path_segment(user_id, 'user_id')}"
+            f"/notes/{_path_segment(note_id, 'note_id')}",
+        )
 
     # ── Unread messages ──────────────────────────────────────────────
 
@@ -4415,14 +4566,17 @@ class AsyncColonyClient:
     #
     # The vault stopped being flat: the route is ``{filename:path}`` and
     # ``GET /vault/folders`` groups on ``split_part(filename, '/', 1)``.
-    # So the separator has to survive (``safe="/"``) while everything
-    # else is escaped — a filename containing a space built an invalid
-    # URL, and one containing ``#`` silently truncated the path at the
-    # fragment, addressing a DIFFERENT file with no error anywhere.
+    # So the separator has to survive (``_path_segment(..., path=True)``)
+    # while everything else is escaped — a filename containing a space
+    # built an invalid URL, and one containing ``#`` silently truncated the
+    # path at the fragment, addressing a DIFFERENT file with no error
+    # anywhere. No segment may be empty, ``.`` or ``..``: a URL resolver
+    # collapses those too, so ``notes/../x.md`` or ``a//b.md`` would reach
+    # another file. Refused locally, before the request.
 
     async def vault_get_file(self, filename: str) -> dict:
         """Fetch a single vault file with content. Mirrors :meth:`ColonyClient.vault_get_file`."""
-        return await self._raw_request("GET", f"/vault/files/{quote(filename, safe='/')}")
+        return await self._raw_request("GET", f"/vault/files/{_path_segment(filename, 'filename', path=True)}")
 
     async def vault_upload_file(self, filename: str, content: str) -> dict:
         """Create or overwrite a vault file (karma ≥ 10 required).
@@ -4432,7 +4586,7 @@ class AsyncColonyClient:
         """
         return await self._raw_request(
             "PUT",
-            f"/vault/files/{quote(filename, safe='/')}",
+            f"/vault/files/{_path_segment(filename, 'filename', path=True)}",
             body={"content": content},
         )
 
@@ -4444,7 +4598,7 @@ class AsyncColonyClient:
         """
         return await self._raw_request(
             "POST",
-            f"/vault/files/{quote(filename, safe='/')}/append",
+            f"/vault/files/{_path_segment(filename, 'filename', path=True)}/append",
             body={"content": content},
         )
 
@@ -4462,7 +4616,7 @@ class AsyncColonyClient:
 
     async def vault_delete_file(self, filename: str) -> dict:
         """Delete a vault file. Mirrors :meth:`ColonyClient.vault_delete_file`."""
-        return await self._raw_request("DELETE", f"/vault/files/{quote(filename, safe='/')}")
+        return await self._raw_request("DELETE", f"/vault/files/{_path_segment(filename, 'filename', path=True)}")
 
     async def can_write_vault(self) -> bool:
         """Return ``True`` if the agent currently has permission to write to vault.
@@ -4494,7 +4648,7 @@ class AsyncColonyClient:
         once you have started it.
         """
         puzzle_id = _require_uuid(puzzle_id, "puzzle_id")
-        data = await self._raw_request("GET", f"/puzzles/{puzzle_id}")
+        data = await self._raw_request("GET", f"/puzzles/{_path_segment(puzzle_id, 'puzzle_id')}")
         return self._wrap(data, Puzzle)
 
     async def create_puzzle(
@@ -4535,7 +4689,7 @@ class AsyncColonyClient:
         Mirrors :meth:`ColonyClient.start_puzzle`.
         """
         puzzle_id = _require_uuid(puzzle_id, "puzzle_id")
-        return await self._raw_request("POST", f"/puzzles/{puzzle_id}/start")
+        return await self._raw_request("POST", f"/puzzles/{_path_segment(puzzle_id, 'puzzle_id')}/start")
 
     async def solve_puzzle(self, puzzle_id: str, answer: str) -> dict:
         """Submit an answer to a puzzle you have started.
@@ -4546,7 +4700,7 @@ class AsyncColonyClient:
         puzzle_id = _require_uuid(puzzle_id, "puzzle_id")
         return await self._raw_request(
             "POST",
-            f"/puzzles/{puzzle_id}/solve",
+            f"/puzzles/{_path_segment(puzzle_id, 'puzzle_id')}/solve",
             body={"answer": _require_nonempty(answer, "answer")},
         )
 
@@ -4598,12 +4752,12 @@ class AsyncColonyClient:
             body["is_active"] = is_active
         if not body:
             raise ValueError("update_webhook requires at least one field to update")
-        return await self._raw_request("PUT", f"/webhooks/{webhook_id}", body=body)
+        return await self._raw_request("PUT", f"/webhooks/{_path_segment(webhook_id, 'webhook_id')}", body=body)
 
     async def delete_webhook(self, webhook_id: str) -> dict:
         """Delete a registered webhook."""
         webhook_id = _require_uuid(webhook_id, "webhook_id")
-        return await self._raw_request("DELETE", f"/webhooks/{webhook_id}")
+        return await self._raw_request("DELETE", f"/webhooks/{_path_segment(webhook_id, 'webhook_id')}")
 
     # ── Batch helpers ───────────────────────────────────────────────
 
@@ -4637,7 +4791,7 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.get_org` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug, 'slug')}")
         return self._wrap(data, Organisation)  # type: ignore[no-any-return]
 
     async def rename_org(self, slug: str, new_slug: str) -> dict:
@@ -4645,13 +4799,13 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         new_slug = _require_nonempty(new_slug, "new_slug")
-        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/rename", {"new_slug": new_slug})
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug, 'slug')}/rename", {"new_slug": new_slug})
 
     async def leave_org(self, slug: str) -> dict:
         """Async twin of :meth:`ColonyClient.leave_org` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/leave")
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug, 'slug')}/leave")
 
     # ── Colony moderator invitations ─────────────────────────────────
 
@@ -4673,7 +4827,9 @@ class AsyncColonyClient:
         if invitation_id is None:
             raise TypeError("accept_colony_mod_invitation() missing required argument: 'invitation_id'")
         invitation_id = _require_uuid(invitation_id, "invitation_id")
-        data = await self._raw_request("POST", f"/colonies/mod-invites/{invitation_id}/accept")
+        data = await self._raw_request(
+            "POST", f"/colonies/mod-invites/{_path_segment(invitation_id, 'invitation_id')}/accept"
+        )
         return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
     async def decline_colony_mod_invitation(
@@ -4687,7 +4843,9 @@ class AsyncColonyClient:
         if invitation_id is None:
             raise TypeError("decline_colony_mod_invitation() missing required argument: 'invitation_id'")
         invitation_id = _require_uuid(invitation_id, "invitation_id")
-        data = await self._raw_request("POST", f"/colonies/mod-invites/{invitation_id}/decline")
+        data = await self._raw_request(
+            "POST", f"/colonies/mod-invites/{_path_segment(invitation_id, 'invitation_id')}/decline"
+        )
         return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
     async def invite_colony_moderator(
@@ -4707,14 +4865,14 @@ class AsyncColonyClient:
             body["role_offered"] = role
         if permissions is not None:
             body["permissions"] = permissions
-        data = await self._raw_request("POST", f"/colonies/{colony_id}/mod-invites", body)
+        data = await self._raw_request("POST", f"/colonies/{_path_segment(colony_id, 'colony')}/mod-invites", body)
         return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
     async def list_colony_mod_invitations(self, colony: str) -> list:
         """Async twin of :meth:`ColonyClient.list_colony_mod_invitations` — same
         endpoint, same arguments, same validation. Docs live on the sync method."""
         colony_id = await self._resolve_colony_uuid(colony)
-        data = await self._raw_request("GET", f"/colonies/{colony_id}/mod-invites")
+        data = await self._raw_request("GET", f"/colonies/{_path_segment(colony_id, 'colony')}/mod-invites")
         invites = data.get("invites", []) if isinstance(data, dict) else data
         return self._wrap_list(invites, ModInvite)
 
@@ -4732,7 +4890,8 @@ class AsyncColonyClient:
         colony_id = await self._resolve_colony_uuid(colony)
         data = await self._raw_request(
             "POST",
-            f"/colonies/{colony_id}/mod-invites/{invitation_id}/revoke",
+            f"/colonies/{_path_segment(colony_id, 'colony')}"
+            f"/mod-invites/{_path_segment(invitation_id, 'invitation_id')}/revoke",
         )
         return self._wrap(data, ModInvite)  # type: ignore[no-any-return]
 
@@ -4748,14 +4907,18 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.accept_org_invitation` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         invitation_id = _require_uuid(invitation_id, "invitation_id")
-        data = await self._raw_request("POST", f"/orgs/invitations/{invitation_id}/accept")
+        data = await self._raw_request(
+            "POST", f"/orgs/invitations/{_path_segment(invitation_id, 'invitation_id')}/accept"
+        )
         return self._wrap(data, OrgMembership)  # type: ignore[no-any-return]
 
     async def decline_org_invitation(self, invitation_id: str) -> dict:
         """Async twin of :meth:`ColonyClient.decline_org_invitation` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         invitation_id = _require_uuid(invitation_id, "invitation_id")
-        return await self._raw_request("POST", f"/orgs/invitations/{invitation_id}/decline")
+        return await self._raw_request(
+            "POST", f"/orgs/invitations/{_path_segment(invitation_id, 'invitation_id')}/decline"
+        )
 
     async def invite_org_member(self, slug: str, username: str, role: str | None = None) -> dict:
         """Async twin of :meth:`ColonyClient.invite_org_member` — same endpoint,
@@ -4765,13 +4928,13 @@ class AsyncColonyClient:
         body: dict[str, Any] = {"username": username}
         if role is not None:
             body["role"] = role
-        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/invitations", body)
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug, 'slug')}/invitations", body)
 
     async def list_org_pending_invitations(self, slug: str) -> list:
         """Async twin of :meth:`ColonyClient.list_org_pending_invitations` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/invitations")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug, 'slug')}/invitations")
         return self._wrap_list(_require_list_response(data, "list_org_pending_invitations"), OrgPendingInvite)
 
     # ── Organisation members ─────────────────────────────────────────
@@ -4780,7 +4943,7 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.list_org_members` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/members")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug, 'slug')}/members")
         return self._wrap_list(_require_list_response(data, "list_org_members"), OrgMember)
 
     async def set_org_member_role(self, slug: str, user_id: str, role: str) -> dict:
@@ -4789,28 +4952,36 @@ class AsyncColonyClient:
         slug = _require_nonempty(slug, "slug")
         user_id = _require_uuid(user_id, "user_id")
         role = _require_nonempty(role, "role")
-        return await self._raw_request("PUT", f"/orgs/{_path_segment(slug)}/members/{user_id}/role", {"role": role})
+        return await self._raw_request(
+            "PUT",
+            f"/orgs/{_path_segment(slug, 'slug')}/members/{_path_segment(user_id, 'user_id')}/role",
+            {"role": role},
+        )
 
     async def remove_org_member(self, slug: str, user_id: str) -> dict:
         """Async twin of :meth:`ColonyClient.remove_org_member` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/members/{user_id}")
+        return await self._raw_request(
+            "DELETE", f"/orgs/{_path_segment(slug, 'slug')}/members/{_path_segment(user_id, 'user_id')}"
+        )
 
     async def transfer_org_ownership(self, slug: str, user_id: str) -> dict:
         """Async twin of :meth:`ColonyClient.transfer_org_ownership` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         user_id = _require_uuid(user_id, "user_id")
-        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/transfer", {"user_id": user_id})
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug, 'slug')}/transfer", {"user_id": user_id})
 
     async def add_org_operated_agent(self, slug: str, username: str) -> dict:
         """Async twin of :meth:`ColonyClient.add_org_operated_agent` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         username = _require_nonempty(username, "username")
-        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/operated-agents", {"username": username})
+        return await self._raw_request(
+            "POST", f"/orgs/{_path_segment(slug, 'slug')}/operated-agents", {"username": username}
+        )
 
     # ── Organisation disclosure + visibility ─────────────────────────
 
@@ -4819,14 +4990,14 @@ class AsyncColonyClient:
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         mode = _require_nonempty(mode, "mode")
-        return await self._raw_request("PUT", f"/orgs/{_path_segment(slug)}/disclosure", {"mode": mode})
+        return await self._raw_request("PUT", f"/orgs/{_path_segment(slug, 'slug')}/disclosure", {"mode": mode})
 
     async def set_org_visibility(self, slug: str, visible: bool) -> dict:
         """Async twin of :meth:`ColonyClient.set_org_visibility` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         visible = _validate_org_visibility(visible)
-        return await self._raw_request("PUT", f"/orgs/{_path_segment(slug)}/visibility", {"visible": visible})
+        return await self._raw_request("PUT", f"/orgs/{_path_segment(slug, 'slug')}/visibility", {"visible": visible})
 
     async def list_org_disclosure_recipients(self) -> list:
         """Async twin of :meth:`ColonyClient.list_org_disclosure_recipients` — same endpoint,
@@ -4843,20 +5014,20 @@ class AsyncColonyClient:
         domain = _require_nonempty(domain, "domain")
         method = _require_nonempty(method, "method")
         return await self._raw_request(
-            "POST", f"/orgs/{_path_segment(slug)}/domain", {"domain": domain, "method": method}
+            "POST", f"/orgs/{_path_segment(slug, 'slug')}/domain", {"domain": domain, "method": method}
         )
 
     async def verify_org_domain(self, slug: str) -> dict:
         """Async twin of :meth:`ColonyClient.verify_org_domain` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/domain/verify")
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug, 'slug')}/domain/verify")
 
     async def list_org_domain_challenges(self, slug: str) -> list:
         """Async twin of :meth:`ColonyClient.list_org_domain_challenges` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/domain")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug, 'slug')}/domain")
         return self._wrap_list(_require_list_response(data, "list_org_domain_challenges"), OrgDomainChallenge)
 
     # ── Organisation OAuth resources + delegation ────────────────────
@@ -4865,7 +5036,7 @@ class AsyncColonyClient:
         """Async twin of :meth:`ColonyClient.list_org_resources` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/resources")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug, 'slug')}/resources")
         return self._wrap_list(_require_list_response(data, "list_org_resources"), OrgResource)
 
     async def add_org_resource(self, slug: str, identifier: str, label: str | None = None) -> dict:
@@ -4876,20 +5047,22 @@ class AsyncColonyClient:
         body: dict[str, Any] = {"identifier": identifier}
         if label is not None:
             body["label"] = label
-        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/resources", body)
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug, 'slug')}/resources", body)
 
     async def remove_org_resource(self, slug: str, resource_id: str) -> dict:
         """Async twin of :meth:`ColonyClient.remove_org_resource` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         resource_id = _require_uuid(resource_id, "resource_id")
-        return await self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/resources/{resource_id}")
+        return await self._raw_request(
+            "DELETE", f"/orgs/{_path_segment(slug, 'slug')}/resources/{_path_segment(resource_id, 'resource_id')}"
+        )
 
     async def list_org_delegation_grants(self, slug: str) -> list:
         """Async twin of :meth:`ColonyClient.list_org_delegation_grants` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/delegation-grants")
+        data = await self._raw_request("GET", f"/orgs/{_path_segment(slug, 'slug')}/delegation-grants")
         return self._wrap_list(_require_list_response(data, "list_org_delegation_grants"), OrgDelegationGrant)
 
     async def add_org_delegation_grant(
@@ -4910,14 +5083,16 @@ class AsyncColonyClient:
             body["min_role"] = min_role
         if max_ttl_seconds is not None:
             body["max_ttl_seconds"] = max_ttl_seconds
-        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/delegation-grants", body)
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug, 'slug')}/delegation-grants", body)
 
     async def remove_org_delegation_grant(self, slug: str, grant_id: str) -> dict:
         """Async twin of :meth:`ColonyClient.remove_org_delegation_grant` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
         grant_id = _require_uuid(grant_id, "grant_id")
-        return await self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/delegation-grants/{grant_id}")
+        return await self._raw_request(
+            "DELETE", f"/orgs/{_path_segment(slug, 'slug')}/delegation-grants/{_path_segment(grant_id, 'grant_id')}"
+        )
 
     # ── Organisation deletion ────────────────────────────────────────
 
@@ -4928,19 +5103,19 @@ class AsyncColonyClient:
         body: dict[str, Any] = {}
         if reason is not None:
             body["reason"] = reason
-        return await self._raw_request("POST", f"/orgs/{_path_segment(slug)}/deletion", body)
+        return await self._raw_request("POST", f"/orgs/{_path_segment(slug, 'slug')}/deletion", body)
 
     async def cancel_org_deletion(self, slug: str) -> dict:
         """Async twin of :meth:`ColonyClient.cancel_org_deletion` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        return await self._raw_request("DELETE", f"/orgs/{_path_segment(slug)}/deletion")
+        return await self._raw_request("DELETE", f"/orgs/{_path_segment(slug, 'slug')}/deletion")
 
     async def get_org_deletion_status(self, slug: str) -> dict:
         """Async twin of :meth:`ColonyClient.get_org_deletion_status` — same endpoint,
         same arguments, same validation. Docs live on the sync method."""
         slug = _require_nonempty(slug, "slug")
-        return await self._raw_request("GET", f"/orgs/{_path_segment(slug)}/deletion")
+        return await self._raw_request("GET", f"/orgs/{_path_segment(slug, 'slug')}/deletion")
 
     # ── Notarisation ─────────────────────────────────────────────────
 
@@ -4952,7 +5127,9 @@ class AsyncColonyClient:
         """
         from colony_sdk.client import _require_uuid
 
-        return await self._raw_request("POST", f"/posts/{_require_uuid(post_id, 'post_id')}/notarise")
+        return await self._raw_request(
+            "POST", f"/posts/{_path_segment(_require_uuid(post_id, 'post_id'), 'post_id')}/notarise"
+        )
 
     async def notarise_comment(self, comment_id: str) -> dict:
         """Record a permanent third-party proof of one of your own comments.
@@ -4964,7 +5141,7 @@ class AsyncColonyClient:
 
         return await self._raw_request(
             "POST",
-            f"/comments/{_require_uuid(comment_id, 'comment_id')}/notarise",
+            f"/comments/{_path_segment(_require_uuid(comment_id, 'comment_id'), 'comment_id')}/notarise",
         )
 
     async def get_post_notarisation(self, post_id: str) -> dict:
@@ -4976,7 +5153,7 @@ class AsyncColonyClient:
 
         return await self._raw_request(
             "GET",
-            f"/posts/{_require_uuid(post_id, 'post_id')}/notarisation",
+            f"/posts/{_path_segment(_require_uuid(post_id, 'post_id'), 'post_id')}/notarisation",
         )
 
     async def get_comment_notarisation(self, comment_id: str) -> dict:
@@ -4988,7 +5165,7 @@ class AsyncColonyClient:
 
         return await self._raw_request(
             "GET",
-            f"/comments/{_require_uuid(comment_id, 'comment_id')}/notarisation",
+            f"/comments/{_path_segment(_require_uuid(comment_id, 'comment_id'), 'comment_id')}/notarisation",
         )
 
     def verify_notarisation(
@@ -5024,7 +5201,7 @@ class AsyncColonyClient:
         comes back depends on WHO IS ASKING, because private-colony
         comments are gated on the viewer.
         """
-        from urllib.parse import quote, urlencode
+        from urllib.parse import urlencode
 
         from colony_sdk.client import _require_nonempty, _require_uuid
 
@@ -5038,10 +5215,10 @@ class AsyncColonyClient:
         if offset:
             params["offset"] = str(offset)
         if user_id is not None:
-            path = f"/users/{_require_uuid(user_id, 'user_id')}/comments"
+            path = f"/users/{_path_segment(_require_uuid(user_id, 'user_id'), 'user_id')}/comments"
         else:
             handle = _require_nonempty(str(username), "username")
-            path = f"/users/by-username/{quote(handle, safe='')}/comments"
+            path = f"/users/by-username/{_path_segment(handle, 'username')}/comments"
         return await self._raw_request("GET", f"{path}?{urlencode(params)}")
 
     async def get_user_notarisations(
@@ -5058,7 +5235,7 @@ class AsyncColonyClient:
         ordered by when each was proven rather than when the content was
         written.
         """
-        from urllib.parse import quote, urlencode
+        from urllib.parse import urlencode
 
         from colony_sdk.client import _require_nonempty, _require_uuid
 
@@ -5072,10 +5249,10 @@ class AsyncColonyClient:
         if offset:
             params["offset"] = str(offset)
         if user_id is not None:
-            path = f"/users/{_require_uuid(user_id, 'user_id')}/notarisations"
+            path = f"/users/{_path_segment(_require_uuid(user_id, 'user_id'), 'user_id')}/notarisations"
         else:
             handle = _require_nonempty(str(username), "username")
-            path = f"/users/by-username/{quote(handle, safe='')}/notarisations"
+            path = f"/users/by-username/{_path_segment(handle, 'username')}/notarisations"
         return await self._raw_request("GET", f"{path}?{urlencode(params)}")
 
     async def iter_user_comments(
