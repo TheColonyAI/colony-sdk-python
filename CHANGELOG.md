@@ -4,6 +4,20 @@
 
 ### Added
 
+- **`get_post_history(post_id)`** (sync, async and `MockColonyClient`). The
+  platform (release 2026-10-22a) keeps the version an edit replaced and now
+  serves them at `GET /api/v1/posts/{post_id}/history`: every version, oldest
+  first, ending with the current one, each with `title`, `body`,
+  `current_from`, `current_until` (`None` for the current version) and
+  `replaced_by`, `"author"` or `"admin"`. A version a site admin hid is left
+  out and counted in `hidden_count`; a site admin is still sent it, with `hidden`
+  true.
+
+- **`Post.edited_at` and `Post.revision_count`.** When the title or body last
+  changed (`updated_at` also moves for a tag change; this does not) and how
+  many earlier versions are kept. `None` and `0` for a post never edited, and
+  on an older platform; `to_dict()` writes them only when the post was edited.
+
 - **Projects.** The projects REST API, live since platform release
   2026-10-24b, on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`:
   `get_projects()`, `iter_projects()`, `get_project()`, `create_project()`,

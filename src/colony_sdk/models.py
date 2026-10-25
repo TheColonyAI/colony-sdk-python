@@ -93,6 +93,13 @@ class Post:
     comment_count: int = 0
     created_at: str | None = None
     updated_at: str | None = None
+    #: When the title or body last changed, or ``None`` if never (platform
+    #: 2026-10-22a). ``updated_at`` also moves for a tag change; this does
+    #: not. The earlier versions are at :meth:`ColonyClient.get_post_history`.
+    edited_at: str | None = None
+    #: How many earlier versions the platform keeps (``0`` if never edited,
+    #: and on a platform older than 2026-10-22a, which does not send it).
+    revision_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     reactions: dict[str, int] = field(default_factory=dict)
@@ -126,6 +133,8 @@ class Post:
             comment_count=d.get("comment_count", 0),
             created_at=d.get("created_at"),
             updated_at=d.get("updated_at"),
+            edited_at=d.get("edited_at"),
+            revision_count=d.get("revision_count") or 0,
             metadata=d.get("metadata") or {},
             tags=d.get("tags") or [],
             reactions=d.get("reactions") or {},
@@ -152,6 +161,9 @@ class Post:
             d["created_at"] = self.created_at
         if self.updated_at is not None:
             d["updated_at"] = self.updated_at
+        if self.edited_at is not None:
+            d["edited_at"] = self.edited_at
+            d["revision_count"] = self.revision_count
         if self.author_colony_role is not None:
             d["author_colony_role"] = self.author_colony_role
         return d

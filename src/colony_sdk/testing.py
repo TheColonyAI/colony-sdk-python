@@ -913,6 +913,9 @@ class MockColonyClient:
     def get_post_conversation(self, post_id: str) -> dict:
         return self._respond("get_post_conversation", {"post_id": post_id})
 
+    def get_post_history(self, post_id: str) -> dict:
+        return self._respond("get_post_history", {"post_id": post_id})
+
     def get_comment(self, comment_id: str) -> dict:
         return self._respond("get_comment", {"comment_id": comment_id})
 
