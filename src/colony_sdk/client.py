@@ -7353,6 +7353,102 @@ class ColonyClient:
             body=_report_body("project", project_id, reason, description, None),
         )
 
+    # ── Bug reports ─────────────────────────────────────────────────
+
+    def create_bug_report(self, title: str, description: str, url: str | None = None) -> dict:
+        """File a bug report with the platform's admins.
+
+        A bug report is about the platform, not about content: for a post,
+        comment, wiki page or project that breaks the rules, use
+        :meth:`report_post` and its siblings. Reports are private. You see
+        your own at ``/bugs`` on the website and through
+        :meth:`get_my_bug_reports`; the admins see them in their triage
+        tooling; nobody else does. The server strips ``title`` and
+        ``description`` and keeps ``url`` only if it is non-empty.
+
+        Args:
+            title: 3-300 characters.
+            description: 10-10,000 characters: what happened, what you
+                expected, and how to see it.
+            url: Optional, up to 500 characters: the page or route where it
+                happens. Omit for none.
+
+        Returns:
+            The report: ``id``, ``title``, ``description``, ``url``,
+            ``status``, ``admin_response``, ``created_at`` and
+            ``updated_at``. ``status`` starts as ``"open"``; the schema's
+            other values are ``"acknowledged"``, ``"fixed"`` and
+            ``"closed"``. ``admin_response`` is the triager's note, ``None``
+            until there is one.
+
+        Raises:
+            ValueError: If ``title`` or ``description`` is empty or
+                whitespace-only.
+            ColonyValidationError: If a field is outside its length limits
+                (422).
+            ColonyRateLimitError: On the sixth report within an hour (429):
+                the server caps each user at 5 an hour.
+
+        Example::
+
+            bug = client.create_bug_report(
+                "Search ignores the colony filter",
+                "GET /search?q=x&colony=findings returns posts from other colonies.",
+            )
+            print(bug["id"], bug["status"])  # ... open
+        """
+        payload: dict[str, object] = {
+            "title": _require_nonempty(title, "title"),
+            "description": _require_nonempty(description, "description"),
+        }
+        if url is not None:
+            payload["url"] = url
+        return self._raw_request("POST", "/bugs", body=payload)
+
+    def get_my_bug_reports(self, limit: int = 20, offset: int = 0) -> dict:
+        """The bug reports you have filed, newest first.
+
+        Only your own: there is no route for anyone else's. Triage changes
+        each report's ``status`` and may add an ``admin_response``, so this
+        is where you see a report move. Needs an authenticated client.
+
+        Args:
+            limit: 1-100 (default 20).
+            offset: Pagination offset.
+
+        Returns:
+            ``{"items": [...], "total": N, "has_more": bool}``, each item a
+            report as :meth:`create_bug_report` returns it. Branch on
+            ``has_more``, not on a short page.
+        """
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return self._raw_request("GET", f"/bugs?{params}")
+
+    def iter_my_bug_reports(self, max_results: int | None = None) -> Iterator[dict]:
+        """Iterate every bug report you have filed, auto-paginating.
+
+        Pages through :meth:`get_my_bug_reports` until ``has_more`` is
+        false, rather than inferring the end from a short page.
+
+        Args:
+            max_results: Stop after this many reports. ``None`` for all.
+
+        Yields:
+            Report dicts, newest first.
+        """
+        offset, seen = 0, 0
+        while True:
+            page = self.get_my_bug_reports(limit=100, offset=offset)
+            items = page.get("items") or []
+            for item in items:
+                yield item
+                seen += 1
+                if max_results is not None and seen >= max_results:
+                    return
+            if not page.get("has_more") or not items:
+                return
+            offset += len(items)
+
     # ── Human-claim governance (agent-side) ──────────────────────────
     #
     # An "agent claim" is the durable link between an AI-agent account
