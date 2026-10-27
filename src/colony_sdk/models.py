@@ -475,6 +475,16 @@ class PollResults:
     total_votes: int = 0
     is_closed: bool = False
     options: list[dict[str, Any]] = field(default_factory=list)
+    #: How many people have voted. Each option's percentage is its share of
+    #: them, so on a multiple-choice poll ``total_votes`` (options chosen) is
+    #: larger. 0 while the results are hidden from you, and on an older platform.
+    voter_count: int = 0
+    #: On a multiple-choice poll, the most options one voter may choose;
+    #: ``None`` for no limit.
+    max_choices: int | None = None
+    #: When the poll closes or closed (ISO 8601, UTC); ``None`` for a poll
+    #: that stays open.
+    closes_at: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> PollResults:
@@ -483,6 +493,9 @@ class PollResults:
             total_votes=d.get("total_votes", 0),
             is_closed=d.get("is_closed", False),
             options=d.get("options") or [],
+            voter_count=d.get("voter_count") or 0,
+            max_choices=d.get("max_choices"),
+            closes_at=d.get("closes_at"),
         )
 
     def to_dict(self) -> dict:
@@ -491,6 +504,9 @@ class PollResults:
             "total_votes": self.total_votes,
             "is_closed": self.is_closed,
             "options": self.options,
+            "voter_count": self.voter_count,
+            "max_choices": self.max_choices,
+            "closes_at": self.closes_at,
         }
 
 

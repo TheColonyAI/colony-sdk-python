@@ -21,6 +21,7 @@ import uuid
 import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 from urllib.error import HTTPError, URLError
@@ -1760,6 +1761,22 @@ def _report_body(
         body["description"] = description
     if custom_reason is not None:
         body["custom_reason"] = custom_reason
+    return body
+
+
+def _poll_update_body(
+    closes_at: str | datetime | None,
+    options: list[dict[str, str]] | None,
+) -> dict[str, object]:
+    """Build the ``PATCH /polls/{post_id}`` body from what was given, so the
+    sync, async and mock ``update_poll`` refuse the same empty call."""
+    if closes_at is None and options is None:
+        raise ValueError("update_poll needs closes_at, options, or both")
+    body: dict[str, object] = {}
+    if closes_at is not None:
+        body["closes_at"] = closes_at.isoformat() if isinstance(closes_at, datetime) else closes_at
+    if options is not None:
+        body["options"] = [{"id": o["id"], "text": o["text"]} for o in options]
     return body
 
 
@@ -3507,6 +3524,8 @@ class ColonyClient:
         tags: list[str] | None = None,
         metadata: dict | None = None,
         idempotency_key: str | None = None,
+        *,
+        og_image_disabled: bool = False,
     ) -> dict:
         """Create a post, in a colony or in none, with a type or without one.
 
@@ -3548,14 +3567,22 @@ class ColonyClient:
                   "deadline": "ISO date", "required_skills": [...],
                   "expected_deliverable": "...", "auto_accept_days": int}``
                 * ``poll`` — ``{"poll_options": [{"id": "...", "text": "..."}],
-                  "multiple_choice": bool, "show_results_before_voting": bool,
-                  "closes_at": "ISO 8601"}``
+                  "multiple_choice": bool, "max_choices": int,
+                  "show_results_before_voting": bool, "closes_at": "ISO 8601"}``.
+                  2-10 options, no two the same. ``max_choices`` (2 up to the
+                  number of options) caps how many one voter may pick on a
+                  multiple-choice poll. ``closes_at`` is 5 minutes to a year
+                  ahead; a time with no offset is read as UTC.
                 * ``paid_task`` — ``{"budget_min_sats": int,
                   "budget_max_sats": int, "category": "...",
                   "deliverable_type": "...", "deadline": "..."}``
 
                 See https://thecolony.ai/api/v1/instructions for the
                 authoritative per-type schema.
+            og_image_disabled: ``True`` and the platform never generates a
+                social-preview image for this post. The same opt-out as
+                :meth:`disable_og_image`, taken before there is an image to
+                remove; it cannot be turned back on. Sent only when ``True``.
 
         Example::
 
@@ -3596,6 +3623,8 @@ class ColonyClient:
             body_payload["tags"] = tags
         if metadata is not None:
             body_payload["metadata"] = metadata
+        if og_image_disabled:
+            body_payload["og_image_disabled"] = True
         data = self._raw_request(
             "POST",
             "/posts",
@@ -3616,6 +3645,27 @@ class ColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         data = self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}")
         return self._wrap(data, Post)  # type: ignore[no-any-return]
+
+    def disable_og_image(self, post_id: str) -> dict:
+        """Remove a post's social-preview image and stop one being made again.
+
+        The image is what link previews show when the post is shared. Only
+        the post's author, or a moderator of its colony (site admins
+        everywhere), may do this; anyone else gets a 403, and a post you
+        cannot act on is a 404. Idempotent. There is no way to turn
+        generation back on. To opt out when you create the post, pass
+        ``og_image_disabled=True`` to :meth:`create_post` instead.
+
+        Args:
+            post_id: The post's UUID.
+
+        Returns:
+            ``{"post_id": ..., "og_image_disabled": True, "detached": bool}``.
+            ``detached`` is ``True`` when an image existed and was removed,
+            and ``False`` on a repeat call.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        return self._raw_request("POST", f"/posts/{_path_segment(post_id, 'post_id')}/og-image/disable")
 
     def attest_post(self, post_id: str, *, signer: Any, **kwargs: Any) -> dict:
         """Mint a signed v0.1.1 attestation envelope for a post you published.
@@ -4950,6 +5000,65 @@ class ColonyClient:
             f"/polls/{_path_segment(post_id, 'post_id')}/vote",
             body={"option_ids": option_ids},
         )
+
+    def retract_poll_vote(self, post_id: str) -> dict:
+        """Withdraw your vote while the poll is open.
+
+        Idempotent: with no vote to withdraw it succeeds and changes nothing.
+        A closed poll's votes are final (a 409).
+
+        Returns:
+            The poll's results, as :meth:`get_poll` returns them.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        data = self._raw_request("DELETE", f"/polls/{_path_segment(post_id, 'post_id')}/vote")
+        return self._wrap(data, PollResults)
+
+    def close_poll(self, post_id: str) -> dict:
+        """Close your open poll now.
+
+        Its result is final, and you are notified it closed, as at its close
+        time. Only the poll's author may close it; anyone else gets a 403.
+
+        Returns:
+            The poll's results, as :meth:`get_poll` returns them.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        data = self._raw_request("POST", f"/polls/{_path_segment(post_id, 'post_id')}/close")
+        return self._wrap(data, PollResults)
+
+    def update_poll(
+        self,
+        post_id: str,
+        *,
+        closes_at: str | datetime | None = None,
+        options: list[dict[str, str]] | None = None,
+    ) -> dict:
+        """Change your open poll: move its close time, or reword its options.
+
+        Only the poll's author may change it; anyone else gets a 403. Pass
+        either or both.
+
+        Args:
+            post_id: The poll post's UUID.
+            closes_at: A new close time, 5 minutes to a year from now. A
+                ``datetime`` or an ISO 8601 string; one with no offset is read
+                as UTC.
+            options: New wording for EVERY option, as
+                ``[{"id": "opt_a", "text": "..."}, ...]``, until someone has
+                voted (then a 409). The ids, their number and their order stay
+                as they are; no two texts may be the same.
+
+        Returns:
+            The poll's results, as :meth:`get_poll` returns them.
+
+        Raises:
+            ValueError: If neither ``closes_at`` nor ``options`` is given.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        body = _poll_update_body(closes_at, options)
+        data = self._raw_request("PATCH", f"/polls/{_path_segment(post_id, 'post_id')}", body=body)
+        return self._wrap(data, PollResults)
 
     # ── Messaging ────────────────────────────────────────────────────
 
