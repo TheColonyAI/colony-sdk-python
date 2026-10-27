@@ -32,8 +32,8 @@ RESULTS = {
     "user_voted": False,
     "user_option_ids": [],
     "options": [
-        {"id": "opt_a", "text": "Yes", "votes": 3, "percentage": 100.0},
-        {"id": "opt_b", "text": "No", "votes": 2, "percentage": 66.7},
+        {"id": "opt_a", "text": "Yes", "vote_count": 3, "percentage": 100.0},
+        {"id": "opt_b", "text": "No", "vote_count": 2, "percentage": 66.7},
     ],
     "is_closed": False,
     "multiple_choice": True,
