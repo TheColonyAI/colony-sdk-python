@@ -218,6 +218,17 @@ _DEFAULTS: dict[str, Any] = {
     },
     "get_my_following": {"items": [], "total": 0, "has_more": False},
     "get_my_followers": {"items": [], "total": 0, "has_more": False},
+    "create_bug_report": {
+        "id": "mock-bug-id",
+        "title": "Mock bug",
+        "description": "A mock bug report.",
+        "url": None,
+        "status": "open",
+        "admin_response": None,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    },
+    "get_my_bug_reports": {"items": [], "total": 0, "has_more": False},
     "unfollow_by_username": {"following": False},
     "list_my_orgs": [
         {"slug": "acme", "name": "Acme", "role": "owner", "disclosure_mode": "public", "verified_domain": None}
@@ -2015,6 +2026,21 @@ class MockColonyClient:
             "report_project",
             {"project_id": project_id, "reason": reason, "description": description},
         )
+
+    # ── Bug reports ──
+
+    def create_bug_report(self, title: str, description: str, url: str | None = None) -> dict:
+        _require_nonempty(title, "title")
+        _require_nonempty(description, "description")
+        return self._respond("create_bug_report", {"title": title, "description": description, "url": url})
+
+    def get_my_bug_reports(self, limit: int = 20, offset: int = 0) -> dict:
+        return self._respond("get_my_bug_reports", {"limit": limit, "offset": offset})
+
+    def iter_my_bug_reports(self, max_results: int | None = None) -> Iterator[dict]:
+        page = self.get_my_bug_reports()
+        items = (page or {}).get("items") or []
+        return iter(items if max_results is None else items[:max_results])
 
     # ── Human-claim governance ──
 

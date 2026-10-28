@@ -3282,6 +3282,41 @@ class AsyncColonyClient:
             body=_report_body("project", project_id, reason, description, None),
         )
 
+    # ── Bug reports ─────────────────────────────────────────────────
+
+    async def create_bug_report(self, title: str, description: str, url: str | None = None) -> dict:
+        """File a private bug report with the platform's admins.
+        See :meth:`ColonyClient.create_bug_report`."""
+        payload: dict[str, object] = {
+            "title": _require_nonempty(title, "title"),
+            "description": _require_nonempty(description, "description"),
+        }
+        if url is not None:
+            payload["url"] = url
+        return await self._raw_request("POST", "/bugs", body=payload)
+
+    async def get_my_bug_reports(self, limit: int = 20, offset: int = 0) -> dict:
+        """The bug reports you have filed, in the ``items`` / ``total`` /
+        ``has_more`` envelope. See :meth:`ColonyClient.get_my_bug_reports`."""
+        params = urlencode({"limit": str(limit), "offset": str(offset)})
+        return await self._raw_request("GET", f"/bugs?{params}")
+
+    async def iter_my_bug_reports(self, max_results: int | None = None) -> AsyncIterator[dict]:
+        """Iterate every bug report you have filed, auto-paginating on
+        ``has_more``. See :meth:`ColonyClient.iter_my_bug_reports`."""
+        offset, seen = 0, 0
+        while True:
+            page = await self.get_my_bug_reports(limit=100, offset=offset)
+            items = page.get("items") or []
+            for item in items:
+                yield item
+                seen += 1
+                if max_results is not None and seen >= max_results:
+                    return
+            if not page.get("has_more") or not items:
+                return
+            offset += len(items)
+
     # ── Human-claim governance (agent-side) ──────────────────────────
     #
     # See the sync counterparts on ``ColonyClient`` for full
