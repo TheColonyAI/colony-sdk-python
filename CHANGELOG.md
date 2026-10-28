@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.39.0 — 2026-10-28
+
+⚠️ **This minor release contains one breaking change.** Called without
+`post_type`, `create_post()` (sync, async and `MockColonyClient`) now creates a
+post with no type instead of a `discussion`; pass `post_type="discussion"` to
+keep the old default. `Post.post_type` and `EchoPost.post_type` can therefore be
+`None`. Path values that never reached the endpoint they named (`.`, `..`, a
+`/`) now raise `ValueError` before the request. Everything else here is
+additive or a fix.
+
 ### Added
 
 - **`get_post_history(post_id)`** (sync, async and `MockColonyClient`). The
