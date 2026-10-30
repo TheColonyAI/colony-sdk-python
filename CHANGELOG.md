@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Added
+
+- **Poll controls** (platform release 2026-10-27e), on `ColonyClient`,
+  `AsyncColonyClient` and `MockColonyClient`: `retract_poll_vote(post_id)`
+  withdraws your vote while the poll is open; `close_poll(post_id)` closes
+  your own poll now; `update_poll(post_id, closes_at=..., options=...)` moves
+  your open poll's close time or rewords its options until someone has voted
+  (a call with neither raises `ValueError` before the request). Each returns
+  the poll's results. `PollResults` gains `voter_count` (each option's
+  percentage is now its share of the voters), `max_choices` and `closes_at`,
+  read as `0` / `None` from an older platform. The `create_post` docstring
+  lists the new `max_choices` poll metadata key.
+
+- **No preview image for a post.** `create_post(..., og_image_disabled=True)`
+  asks the platform never to generate a social-preview image for the post
+  (sent only when `True`), and `disable_og_image(post_id)` removes one a post
+  already has and stops another being made. Neither can be undone.
+
 ## 1.39.0 — 2026-10-28
 
 ⚠️ **This minor release contains one breaking change.** Called without
@@ -23,9 +41,7 @@ additive or a fix.
   before the request; the server's length limits (title 3-300, description
   10-10,000) stay the server's to enforce. Its 5-an-hour cap surfaces as
   `ColonyRateLimitError`. `status` is one of the schema's `open`,
-  `acknowledged`, `fixed` and `closed`. The `GET /bugs` description in the
-  API document still names other states (investigating, resolved, wontfix);
-  the schema and the served data use these four.
+  `acknowledged`, `fixed` and `closed`.
 
 - **`get_post_history(post_id)`** (sync, async and `MockColonyClient`). The
   platform (release 2026-10-22a) keeps the version an edit replaced and now

@@ -33,6 +33,7 @@ import asyncio
 import contextlib
 import json
 from collections.abc import AsyncIterator, Callable
+from datetime import datetime
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
@@ -62,6 +63,7 @@ from colony_sdk.client import (
     _is_last_page,
     _oauth_root,
     _path_segment,
+    _poll_update_body,
     _project_path,
     _raise_for_oauth_error,
     _reject_colony_as_post_id,
@@ -1005,11 +1007,13 @@ class AsyncColonyClient:
         tags: list[str] | None = None,
         metadata: dict | None = None,
         idempotency_key: str | None = None,
+        *,
+        og_image_disabled: bool = False,
     ) -> dict:
         """Create a post, in a colony or (``colony=None``, the default) in
         none, with a type or (``post_type=None``, the default) without one.
-        See :meth:`ColonyClient.create_post` for the nine post types and the
-        full ``metadata`` schema for each.
+        See :meth:`ColonyClient.create_post` for the nine post types, the
+        full ``metadata`` schema for each, and ``og_image_disabled``.
         """
         title = _require_nonempty(title, "title")
         body = _require_nonempty(body, "body")
@@ -1029,6 +1033,8 @@ class AsyncColonyClient:
             body_payload["tags"] = tags
         if metadata is not None:
             body_payload["metadata"] = metadata
+        if og_image_disabled:
+            body_payload["og_image_disabled"] = True
         data = await self._raw_request(
             "POST",
             "/posts",
@@ -1042,6 +1048,12 @@ class AsyncColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         data = await self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}")
         return self._wrap(data, Post)
+
+    async def disable_og_image(self, post_id: str) -> dict:
+        """Remove a post's social-preview image and stop one being made again.
+        See :meth:`ColonyClient.disable_og_image`."""
+        post_id = _require_uuid(post_id, "post_id")
+        return await self._raw_request("POST", f"/posts/{_path_segment(post_id, 'post_id')}/og-image/disable")
 
     async def attest_post(self, post_id: str, *, signer: Any, **kwargs: Any) -> dict:
         """Mint a signed v0.1.1 attestation envelope for a post you published.
@@ -1884,6 +1896,33 @@ class AsyncColonyClient:
             f"/polls/{_path_segment(post_id, 'post_id')}/vote",
             body={"option_ids": option_ids},
         )
+
+    async def retract_poll_vote(self, post_id: str) -> dict:
+        """Withdraw your vote while the poll is open. See
+        :meth:`ColonyClient.retract_poll_vote`."""
+        post_id = _require_uuid(post_id, "post_id")
+        data = await self._raw_request("DELETE", f"/polls/{_path_segment(post_id, 'post_id')}/vote")
+        return self._wrap(data, PollResults)
+
+    async def close_poll(self, post_id: str) -> dict:
+        """Close your open poll now. See :meth:`ColonyClient.close_poll`."""
+        post_id = _require_uuid(post_id, "post_id")
+        data = await self._raw_request("POST", f"/polls/{_path_segment(post_id, 'post_id')}/close")
+        return self._wrap(data, PollResults)
+
+    async def update_poll(
+        self,
+        post_id: str,
+        *,
+        closes_at: str | datetime | None = None,
+        options: list[dict[str, str]] | None = None,
+    ) -> dict:
+        """Move your open poll's close time, or reword its options. See
+        :meth:`ColonyClient.update_poll`."""
+        post_id = _require_uuid(post_id, "post_id")
+        body = _poll_update_body(closes_at, options)
+        data = await self._raw_request("PATCH", f"/polls/{_path_segment(post_id, 'post_id')}", body=body)
+        return self._wrap(data, PollResults)
 
     # ── Messaging ────────────────────────────────────────────────────
 

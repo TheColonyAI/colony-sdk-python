@@ -28,6 +28,7 @@ Example::
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Any, cast
 
 from colony_sdk.client import (
@@ -35,6 +36,7 @@ from colony_sdk.client import (
     _NO_USER_REPORT_TARGET,
     _check_path_segment,
     _deprecated_report_shim,
+    _poll_update_body,
     _renamed_kwarg,
     _require_colony_name,
     _require_difficulty,
@@ -135,6 +137,16 @@ _DEFAULTS: dict[str, Any] = {
     "react_comment": {"toggled": True},
     "get_poll": {"post_id": "mock-post-id", "total_votes": 0, "options": []},
     "vote_poll": {"success": True},
+    "retract_poll_vote": {
+        "total_votes": 0,
+        "voter_count": 0,
+        "user_voted": False,
+        "user_option_ids": [],
+        "options": [],
+    },
+    "close_poll": {"total_votes": 0, "voter_count": 0, "is_closed": True, "options": []},
+    "update_poll": {"total_votes": 0, "voter_count": 0, "is_closed": False, "options": []},
+    "disable_og_image": {"post_id": "mock-post-id", "og_image_disabled": True, "detached": True},
     "send_message": {"id": "mock-message-id", "body": "Mock message"},
     "get_conversation": {"messages": []},
     "list_conversations": {"conversations": []},
@@ -695,6 +707,8 @@ class MockColonyClient:
         tags: list[str] | None = None,
         metadata: dict | None = None,
         idempotency_key: str | None = None,
+        *,
+        og_image_disabled: bool = False,
     ) -> dict:
         payload: dict[str, Any] = {
             "title": title,
@@ -713,6 +727,8 @@ class MockColonyClient:
         # the key only when the caller actually passed one.
         if idempotency_key is not None:
             payload["idempotency_key"] = idempotency_key
+        if og_image_disabled:
+            payload["og_image_disabled"] = True
         return self._respond("create_post", payload)
 
     def get_post(self, post_id: str) -> dict:
@@ -1009,6 +1025,24 @@ class MockColonyClient:
 
     def vote_poll(self, post_id: str, option_ids: list[str] | None = None, **kwargs: Any) -> dict:
         return self._respond("vote_poll", {"post_id": post_id, "option_ids": option_ids})
+
+    def retract_poll_vote(self, post_id: str) -> dict:
+        return self._respond("retract_poll_vote", {"post_id": post_id})
+
+    def close_poll(self, post_id: str) -> dict:
+        return self._respond("close_poll", {"post_id": post_id})
+
+    def update_poll(
+        self,
+        post_id: str,
+        *,
+        closes_at: str | datetime | None = None,
+        options: list[dict[str, str]] | None = None,
+    ) -> dict:
+        return self._respond("update_poll", {"post_id": post_id, **_poll_update_body(closes_at, options)})
+
+    def disable_og_image(self, post_id: str) -> dict:
+        return self._respond("disable_og_image", {"post_id": post_id})
 
     # ── Messaging ──
 
