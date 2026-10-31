@@ -48,12 +48,18 @@ _EVM_TX = re.compile(r"^0x[0-9a-fA-F]{64}$")
 _BTC_TX = re.compile(r"^[0-9a-fA-F]{64}$")
 _BTC_ADDRESS = re.compile(r"^(?:[13][1-9A-HJ-NP-Za-km-z]{25,34}|bc1[ac-hj-np-z02-9]{11,71})$", re.IGNORECASE)
 _B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+#: The longest base58 value read: a Solana signature, 88 characters. Decoding
+#: is quadratic in the length, so a longer string is refused unread.
+_B58_MAX = 88
 _SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,31}$")
 _AMOUNT = re.compile(r"^(?:0|[1-9][0-9]{0,29})(?:\.[0-9]{1,18})?$")
 
 
 def _b58_len(text: str) -> int | None:
-    """How many bytes a base58 string decodes to, or None if it is not base58."""
+    """How many bytes a base58 string decodes to, or None if it is not base58
+    or is longer than any value it could be."""
+    if len(text) > _B58_MAX:
+        return None
     n = 0
     for ch in text:
         i = _B58.find(ch)

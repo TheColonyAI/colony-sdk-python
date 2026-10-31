@@ -73,6 +73,14 @@ class TestBuilders:
         with pytest.raises(ValueError, match=needle):
             build()
 
+    def test_an_overlong_value_is_refused_unread(self) -> None:
+        # Base58 decoding is quadratic in the length: 100,000 characters took
+        # over a second. The longest real value is an 88-character signature.
+        with pytest.raises(ValueError, match="not a valid solana address"):
+            CryptoRef.address("solana", "z" * 200_000)
+        with pytest.raises(ValueError, match="not a valid solana transaction id"):
+            CryptoRef.tx("solana", "z" * 200_000)
+
     def test_the_declaration(self) -> None:
         refs = [CryptoRef.asset("bsc", FLAPJAX)]
         assert crypto_declaration(refs, affiliation="paid") == {"refs": refs, "affiliation": "paid"}
