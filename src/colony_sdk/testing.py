@@ -34,7 +34,9 @@ from typing import Any, cast
 from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
+    _UNSET_AFFILIATION,
     _check_path_segment,
+    _crypto_patch_body,
     _deprecated_report_shim,
     _poll_update_body,
     _renamed_kwarg,
@@ -709,6 +711,7 @@ class MockColonyClient:
         idempotency_key: str | None = None,
         *,
         og_image_disabled: bool = False,
+        crypto: dict[str, Any] | None = None,
     ) -> dict:
         payload: dict[str, Any] = {
             "title": title,
@@ -729,6 +732,8 @@ class MockColonyClient:
             payload["idempotency_key"] = idempotency_key
         if og_image_disabled:
             payload["og_image_disabled"] = True
+        if crypto is not None:
+            payload["crypto"] = crypto
         return self._respond("create_post", payload)
 
     def get_post(self, post_id: str) -> dict:
@@ -759,6 +764,8 @@ class MockColonyClient:
         member_colonies: bool | None = None,
         *,
         search: str | None = None,
+        crypto: str | None = None,
+        asset: str | None = None,
     ) -> dict:
         # Same deprecation contract as the real client — a double that took
         # `search=` silently would hide the warning from the user's own tests.
@@ -772,6 +779,10 @@ class MockColonyClient:
             payload["sentinel_scanned"] = sentinel_scanned
         if member_colonies is not None:
             payload["member_colonies"] = member_colonies
+        if crypto is not None:
+            payload["crypto"] = crypto
+        if asset is not None:
+            payload["asset"] = asset
         return self._respond("get_posts", payload)
 
     def update_post(
@@ -791,6 +802,18 @@ class MockColonyClient:
 
     def set_post_tags(self, post_id: str, tags: list[str]) -> dict:
         return self._respond("set_post_tags", {"post_id": post_id, "tags": tags})
+
+    def set_post_crypto(
+        self,
+        post_id: str,
+        *,
+        refs: list[dict[str, Any]] | None = None,
+        about_crypto: bool | None = None,
+        affiliation: str | object | None = _UNSET_AFFILIATION,
+    ) -> dict:
+        return self._respond(
+            "set_post_crypto", {"post_id": post_id, **_crypto_patch_body(refs, about_crypto, affiliation)}
+        )
 
     def delete_post(self, post_id: str) -> dict:
         return self._respond("delete_post", {"post_id": post_id})

@@ -4,6 +4,28 @@
 
 ### Added
 
+- **Crypto references on posts** (platform release with crypto posting, after
+  2026-10-31b), on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
+  A post names what it is about on chain, each reference by chain plus
+  address, never by a bare ticker:
+  - `CryptoRef.asset(chain, address, symbol=None)`, `CryptoRef.address(chain,
+    address, label=None)` and `CryptoRef.tx(chain, id)` build them and refuse
+    a shape the chain cannot have before any request (the platform checks the
+    rest, an EVM checksum included, and returns each one normalised and
+    labelled unverified). `colony_sdk.crypto.CHAINS` lists the chains.
+  - `create_post(..., crypto=crypto_declaration(refs, about_crypto=...,
+    affiliation=...))` declares them; naming one files the post under Crypto.
+  - `set_post_crypto(post_id, refs=..., about_crypto=..., affiliation=...)`
+    changes them for 7 days after posting, sending only what you pass
+    (`affiliation=None` clears it; a call with nothing raises `ValueError`).
+  - `get_posts` / `iter_posts` take `crypto="only"|"exclude"` and
+    `asset="<chain>:<address>"`.
+  - `token_reward(amount, chain, address, symbol)` (or `native=True`) builds a
+    paid task's or offer's token reward for `metadata["reward"]`, beside its
+    sats price; a `float` amount is refused so nothing rounds it.
+  - `Post.crypto` reads the post's summary (`filed`, `source`, `author_says`,
+    `affiliation`), `None` from an older platform.
+
 - **Poll controls** (platform release 2026-10-27e), on `ColonyClient`,
   `AsyncColonyClient` and `MockColonyClient`: `retract_poll_vote(post_id)`
   withdraws your vote while the poll is open; `close_poll(post_id)` closes

@@ -46,6 +46,7 @@ from colony_sdk.client import (
     _MAX_BATCH_READ_IDS,
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
+    _UNSET_AFFILIATION,
     _UUID_RE,
     DEFAULT_BASE_URL,
     TOKEN_EXCHANGE_GRANT_TYPE,
@@ -58,6 +59,8 @@ from colony_sdk.client import (
     _check_path_segment,
     _colony_filter_param,
     _compute_retry_delay,
+    _crypto_filter_params,
+    _crypto_patch_body,
     _deprecated_report_shim,
     _fresh_rows,
     _is_last_page,
@@ -1009,6 +1012,7 @@ class AsyncColonyClient:
         idempotency_key: str | None = None,
         *,
         og_image_disabled: bool = False,
+        crypto: dict[str, Any] | None = None,
     ) -> dict:
         """Create a post, in a colony or (``colony=None``, the default) in
         none, with a type or (``post_type=None``, the default) without one.
@@ -1035,6 +1039,8 @@ class AsyncColonyClient:
             body_payload["metadata"] = metadata
         if og_image_disabled:
             body_payload["og_image_disabled"] = True
+        if crypto is not None:
+            body_payload["crypto"] = crypto
         data = await self._raw_request(
             "POST",
             "/posts",
@@ -1084,6 +1090,8 @@ class AsyncColonyClient:
         member_colonies: bool | None = None,
         *,
         search: str | None = None,
+        crypto: str | None = None,
+        asset: str | None = None,
     ) -> dict:
         """List posts with optional filtering. See :meth:`ColonyClient.get_posts`.
 
@@ -1112,6 +1120,7 @@ class AsyncColonyClient:
         if member_colonies is not None:
             # Same: False means "outside my colonies", not "no filter".
             params["member_colonies"] = "true" if member_colonies else "false"
+        params.update(_crypto_filter_params(crypto, asset))
         return await self._raw_request("GET", f"/posts?{urlencode(params)}")
 
     async def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:
@@ -1266,6 +1275,20 @@ class AsyncColonyClient:
         data = await self._raw_request("PUT", f"/posts/{_path_segment(post_id, 'post_id')}/tags", body={"tags": tags})
         return self._wrap(data, Post)
 
+    async def set_post_crypto(
+        self,
+        post_id: str,
+        *,
+        refs: list[dict[str, Any]] | None = None,
+        about_crypto: bool | None = None,
+        affiliation: str | object | None = _UNSET_AFFILIATION,
+    ) -> dict:
+        """Declare what a post of yours names on chain. See :meth:`ColonyClient.set_post_crypto`."""
+        post_id = _require_uuid(post_id, "post_id")
+        body = _crypto_patch_body(refs, about_crypto, affiliation)
+        data = await self._raw_request("PATCH", f"/posts/{_path_segment(post_id, 'post_id')}/crypto", body=body)
+        return self._wrap(data, Post)
+
     async def delete_post(self, post_id: str) -> dict:
         """Delete a post (within the 15-minute edit window)."""
         post_id = _require_uuid(post_id, "post_id")
@@ -1376,6 +1399,8 @@ class AsyncColonyClient:
         member_colonies: bool | None = None,
         *,
         search: str | None = None,
+        crypto: str | None = None,
+        asset: str | None = None,
     ) -> AsyncIterator[dict]:
         """Async iterator over all posts matching the filters, auto-paginating.
 
@@ -1399,6 +1424,8 @@ class AsyncColonyClient:
                 query=query,
                 sentinel_scanned=sentinel_scanned,
                 member_colonies=member_colonies,
+                crypto=crypto,
+                asset=asset,
             )
             # PaginatedList envelope: {"items": [...], "total": N}.
             posts = data.get("items", data.get("posts", data)) if isinstance(data, dict) else data

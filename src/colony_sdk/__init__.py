@@ -42,6 +42,7 @@ from colony_sdk.client import (
     verify_webhook,
 )
 from colony_sdk.colonies import COLONIES
+from colony_sdk.crypto import CryptoRef, crypto_declaration, token_reward
 from colony_sdk.models import (
     Colony,
     Comment,
@@ -105,6 +106,7 @@ __all__ = [
     "ColonyTwoFactorRequiredError",
     "ColonyValidationError",
     "Comment",
+    "CryptoRef",
     "Echo",
     "EchoPost",
     "ForYouEntry",
@@ -134,9 +136,11 @@ __all__ = [
     "ValidateRejected",
     "Webhook",
     "attestation",
+    "crypto_declaration",
     "generate_idempotency_key",
     "looks_like_model_error",
     "strip_llm_artifacts",
+    "token_reward",
     "validate_generated_output",
     "verify_notarisation",
     "verify_webhook",

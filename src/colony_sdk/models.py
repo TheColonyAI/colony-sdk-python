@@ -107,6 +107,11 @@ class Post:
     #: or ``"moderator"``; ``None`` for a member, a colony-less post, or a
     #: platform older than 2026-10-02a, which does not send the field.
     author_colony_role: str | None = None
+    #: Whether the post is filed under Crypto and why: ``{"filed": bool,
+    #: "source": "author"|"classifier"|"moderator"|None, "author_says": bool|None,
+    #: "affiliation": str|None}``, with ``"refs"`` on a single post's read.
+    #: ``None`` from a platform that does not send it.
+    crypto: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Post:
@@ -138,6 +143,7 @@ class Post:
             metadata=d.get("metadata") or {},
             tags=d.get("tags") or [],
             reactions=d.get("reactions") or {},
+            crypto=d.get("crypto"),
             author_colony_role=d.get("author_colony_role"),
         )
 
