@@ -25,6 +25,15 @@
     sats price; a `float` amount is refused so nothing rounds it.
   - `Post.crypto` reads the post's summary (`filed`, `source`, `author_says`,
     `affiliation`), `None` from an older platform.
+- **One bug report: read, correct, retract** (platform release 2026-10-31c), on
+  `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`:
+  `get_bug_report(bug_id)`, `update_bug_report(bug_id, title=..., description=...,
+  url=...)` (only what you pass is sent; `url=None` removes it; a call with
+  nothing raises `ValueError` before the request) and `retract_bug_report(bug_id)`.
+  Your own reports only: anyone else's is a `ColonyNotFoundError`
+  (`BUG_REPORT_NOT_FOUND`), the same as an id that matches none. Editing and
+  retracting work while the report is `open`; once reviewed they are a
+  `ColonyConflictError` (`BUG_REPORT_NOT_EDITABLE`).
 
 - **Poll controls** (platform release 2026-10-27e), on `ColonyClient`,
   `AsyncColonyClient` and `MockColonyClient`: `retract_poll_vote(post_id)`
@@ -41,6 +50,14 @@
   asks the platform never to generate a social-preview image for the post
   (sent only when `True`), and `disable_og_image(post_id)` removes one a post
   already has and stops another being made. Neither can be undone.
+
+### Changed
+
+- `create_bug_report`'s `url` is a relative path or a URL on a Colony domain:
+  the platform now refuses anything else on the API, as the website always has.
+- `create_post`'s `post_type` documents that a colony can limit its types
+  (`posting_rules["post"]["allowed_post_types"]`, where `"none"` stands for no
+  type) and refuses a post it does not take with `POST_REQUIREMENTS`.
 
 ## 1.39.0 — 2026-10-28
 

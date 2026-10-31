@@ -195,3 +195,75 @@ class TestMockBugReports:
         assert mock.calls[-1] == ("get_my_bug_reports", {"limit": 5, "offset": 0})
         canned = MockColonyClient(responses={"get_my_bug_reports": PAGE})
         assert [b["id"] for b in canned.iter_my_bug_reports(max_results=1)] == [BUG["id"]]
+
+
+# ---------------------------------------------------------------------------
+# One report: read, correct, retract (platform 2026-10-31c)
+# ---------------------------------------------------------------------------
+
+NOT_EDITABLE_409 = {"detail": {"message": "already reviewed", "code": "BUG_REPORT_NOT_EDITABLE", "status": "fixed"}}
+NOT_FOUND_404 = {"detail": {"message": "No bug report of yours has this id.", "code": "BUG_REPORT_NOT_FOUND"}}
+
+
+class TestOneReport:
+    @patch("colony_sdk.client.urlopen")
+    def test_get_reads_it_by_id(self, mock_urlopen) -> None:
+        mock_urlopen.return_value = _mock_response(BUG)
+        assert _authed_client().get_bug_report(BUG["id"])["status"] == "open"
+        req = _request(mock_urlopen)
+        assert req.get_method() == "GET" and req.full_url.endswith(f"/api/v1/bugs/{BUG['id']}")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_sends_only_what_was_passed(self, mock_urlopen) -> None:
+        mock_urlopen.return_value = _mock_response(BUG)
+        client = _authed_client()
+        client.update_bug_report(BUG["id"], description="The quoted slug is gigawatt-field-notes.")
+        req = _request(mock_urlopen)
+        assert req.get_method() == "PATCH" and req.full_url.endswith(f"/api/v1/bugs/{BUG['id']}")
+        assert json.loads(req.data) == {"description": "The quoted slug is gigawatt-field-notes."}
+        client.update_bug_report(BUG["id"], url=None)
+        assert json.loads(_request(mock_urlopen).data) == {"url": None}, "None removes the url"
+
+    @pytest.mark.parametrize("kwargs", [{}, {"title": "  "}, {"description": ""}])
+    @patch("colony_sdk.client.urlopen")
+    def test_an_empty_or_blank_change_is_refused_before_the_request(self, mock_urlopen, kwargs) -> None:
+        with pytest.raises(ValueError):
+            _authed_client().update_bug_report(BUG["id"], **kwargs)
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_reviewed_report_is_a_conflict_and_anothers_is_not_found(self, mock_urlopen) -> None:
+        from colony_sdk import ColonyConflictError, ColonyNotFoundError
+
+        mock_urlopen.side_effect = _make_http_error(409, NOT_EDITABLE_409)
+        with pytest.raises(ColonyConflictError):
+            _authed_client().retract_bug_report(BUG["id"])
+        mock_urlopen.side_effect = _make_http_error(404, NOT_FOUND_404)
+        with pytest.raises(ColonyNotFoundError):
+            _authed_client().get_bug_report(BUG["id"])
+
+    @patch("colony_sdk.client.urlopen")
+    def test_retract_deletes(self, mock_urlopen) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        _authed_client().retract_bug_report(BUG["id"])
+        req = _request(mock_urlopen)
+        assert req.get_method() == "DELETE" and req.full_url.endswith(f"/api/v1/bugs/{BUG['id']}")
+
+    async def test_the_async_client_sends_the_same(self) -> None:
+        client, seen = _recording(BUG)
+        await client.get_bug_report(BUG["id"])
+        await client.update_bug_report(BUG["id"], title="Search ignores the colony filter (again)")
+        await client.retract_bug_report(BUG["id"])
+        assert [(r.method, r.url.path) for r in seen] == [
+            (m, f"/api/v1/bugs/{BUG['id']}") for m in ("GET", "PATCH", "DELETE")
+        ]
+        assert json.loads(seen[1].content) == {"title": "Search ignores the colony filter (again)"}
+
+    def test_the_mock_records_the_calls(self) -> None:
+        mock = MockColonyClient()
+        mock.update_bug_report(BUG["id"], url=None)
+        assert mock.calls[-1] == ("update_bug_report", {"bug_id": BUG["id"], "url": None})
+        mock.retract_bug_report(BUG["id"])
+        assert mock.calls[-1] == ("retract_bug_report", {"bug_id": BUG["id"]})
+        with pytest.raises(ValueError):
+            mock.update_bug_report(BUG["id"])

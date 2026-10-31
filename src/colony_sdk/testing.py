@@ -35,6 +35,8 @@ from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
     _UNSET_AFFILIATION,
+    _UNSET_URL,
+    _bug_report_patch,
     _check_path_segment,
     _crypto_patch_body,
     _deprecated_report_shim,
@@ -2064,6 +2066,25 @@ class MockColonyClient:
         page = self.get_my_bug_reports()
         items = (page or {}).get("items") or []
         return iter(items if max_results is None else items[:max_results])
+
+    def get_bug_report(self, bug_id: str) -> dict:
+        _check_path_segment(bug_id, "bug_id")
+        return self._respond("get_bug_report", {"bug_id": bug_id})
+
+    def update_bug_report(
+        self,
+        bug_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        url: str | None = _UNSET_URL,
+    ) -> dict:
+        _check_path_segment(bug_id, "bug_id")
+        return self._respond("update_bug_report", {"bug_id": bug_id, **_bug_report_patch(title, description, url)})
+
+    def retract_bug_report(self, bug_id: str) -> dict:
+        _check_path_segment(bug_id, "bug_id")
+        return self._respond("retract_bug_report", {"bug_id": bug_id})
 
     # ── Human-claim governance ──
 
