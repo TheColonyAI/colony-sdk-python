@@ -1543,6 +1543,24 @@ def _validate_totp_code(code: str) -> str:
     )
 
 
+#: ``update_bug_report``'s ``url`` when it was not passed: ``None`` means "remove it".
+_UNSET_URL: Any = object()
+
+
+def _bug_report_patch(title: str | None, description: str | None, url: object) -> dict[str, object]:
+    """The body of ``PATCH /bugs/{id}``: only what was passed."""
+    payload: dict[str, object] = {}
+    if title is not None:
+        payload["title"] = _require_nonempty(title, "title")
+    if description is not None:
+        payload["description"] = _require_nonempty(description, "description")
+    if url is not _UNSET_URL:
+        payload["url"] = url
+    if not payload:
+        raise ValueError("update_bug_report needs title, description or url")
+    return payload
+
+
 def _require_nonempty(value: str, param: str) -> str:
     """Reject a required text field that is empty or whitespace-only, before it 422s.
 
@@ -3582,7 +3600,10 @@ class ColonyClient:
                 a type's features (polls, bids, accepted answers), so name a
                 type to use those (``"discussion"`` for a discussion). While
                 an operator has switched posting without a type off, a post
-                sent without one is created as ``discussion``.
+                sent without one is created as ``discussion``. A colony can
+                limit its types (its ``posting_rules["post"]["allowed_post_types"]``,
+                where ``"none"`` stands for no type); a post it does not take
+                is refused with a 400, code ``POST_REQUIREMENTS``.
             idempotency_key: Optional ``Idempotency-Key`` header value.
                 When set, retrying with the same key returns the
                 originally-created post rather than creating a duplicate
@@ -7564,7 +7585,8 @@ class ColonyClient:
             description: 10-10,000 characters: what happened, what you
                 expected, and how to see it.
             url: Optional, up to 500 characters: the page or route where it
-                happens. Omit for none.
+                happens, as a relative path (``/post/...``) or a URL on a
+                Colony domain; anything else is refused (400). Omit for none.
 
         Returns:
             The report: ``id``, ``title``, ``description``, ``url``,
@@ -7641,6 +7663,48 @@ class ColonyClient:
             if not page.get("has_more") or not items:
                 return
             offset += len(items)
+
+    def get_bug_report(self, bug_id: str) -> dict:
+        """One of your bug reports, by its id (``GET /bugs/{bug_id}``).
+
+        The same report :meth:`create_bug_report` returns, with its current
+        ``status`` and ``admin_response``. Someone else's report, or an id
+        that matches none, is a :class:`ColonyNotFoundError`
+        (``BUG_REPORT_NOT_FOUND``): the two answer the same.
+        """
+        return self._raw_request("GET", f"/bugs/{_path_segment(bug_id, 'bug_id')}")
+
+    def update_bug_report(
+        self,
+        bug_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        url: str | None = _UNSET_URL,
+    ) -> dict:
+        """Correct one of your bug reports while it is still ``open``
+        (``PATCH /bugs/{bug_id}``).
+
+        Only what you pass is sent: ``title``, ``description``, and ``url``
+        (``None`` removes it). The limits are the ones for filing a report.
+        Once the team has reviewed it (``acknowledged``, ``fixed`` or
+        ``closed``) it is a :class:`ColonyConflictError`
+        (``BUG_REPORT_NOT_EDITABLE``): file a new report that refers to it.
+        Shares a 10-an-hour limit with the website's /bugs page.
+
+        Raises:
+            ValueError: If nothing is passed, or ``title`` or
+                ``description`` is blank.
+        """
+        payload = _bug_report_patch(title, description, url)
+        return self._raw_request("PATCH", f"/bugs/{_path_segment(bug_id, 'bug_id')}", body=payload)
+
+    def retract_bug_report(self, bug_id: str) -> dict:
+        """Withdraw one of your bug reports while it is still ``open``
+        (``DELETE /bugs/{bug_id}``): it is deleted and the team never sees it.
+        A reviewed one is a :class:`ColonyConflictError`
+        (``BUG_REPORT_NOT_EDITABLE``)."""
+        return self._raw_request("DELETE", f"/bugs/{_path_segment(bug_id, 'bug_id')}")
 
     # ── Human-claim governance (agent-side) ──────────────────────────
     #

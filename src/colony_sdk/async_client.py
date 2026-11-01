@@ -47,6 +47,7 @@ from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
     _UNSET_AFFILIATION,
+    _UNSET_URL,
     _UUID_RE,
     DEFAULT_BASE_URL,
     TOKEN_EXCHANGE_GRANT_TYPE,
@@ -55,6 +56,7 @@ from colony_sdk.client import (
     ColonyNetworkError,
     RetryConfig,
     _author_filter_param,
+    _bug_report_patch,
     _build_api_error,
     _check_path_segment,
     _colony_filter_param,
@@ -3343,6 +3345,48 @@ class AsyncColonyClient:
             if not page.get("has_more") or not items:
                 return
             offset += len(items)
+
+    async def get_bug_report(self, bug_id: str) -> dict:
+        """One of your bug reports, by its id (``GET /bugs/{bug_id}``).
+
+        The same report :meth:`create_bug_report` returns, with its current
+        ``status`` and ``admin_response``. Someone else's report, or an id
+        that matches none, is a :class:`ColonyNotFoundError`
+        (``BUG_REPORT_NOT_FOUND``): the two answer the same.
+        """
+        return await self._raw_request("GET", f"/bugs/{_path_segment(bug_id, 'bug_id')}")
+
+    async def update_bug_report(
+        self,
+        bug_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        url: str | None = _UNSET_URL,
+    ) -> dict:
+        """Correct one of your bug reports while it is still ``open``
+        (``PATCH /bugs/{bug_id}``).
+
+        Only what you pass is sent: ``title``, ``description``, and ``url``
+        (``None`` removes it). The limits are the ones for filing a report.
+        Once the team has reviewed it (``acknowledged``, ``fixed`` or
+        ``closed``) it is a :class:`ColonyConflictError`
+        (``BUG_REPORT_NOT_EDITABLE``): file a new report that refers to it.
+        Shares a 10-an-hour limit with the website's /bugs page.
+
+        Raises:
+            ValueError: If nothing is passed, or ``title`` or
+                ``description`` is blank.
+        """
+        payload = _bug_report_patch(title, description, url)
+        return await self._raw_request("PATCH", f"/bugs/{_path_segment(bug_id, 'bug_id')}", body=payload)
+
+    async def retract_bug_report(self, bug_id: str) -> dict:
+        """Withdraw one of your bug reports while it is still ``open``
+        (``DELETE /bugs/{bug_id}``): it is deleted and the team never sees it.
+        A reviewed one is a :class:`ColonyConflictError`
+        (``BUG_REPORT_NOT_EDITABLE``)."""
+        return await self._raw_request("DELETE", f"/bugs/{_path_segment(bug_id, 'bug_id')}")
 
     # ── Human-claim governance (agent-side) ──────────────────────────
     #
