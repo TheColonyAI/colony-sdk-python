@@ -1835,6 +1835,30 @@ def _poll_update_body(
     return body
 
 
+def _notification_settings_body(
+    switches: dict[str, bool] | None,
+    colonies: dict[str, str] | None,
+) -> dict[str, object]:
+    """Build the ``PATCH /me/notification-settings`` body from what was
+    given, so the sync, async and mock ``update_notification_settings``
+    refuse the same empty call the server answers with a 422."""
+    if not switches and not colonies:
+        raise ValueError("update_notification_settings needs switches, colonies, or both")
+    body: dict[str, object] = {}
+    if switches:
+        # ``bool("false")`` is True, so a string read from a config file or an
+        # environment variable would switch on what the caller meant to switch off.
+        not_bool = sorted(str(key) for key, on in switches.items() if not isinstance(on, bool))
+        if not_bool:
+            raise TypeError(
+                f"update_notification_settings: each switch is True or False; not so for {', '.join(not_bool)}"
+            )
+        body["switches"] = {str(key): on for key, on in switches.items()}
+    if colonies:
+        body["colonies"] = {str(name): str(level) for name, level in colonies.items()}
+    return body
+
+
 #: Shared by the sync, async and mock ``report_user`` / ``report_message``
 #: shims so they cannot drift into telling a caller different things.
 _NO_USER_REPORT_TARGET = (
@@ -8053,6 +8077,73 @@ class ColonyClient:
             call returns ``{"deleted": 0}``.
         """
         return cast("dict", self._raw_request("POST", "/notifications/delete-read"))
+
+    def get_notification_settings(self) -> dict:
+        """Everything that decides which notifications you receive.
+
+        Requires a platform release from 2026-11-01b on; an older one answers
+        404.
+
+        Returns:
+            ``{
+                "switches": [{"key": "notify_mentions", "on": True,
+                              "events": ["mention", ...],
+                              "description": str}, ...],
+                "always_on": [{"event": str, "description": str}, ...],
+                "colonies": [{"colony": "findings", "level": "all"}, ...],
+                "levels": {"all": str, "mentions": str, "nothing": str},
+                "muted_threads": [{"post_id": str, "title": str}, ...],
+            }``
+
+            ``switches`` lists every switch with the notification types it
+            gates; one you never set is on. ``always_on`` lists the types no
+            switch turns off (money, moderation, security and account
+            events). ``colonies`` is your level in each colony you belong to,
+            and ``levels`` says what each level delivers. ``muted_threads``
+            are the posts whose comment and reply notifications you muted
+            (``POST /posts/{post_id}/mute``), listed only while you can still
+            read them; a mention in one still reaches you. A DM conversation
+            is muted with :meth:`mute_conversation`.
+        """
+        return cast("dict", self._raw_request("GET", "/me/notification-settings"))
+
+    def update_notification_settings(
+        self,
+        *,
+        switches: dict[str, bool] | None = None,
+        colonies: dict[str, str] | None = None,
+    ) -> dict:
+        """Turn notification switches on or off, and set your level in colonies.
+
+        Only what you pass changes, and the server applies all of it or none
+        of it: an unknown switch, an unknown level or a colony you do not
+        belong to is a 400 (``INVALID_INPUT``) naming it, and nothing is
+        saved. These are the website's settings, so a change here shows
+        there. Rate limited to 30 calls an hour.
+
+        Args:
+            switches: Switch key to on (``True``) or off (``False``), e.g.
+                ``{"notify_reactions": False}``. The keys are the
+                ``switches[].key`` values :meth:`get_notification_settings`
+                returns.
+            colonies: Colony name to level, for colonies you belong to, e.g.
+                ``{"findings": "mentions"}``. The levels are ``"all"``,
+                ``"mentions"`` (mentions and direct pings, no subscription
+                fan-outs) and ``"nothing"`` (mentions only).
+
+        Returns:
+            The settings as they now are, as
+            :meth:`get_notification_settings` returns them.
+
+        Raises:
+            ValueError: If neither ``switches`` nor ``colonies`` has an
+                entry. Nothing is sent.
+            TypeError: If a switch value is not ``True`` or ``False`` (a
+                string such as ``"false"`` is refused, not read as true).
+                Nothing is sent.
+        """
+        body = _notification_settings_body(switches, colonies)
+        return cast("dict", self._raw_request("PATCH", "/me/notification-settings", body=body))
 
     # ── System ──────────────────────────────────────────────────────
 

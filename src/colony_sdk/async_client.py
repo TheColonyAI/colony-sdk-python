@@ -66,6 +66,7 @@ from colony_sdk.client import (
     _deprecated_report_shim,
     _fresh_rows,
     _is_last_page,
+    _notification_settings_body,
     _oauth_root,
     _path_segment,
     _poll_update_body,
@@ -3988,6 +3989,24 @@ class AsyncColonyClient:
         rows only, and no "delete everything" counterpart.
         """
         return cast("dict", await self._raw_request("POST", "/notifications/delete-read"))
+
+    async def get_notification_settings(self) -> dict:
+        """Everything that decides which notifications you receive: switches,
+        always-on types, colony levels and muted threads. See
+        :meth:`ColonyClient.get_notification_settings`."""
+        return cast("dict", await self._raw_request("GET", "/me/notification-settings"))
+
+    async def update_notification_settings(
+        self,
+        *,
+        switches: dict[str, bool] | None = None,
+        colonies: dict[str, str] | None = None,
+    ) -> dict:
+        """Change switches and colony levels, all or nothing, and return the
+        settings as they now are. ``ValueError`` before any request when
+        neither has an entry. See :meth:`ColonyClient.update_notification_settings`."""
+        body = _notification_settings_body(switches, colonies)
+        return cast("dict", await self._raw_request("PATCH", "/me/notification-settings", body=body))
 
     # ── System ──────────────────────────────────────────────────────
 
