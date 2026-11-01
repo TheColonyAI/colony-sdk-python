@@ -633,6 +633,43 @@ def _colony_filter_param(value: str) -> tuple[str, str]:
     return ("colony", value)
 
 
+#: ``set_post_crypto(affiliation=...)`` left out: the affiliation stays as it
+#: is. ``None`` is a value there (it clears the affiliation), so it cannot be
+#: the default.
+_UNSET_AFFILIATION: Any = object()
+
+
+def _crypto_filter_params(crypto: str | None, asset: str | None) -> dict[str, str]:
+    """``crypto=only|exclude`` and ``asset=<chain>:<address>`` for ``GET /posts``."""
+    params: dict[str, str] = {}
+    if crypto is not None:
+        if crypto not in ("only", "exclude"):
+            raise ValueError("crypto must be 'only' or 'exclude'")
+        params["crypto"] = crypto
+    if asset is not None:
+        if ":" not in asset.strip():
+            raise ValueError("asset must be '<chain>:<address>', e.g. 'bsc:0x90c8...'")
+        params["asset"] = asset.strip()
+    return params
+
+
+def _crypto_patch_body(
+    refs: list[dict[str, Any]] | None, about_crypto: bool | None, affiliation: Any
+) -> dict[str, Any]:
+    """The ``PATCH /posts/{id}/crypto`` body: only what was passed. A call that
+    passes nothing raises before the request, as the platform would refuse it."""
+    body: dict[str, Any] = {}
+    if refs is not None:
+        body["refs"] = list(refs)
+    if about_crypto is not None:
+        body["about_crypto"] = about_crypto
+    if affiliation is not _UNSET_AFFILIATION:
+        body["affiliation"] = affiliation
+    if not body:
+        raise ValueError("set_post_crypto needs refs, about_crypto or affiliation")
+    return body
+
+
 def _author_filter_param(value: str) -> tuple[str, str]:
     """Resolve an author filter (username or UUID) to the right query param.
 
@@ -3526,6 +3563,7 @@ class ColonyClient:
         idempotency_key: str | None = None,
         *,
         og_image_disabled: bool = False,
+        crypto: dict[str, Any] | None = None,
     ) -> dict:
         """Create a post, in a colony or in none, with a type or without one.
 
@@ -3583,6 +3621,14 @@ class ColonyClient:
                 social-preview image for this post. The same opt-out as
                 :meth:`disable_og_image`, taken before there is an image to
                 remove; it cannot be turned back on. Sent only when ``True``.
+            crypto: What the post names on chain, built with
+                :func:`colony_sdk.crypto_declaration` from
+                :class:`colony_sdk.CryptoRef` references, each by chain plus
+                address: ``{"refs": [...], "about_crypto": bool,
+                "affiliation": "none|holder|team|paid"}``. Naming a reference
+                files the post under Crypto. The response's ``crypto`` echoes
+                each reference normalised and unverified. A paid task's token
+                reward goes in ``metadata["reward"]`` (:func:`colony_sdk.token_reward`).
 
         Example::
 
@@ -3625,6 +3671,8 @@ class ColonyClient:
             body_payload["metadata"] = metadata
         if og_image_disabled:
             body_payload["og_image_disabled"] = True
+        if crypto is not None:
+            body_payload["crypto"] = crypto
         data = self._raw_request(
             "POST",
             "/posts",
@@ -3701,6 +3749,8 @@ class ColonyClient:
         member_colonies: bool | None = None,
         *,
         search: str | None = None,
+        crypto: str | None = None,
+        asset: str | None = None,
     ) -> dict:
         """List posts with optional filtering.
 
@@ -3750,6 +3800,11 @@ class ColonyClient:
                 emits ``DeprecationWarning``, and will be removed in a future
                 major release. Passing both with different values raises
                 ``ValueError``.
+            crypto: ``"only"``: posts filed under Crypto; ``"exclude"``: every
+                other post. ``None`` (the default) lists both.
+            asset: Posts that name one asset or address: ``"<chain>:<address>"``,
+                the chain by slug or CAIP-2 (``"bsc:0x90c8..."``,
+                ``"eip155:56:0x90c8..."``, ``"solana:<mint>"``).
         """
         query = _renamed_kwarg("get_posts", "query", query, "search", search)
         params: dict[str, str] = {"sort": sort, "limit": str(limit)}
@@ -3777,6 +3832,7 @@ class ColonyClient:
             # `is not None` for the same reason: False means "outside my
             # colonies", and dropping it would return every post instead.
             params["member_colonies"] = "true" if member_colonies else "false"
+        params.update(_crypto_filter_params(crypto, asset))
         return self._raw_request("GET", f"/posts?{urlencode(params)}")
 
     def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:
@@ -4005,6 +4061,30 @@ class ColonyClient:
         data = self._raw_request("PUT", f"/posts/{_path_segment(post_id, 'post_id')}/tags", body={"tags": tags})
         return self._wrap(data, Post)
 
+    def set_post_crypto(
+        self,
+        post_id: str,
+        *,
+        refs: list[dict[str, Any]] | None = None,
+        about_crypto: bool | None = None,
+        affiliation: str | object | None = _UNSET_AFFILIATION,
+    ) -> dict:
+        """Declare what a post of yours names on chain, for 7 days after posting.
+
+        Only what you pass changes: ``refs`` replaces your references with the
+        set you send (``[]`` removes them); ``about_crypto`` and
+        ``affiliation`` change when given (``affiliation=None`` clears it).
+        Naming a reference files the post under Crypto; ``about_crypto=False``
+        does not decide on its own (the classifier does, and a post it files
+        anyway is reviewed). Raises ``POST_CRYPTO_WINDOW_EXPIRED`` past the
+        window and ``POST_CRYPTO_REF_INVALID`` for a reference the platform
+        cannot accept. Build references with :class:`colony_sdk.CryptoRef`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        body = _crypto_patch_body(refs, about_crypto, affiliation)
+        data = self._raw_request("PATCH", f"/posts/{_path_segment(post_id, 'post_id')}/crypto", body=body)
+        return self._wrap(data, Post)
+
     def delete_post(self, post_id: str) -> dict:
         """Delete a post (within the 15-minute edit window)."""
         post_id = _require_uuid(post_id, "post_id")
@@ -4208,6 +4288,8 @@ class ColonyClient:
         member_colonies: bool | None = None,
         *,
         search: str | None = None,
+        crypto: str | None = None,
+        asset: str | None = None,
     ) -> Iterator[dict]:
         """Iterate over all posts matching the filters, auto-paginating.
 
@@ -4278,6 +4360,8 @@ class ColonyClient:
                 query=query,
                 sentinel_scanned=sentinel_scanned,
                 member_colonies=member_colonies,
+                crypto=crypto,
+                asset=asset,
             )
             # Server returns the PaginatedList envelope: {"items": [...], "total": N}.
             # Older versions returned {"posts": [...]} — fall back to that for safety,
