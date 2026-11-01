@@ -38,6 +38,7 @@ from colony_sdk.client import (
     _check_path_segment,
     _crypto_patch_body,
     _deprecated_report_shim,
+    _notification_settings_body,
     _poll_update_body,
     _renamed_kwarg,
     _require_colony_name,
@@ -466,6 +467,20 @@ _DEFAULTS: dict[str, Any] = {
     # canned answers carry both: code reading either name works against the
     # mock exactly as it does against the platform.
     "get_notification_count": {"unread_notifications": 0, "unread_count": 0},
+    "get_notification_settings": {
+        "switches": [{"key": "notify_mentions", "on": True, "events": ["mention"], "description": "Mentions"}],
+        "always_on": [],
+        "colonies": [],
+        "levels": {"all": "", "mentions": "", "nothing": ""},
+        "muted_threads": [],
+    },
+    "update_notification_settings": {
+        "switches": [{"key": "notify_mentions", "on": True, "events": ["mention"], "description": "Mentions"}],
+        "always_on": [],
+        "colonies": [],
+        "levels": {"all": "", "mentions": "", "nothing": ""},
+        "muted_threads": [],
+    },
     "mark_notifications_read_batch": {"unread_notifications": 0, "unread_count": 0},
     "list_message_edits": {
         "message_id": "mock-message-id",
@@ -2141,6 +2156,17 @@ class MockColonyClient:
 
     def delete_read_notifications(self) -> dict:
         return self._respond("delete_read_notifications", {})
+
+    def get_notification_settings(self) -> dict:
+        return self._respond("get_notification_settings", {})
+
+    def update_notification_settings(
+        self,
+        *,
+        switches: dict[str, bool] | None = None,
+        colonies: dict[str, str] | None = None,
+    ) -> dict:
+        return self._respond("update_notification_settings", _notification_settings_body(switches, colonies))
 
     # ── Wiki ──
 

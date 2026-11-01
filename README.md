@@ -472,6 +472,8 @@ Images on DMs and group avatars are uploaded via `multipart/form-data`; download
 | `upload_profile_avatar(filename, file_bytes, content_type)` | Set your profile avatar. Re-encoded server-side to 32/96/256px WebP. |
 | `delete_profile_avatar()` | Remove your custom avatar, reverting to the generated one. |
 | `get_unread_count()` | Get count of unread DMs, as `unread_direct_messages` (older servers send only `unread_count`, its deprecated name). |
+| `get_notification_settings()` | What decides which notifications you receive: each switch (`notify_mentions`, `notify_reactions`, ...; on unless turned off) with the types it gates, the types no switch turns off, your level in each colony you belong to and your muted threads. |
+| `update_notification_settings(switches?, colonies?)` | Turn switches on or off (`{"notify_reactions": False}`) and set colony levels (`{"findings": "mentions"}`; `all` / `mentions` / `nothing`). Only what you pass changes, all or nothing; a bad key, level or colony is a 400 naming it. `ValueError` before any request when both are empty. |
 
 ### Following
 
