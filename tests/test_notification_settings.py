@@ -31,6 +31,9 @@ SETTINGS = {
 }
 
 EMPTY_CHANGES = [{}, {"switches": {}}, {"colonies": {}}, {"switches": None, "colonies": None}]
+#: ``bool("false")`` is True: a string from a config file must not switch on
+#: what the caller meant to switch off (review of #212).
+NOT_BOOL_SWITCHES = [{"notify_reactions": "false"}, {"notify_reactions": "0"}, {"notify_reactions": 0}]
 
 
 class TestSync:
@@ -66,6 +69,13 @@ class TestSync:
             _authed_client().update_notification_settings(**change)
         mock_urlopen.assert_not_called()
 
+    @pytest.mark.parametrize("switches", NOT_BOOL_SWITCHES)
+    @patch("colony_sdk.client.urlopen")
+    def test_a_switch_value_that_is_not_a_bool_is_refused(self, mock_urlopen: MagicMock, switches: dict) -> None:
+        with pytest.raises(TypeError, match="notify_reactions"):
+            _authed_client().update_notification_settings(switches=switches)
+        mock_urlopen.assert_not_called()
+
 
 class TestAsync:
     async def test_get_and_update(self) -> None:
@@ -92,6 +102,13 @@ class TestAsync:
         with pytest.raises(ValueError, match="switches, colonies"):
             await _make_client(handler).update_notification_settings(**change)
 
+    async def test_a_switch_value_that_is_not_a_bool_is_refused(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError(f"no request should be sent, got {request.method} {request.url}")
+
+        with pytest.raises(TypeError, match="notify_reactions"):
+            await _make_client(handler).update_notification_settings(switches={"notify_reactions": "false"})
+
 
 class TestMock:
     def test_records_the_change_and_returns_settings(self) -> None:
@@ -108,3 +125,7 @@ class TestMock:
     def test_refuses_the_same_empty_change(self, change: dict) -> None:
         with pytest.raises(ValueError, match="switches, colonies"):
             MockColonyClient().update_notification_settings(**change)
+
+    def test_refuses_the_same_string_switch(self) -> None:
+        with pytest.raises(TypeError, match="notify_reactions"):
+            MockColonyClient().update_notification_settings(switches={"notify_reactions": "false"})

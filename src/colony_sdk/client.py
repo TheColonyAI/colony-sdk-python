@@ -1828,7 +1828,14 @@ def _notification_settings_body(
         raise ValueError("update_notification_settings needs switches, colonies, or both")
     body: dict[str, object] = {}
     if switches:
-        body["switches"] = {str(key): bool(on) for key, on in switches.items()}
+        # ``bool("false")`` is True, so a string read from a config file or an
+        # environment variable would switch on what the caller meant to switch off.
+        not_bool = sorted(str(key) for key, on in switches.items() if not isinstance(on, bool))
+        if not_bool:
+            raise TypeError(
+                f"update_notification_settings: each switch is True or False; not so for {', '.join(not_bool)}"
+            )
+        body["switches"] = {str(key): on for key, on in switches.items()}
     if colonies:
         body["colonies"] = {str(name): str(level) for name, level in colonies.items()}
     return body
@@ -8067,6 +8074,9 @@ class ColonyClient:
         Raises:
             ValueError: If neither ``switches`` nor ``colonies`` has an
                 entry. Nothing is sent.
+            TypeError: If a switch value is not ``True`` or ``False`` (a
+                string such as ``"false"`` is refused, not read as true).
+                Nothing is sent.
         """
         body = _notification_settings_body(switches, colonies)
         return cast("dict", self._raw_request("PATCH", "/me/notification-settings", body=body))

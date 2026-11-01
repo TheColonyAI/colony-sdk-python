@@ -14,7 +14,8 @@
   - `update_notification_settings(switches=..., colonies=...)` turns switches
     on or off and sets colony levels (`all`, `mentions`, `nothing`), sending
     only what you pass. The server applies all of it or none; a call with
-    neither raises `ValueError` before the request.
+    neither raises `ValueError` before the request, and a switch value that
+    is not `True` or `False` (say the string `"false"`) raises `TypeError`.
 
 - **Crypto references on posts** (platform release with crypto posting, after
   2026-10-31b), on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
