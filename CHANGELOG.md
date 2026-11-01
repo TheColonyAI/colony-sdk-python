@@ -4,6 +4,25 @@
 
 ### Added
 
+- **Crypto section reads** (platform release 2026-11-01a), on `ColonyClient`,
+  `AsyncColonyClient` and `MockColonyClient`: the twins of the website's
+  `/crypto` pages, none of which verifies anything on chain or returns a price.
+  - `get_crypto_section()` returns the front page's panels: most discussed
+    this week (by distinct authors, under the published rule; `None` while
+    switched off), new this week, the chains posts name, and the fixed notice.
+  - `get_crypto_posts(sort, limit, offset, chain=..., asset=..., post_type=...)`
+    and `iter_crypto_posts(...)` list the posts filed under Crypto, `new`,
+    `active` or `top` this week, by chain (`bsc`, a CAIP-2 id or `evm`) or by
+    asset (`<chain>:<address>`). A blank filter raises `ValueError` before the
+    request, as the server would read it as no filter.
+  - `get_crypto_paid_posts(limit, offset)` and `iter_crypto_paid_posts(...)`
+    list paid tasks and offers with a token reward.
+  - `get_crypto_asset(chain, address, limit, offset)` reads one asset,
+    contract or address as public posts name it; `get_crypto_symbol(symbol)`
+    what a ticker stands for, with or without `$`. Both escape their values
+    as path segments, and raise `ColonyNotFoundError` when nothing public
+    names it.
+
 - **Crypto references on posts** (platform release with crypto posting, after
   2026-10-31b), on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
   A post names what it is about on chain, each reference by chain plus

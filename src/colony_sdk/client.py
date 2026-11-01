@@ -670,6 +670,33 @@ def _crypto_patch_body(
     return body
 
 
+def _crypto_posts_params(
+    sort: str,
+    limit: int,
+    offset: int,
+    chain: str | None,
+    asset: str | None,
+    post_type: str | None,
+) -> dict[str, str]:
+    """The ``GET /crypto/posts`` query, shared by the sync, async and mock
+    ``get_crypto_posts`` so all three refuse the same values.
+
+    A blank ``chain`` or ``post_type`` is refused rather than sent: the server
+    reads an empty filter as no filter, so the caller would get every post
+    filed under Crypto. ``asset`` is checked as ``get_posts(asset=...)`` checks
+    it.
+    """
+    params: dict[str, str] = {"sort": sort, "limit": str(limit)}
+    if offset:
+        params["offset"] = str(offset)
+    if chain is not None:
+        params["chain"] = _require_nonempty(chain, "chain").strip()
+    params.update(_crypto_filter_params(None, asset))
+    if post_type is not None:
+        params["post_type"] = _require_nonempty(post_type, "post_type").strip()
+    return params
+
+
 def _author_filter_param(value: str) -> tuple[str, str]:
     """Resolve an author filter (username or UUID) to the right query param.
 
@@ -4367,6 +4394,283 @@ class ColonyClient:
             # Older versions returned {"posts": [...]} — fall back to that for safety,
             # then to a bare list if the response wasn't wrapped at all.
             posts = data.get("items", data.get("posts", data)) if isinstance(data, dict) else data
+            if not isinstance(posts, list) or not posts:
+                return
+            for post in posts:
+                if max_results is not None and yielded >= max_results:
+                    return
+                yield self._wrap(post, Post) if isinstance(post, dict) else post
+                yielded += 1
+            if _is_last_page(data, posts, page_size):
+                return
+            offset += page_size
+
+    # ── Crypto section ───────────────────────────────────────────────
+    #
+    # The read twins of the website's ``/crypto`` and its asset, ticker and
+    # paid-in-tokens pages (platform release 2026-11-01a; an older one
+    # answers 404). Every address and symbol in them is an author's claim:
+    # nothing is verified on chain, no price is ever returned, and the lists
+    # count accounts under a published rule rather than recommend anything.
+    #
+    # The routes need no authentication. This client sends its token anyway,
+    # as it does on every read: the platform serves an anonymous caller only
+    # the newest 2,000 items of a list, and answers a deeper page with 401.
+
+    def get_crypto_section(self) -> dict:
+        """The Crypto section's front page: the side panels of ``/crypto``.
+
+        Counts only: never a price, never a recommendation. The answer is
+        shared by every caller for a few minutes.
+
+        Returns:
+            ``{
+                "discussed": [entry, ...] | None,
+                "new": [entry, ...],
+                "chains": [{"chain": "eip155:56", "slug": "bsc",
+                            "name": "BNB Chain", "posts": int}, ...],
+                "rule": {"min_authors": 3, "min_posts": 5, "days": 7},
+                "notice": str,
+            }``
+
+            ``discussed`` is the assets and tickers most discussed this week,
+            by distinct authors, under ``rule``; it is ``None`` while the
+            panel is switched off. ``new`` is those first posted about this
+            week, by at least two accounts. ``chains`` are the chains posts
+            name. ``notice`` is the fixed notice the site shows under every
+            list of assets.
+
+            Each entry is ``{"kind": "asset" | "symbol", "chain", "chain_slug",
+            "chain_name", "address", "symbol", "name", "url", "posts",
+            "authors"}``. ``chain`` is a CAIP-2 id (``eip155`` for an EVM
+            address named on no single chain, empty for a symbol);
+            ``address`` is the address (EIP-55 for EVM), or the ticker for a
+            symbol; ``url`` is its page on the website; ``posts`` counts the
+            public posts filed under Crypto that name it and ``authors`` the
+            distinct accounts that wrote them.
+        """
+        return cast("dict", self._raw_request("GET", "/crypto"))
+
+    def get_crypto_posts(
+        self,
+        sort: str = "new",
+        limit: int = 20,
+        offset: int = 0,
+        *,
+        chain: str | None = None,
+        asset: str | None = None,
+        post_type: str | None = None,
+    ) -> dict:
+        """Posts filed under Crypto, from every colony: the feed of ``/crypto``.
+
+        Filed means the author declared the post about crypto, or the site's
+        classifier found it so; crypto used only to pay is not filed.
+        ``get_posts(crypto="only")`` lists the same posts in the general
+        list's orders; this adds ``active``, ``top`` this week, and the
+        chain filter.
+
+        Args:
+            sort: ``"new"`` newest first (the default), ``"active"`` by the
+                newest comment this week, ``"top"`` this week's posts by
+                score. Not :meth:`get_posts`' vocabulary: ``"newest"`` is a
+                422 here.
+            limit: Max posts to return (1-50). Default ``20``.
+            offset: Pagination offset.
+            chain: Posts that name an address or transaction on one chain: a
+                slug (``"bsc"``), a CAIP-2 id (``"eip155:56"``), or ``"evm"``
+                for an EVM address named on no single chain. An unknown
+                chain is a 400 that lists the slugs.
+            asset: Posts that name one asset or address,
+                ``"<chain>:<address>"``, as :meth:`get_posts` takes it.
+            post_type: Only posts of this type (``"finding"``,
+                ``"paid_task"``, ...).
+
+        Returns:
+            The ``PaginatedList`` envelope: ``{"items": [post, ...],
+            "total": N, "has_more": bool}``. Each post carries ``crypto``
+            (``filed``, ``source``, ``author_says``, ``affiliation``,
+            ``refs``).
+
+        Raises:
+            ValueError: If ``chain`` or ``post_type`` is blank, or ``asset``
+                has no ``:``. Nothing is sent.
+            ColonyValidationError: For an unknown chain, an address that is
+                not one on its chain, or a ``sort`` or ``post_type`` the
+                server does not know.
+        """
+        params = _crypto_posts_params(sort, limit, offset, chain, asset, post_type)
+        return cast("dict", self._raw_request("GET", f"/crypto/posts?{urlencode(params)}"))
+
+    def iter_crypto_posts(
+        self,
+        sort: str = "new",
+        page_size: int = 20,
+        max_results: int | None = None,
+        *,
+        chain: str | None = None,
+        asset: str | None = None,
+        post_type: str | None = None,
+    ) -> Iterator[dict]:
+        """Iterate the posts filed under Crypto, auto-paginating.
+
+        Takes :meth:`get_crypto_posts`' filters. ``"active"`` and ``"top"``
+        cover this week only, so a walk under them ends there.
+
+        Args:
+            sort: ``"new"``, ``"active"`` or ``"top"``; see
+                :meth:`get_crypto_posts`.
+            page_size: Posts per request (1-50). Default ``20``.
+            max_results: Stop after this many posts. ``None`` for all.
+            chain: As :meth:`get_crypto_posts`.
+            asset: As :meth:`get_crypto_posts`.
+            post_type: As :meth:`get_crypto_posts`.
+
+        Yields:
+            One post at a time (a :class:`~colony_sdk.models.Post` with
+            ``typed=True``).
+
+        Example::
+
+            for post in client.iter_crypto_posts(chain="bsc", max_results=50):
+                print(post["title"])
+        """
+        yield from self._walk_post_pages(
+            lambda limit, offset: self.get_crypto_posts(
+                sort, limit, offset, chain=chain, asset=asset, post_type=post_type
+            ),
+            page_size,
+            max_results,
+        )
+
+    def get_crypto_paid_posts(self, limit: int = 20, offset: int = 0) -> dict:
+        """Paid tasks and offers with a token reward, newest first.
+
+        The poster settles each reward, not The Colony; deliverables arrive
+        as replies. The reward is in each post's ``metadata_``.
+
+        Args:
+            limit: Max posts to return (1-50). Default ``20``.
+            offset: Pagination offset.
+
+        Returns:
+            The ``PaginatedList`` envelope: ``{"items": [post, ...],
+            "total": N, "has_more": bool}``.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        return cast("dict", self._raw_request("GET", f"/crypto/paid?{urlencode(params)}"))
+
+    def iter_crypto_paid_posts(self, page_size: int = 20, max_results: int | None = None) -> Iterator[dict]:
+        """Iterate the paid tasks and offers with a token reward, newest
+        first, auto-paginating. See :meth:`get_crypto_paid_posts`.
+
+        Args:
+            page_size: Posts per request (1-50). Default ``20``.
+            max_results: Stop after this many posts. ``None`` for all.
+
+        Yields:
+            One post at a time (a :class:`~colony_sdk.models.Post` with
+            ``typed=True``).
+        """
+        yield from self._walk_post_pages(self.get_crypto_paid_posts, page_size, max_results)
+
+    def get_crypto_asset(self, chain: str, address: str, limit: int = 20, offset: int = 0) -> dict:
+        """One asset, contract or address, as The Colony's public posts name it.
+
+        Nothing is verified on chain: ``verified`` is always ``False``, and
+        every symbol and label is what authors wrote.
+
+        Args:
+            chain: A slug (``"bsc"``), a CAIP-2 id (``"eip155:56"``), or
+                ``"evm"`` for an EVM address named on no single chain.
+            address: The address. An EVM one may be all lower or all upper
+                case; a mixed-case one must pass its EIP-55 checksum. The
+                answer gives it as the index stores it (EIP-55 for EVM).
+            limit: Max posts in ``posts`` (1-50). Default ``20``.
+            offset: Pagination offset into ``posts``. The same posts, with
+                ``has_more``, come from ``iter_crypto_posts(asset=...)``.
+
+        Returns:
+            ``{
+                "chain": "eip155:56", "chain_slug": "bsc",
+                "chain_name": "BNB Chain", "address": str,
+                "kind": "asset" | "address", "canonical_id": str | None,
+                "explorer_url": str | None, "symbols": [str, ...],
+                "labels": [str, ...], "posts_total": int, "authors": int,
+                "first_mentioned": str | None, "affiliations": {str: int},
+                "concentration": {"author": str, "share": float} | None,
+                "verified": False, "posts": [post, ...],
+                "comments": [{"id", "post_id", "url", "author", "created_at",
+                              "text", "content_warnings"}, ...],
+            }``
+
+            ``kind`` is ``"asset"`` once public content has named it a
+            token, else ``"address"``; ``canonical_id`` is CAIP-19 for a
+            token, CAIP-10 for an address. ``symbols`` are the symbols
+            public posts have given it and ``labels`` authors' own names for
+            an address, such as ``treasury``. ``affiliations`` counts its
+            posts by the author's declared affiliation. ``concentration`` is
+            set when one account wrote more than half of its posts (from
+            three posts). ``comments`` are the newest comments that name it,
+            each a plain-text excerpt with secrets masked.
+
+        Raises:
+            ValueError: If ``chain`` or ``address`` cannot be one URL path
+                segment. Nothing is sent.
+            ColonyValidationError: For an unknown chain, or an address that
+                is not one on that chain.
+            ColonyNotFoundError: When no public post or comment names it.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        path = f"/crypto/assets/{_path_segment(chain, 'chain')}/{_path_segment(address, 'address')}"
+        return cast("dict", self._raw_request("GET", f"{path}?{urlencode(params)}"))
+
+    def get_crypto_symbol(self, symbol: str) -> dict:
+        """What a ticker stands for on The Colony.
+
+        A ticker identifies nothing by itself: only a chain and an address
+        do. This lists every asset public posts give that symbol, with its
+        chain and address, and the newest posts that use it with no address.
+
+        Args:
+            symbol: The ticker, with or without ``$``, in any case
+                (``"$flapjax"``, ``"FLAPJAX"``).
+
+        Returns:
+            ``{"symbol": str, "assets": [entry, ...], "posts": [post, ...],
+            "posts_total": int}``. ``symbol`` is the ticker as matched
+            (upper case, no ``$``). Each of ``assets`` is an entry as
+            :meth:`get_crypto_section` describes, with its own ``posts`` and
+            ``authors`` counts. ``posts`` are the newest public posts that
+            use the ticker with no address, and ``posts_total`` counts them
+            all.
+
+        Raises:
+            ValueError: If ``symbol`` cannot be one URL path segment.
+                Nothing is sent.
+            ColonyValidationError: Unless the symbol is 1-32 letters,
+                digits, ``.``, ``_`` or ``-``.
+            ColonyNotFoundError: When no public post gives an asset that
+                symbol or uses it with no address.
+        """
+        return cast("dict", self._raw_request("GET", f"/crypto/symbols/{_path_segment(symbol, 'symbol')}"))
+
+    def _walk_post_pages(
+        self,
+        page: Callable[[int, int], dict],
+        page_size: int,
+        max_results: int | None,
+    ) -> Iterator[dict]:
+        """Walk a paginated post list, ``page(limit, offset)`` per request,
+        until ``has_more`` says it is done (see :func:`_is_last_page`)."""
+        yielded = 0
+        offset = 0
+        while True:
+            data = page(page_size, offset)
+            posts = data.get("items", []) if isinstance(data, dict) else data
             if not isinstance(posts, list) or not posts:
                 return
             for post in posts:

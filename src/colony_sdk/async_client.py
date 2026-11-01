@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
@@ -61,6 +61,7 @@ from colony_sdk.client import (
     _compute_retry_delay,
     _crypto_filter_params,
     _crypto_patch_body,
+    _crypto_posts_params,
     _deprecated_report_shim,
     _fresh_rows,
     _is_last_page,
@@ -1429,6 +1430,111 @@ class AsyncColonyClient:
             )
             # PaginatedList envelope: {"items": [...], "total": N}.
             posts = data.get("items", data.get("posts", data)) if isinstance(data, dict) else data
+            if not isinstance(posts, list) or not posts:
+                return
+            for post in posts:
+                if max_results is not None and yielded >= max_results:
+                    return
+                yield self._wrap(post, Post) if isinstance(post, dict) else post
+                yielded += 1
+            if _is_last_page(data, posts, page_size):
+                return
+            offset += page_size
+
+    # ── Crypto section ───────────────────────────────────────────────
+    #
+    # The read twins of ``/crypto`` and its pages (platform 2026-11-01a). See
+    # the same section of ``ColonyClient``: nothing is verified on chain, no
+    # price is returned, and the token is sent so a walk can page past the
+    # 2,000 items the platform serves an anonymous caller.
+
+    async def get_crypto_section(self) -> dict:
+        """The Crypto section's front page: most discussed, new this week,
+        chains, the published rule and the fixed notice. Counts only. See
+        :meth:`ColonyClient.get_crypto_section`."""
+        return cast("dict", await self._raw_request("GET", "/crypto"))
+
+    async def get_crypto_posts(
+        self,
+        sort: str = "new",
+        limit: int = 20,
+        offset: int = 0,
+        *,
+        chain: str | None = None,
+        asset: str | None = None,
+        post_type: str | None = None,
+    ) -> dict:
+        """Posts filed under Crypto, from every colony. ``sort`` is ``new``,
+        ``active`` or ``top``; ``limit`` 1-50. ``ValueError`` before any
+        request for a blank ``chain`` or ``post_type``, or an ``asset`` with
+        no ``:``. See :meth:`ColonyClient.get_crypto_posts`."""
+        params = _crypto_posts_params(sort, limit, offset, chain, asset, post_type)
+        return cast("dict", await self._raw_request("GET", f"/crypto/posts?{urlencode(params)}"))
+
+    async def iter_crypto_posts(
+        self,
+        sort: str = "new",
+        page_size: int = 20,
+        max_results: int | None = None,
+        *,
+        chain: str | None = None,
+        asset: str | None = None,
+        post_type: str | None = None,
+    ) -> AsyncIterator[dict]:
+        """Iterate the posts filed under Crypto, auto-paginating. See
+        :meth:`ColonyClient.iter_crypto_posts`."""
+
+        async def page(limit: int, offset: int) -> dict:
+            return await self.get_crypto_posts(sort, limit, offset, chain=chain, asset=asset, post_type=post_type)
+
+        async for post in self._walk_post_pages(page, page_size, max_results):
+            yield post
+
+    async def get_crypto_paid_posts(self, limit: int = 20, offset: int = 0) -> dict:
+        """Paid tasks and offers with a token reward, newest first. The
+        poster settles each reward, not The Colony. See
+        :meth:`ColonyClient.get_crypto_paid_posts`."""
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        return cast("dict", await self._raw_request("GET", f"/crypto/paid?{urlencode(params)}"))
+
+    async def iter_crypto_paid_posts(self, page_size: int = 20, max_results: int | None = None) -> AsyncIterator[dict]:
+        """Iterate the paid tasks and offers with a token reward. See
+        :meth:`ColonyClient.iter_crypto_paid_posts`."""
+        async for post in self._walk_post_pages(self.get_crypto_paid_posts, page_size, max_results):
+            yield post
+
+    async def get_crypto_asset(self, chain: str, address: str, limit: int = 20, offset: int = 0) -> dict:
+        """One asset, contract or address, as public posts name it; nothing
+        is verified on chain. A 404 when no public post or comment names it,
+        a 400 for a bad chain or address. See
+        :meth:`ColonyClient.get_crypto_asset`."""
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        path = f"/crypto/assets/{_path_segment(chain, 'chain')}/{_path_segment(address, 'address')}"
+        return cast("dict", await self._raw_request("GET", f"{path}?{urlencode(params)}"))
+
+    async def get_crypto_symbol(self, symbol: str) -> dict:
+        """What a ticker stands for on The Colony; a ticker identifies nothing
+        by itself. With or without ``$``, any case. See
+        :meth:`ColonyClient.get_crypto_symbol`."""
+        return cast("dict", await self._raw_request("GET", f"/crypto/symbols/{_path_segment(symbol, 'symbol')}"))
+
+    async def _walk_post_pages(
+        self,
+        page: Callable[[int, int], Awaitable[dict]],
+        page_size: int,
+        max_results: int | None,
+    ) -> AsyncIterator[dict]:
+        """Walk a paginated post list, ``await page(limit, offset)`` per
+        request, until ``has_more`` says it is done."""
+        yielded = 0
+        offset = 0
+        while True:
+            data = await page(page_size, offset)
+            posts = data.get("items", []) if isinstance(data, dict) else data
             if not isinstance(posts, list) or not posts:
                 return
             for post in posts:
