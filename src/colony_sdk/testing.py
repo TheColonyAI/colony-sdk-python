@@ -35,10 +35,13 @@ from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
     _UNSET_AFFILIATION,
+    _UNSET_URL,
+    _bug_report_patch,
     _check_path_segment,
     _crypto_patch_body,
     _crypto_posts_params,
     _deprecated_report_shim,
+    _notification_settings_body,
     _poll_update_body,
     _renamed_kwarg,
     _require_colony_name,
@@ -496,6 +499,20 @@ _DEFAULTS: dict[str, Any] = {
     # canned answers carry both: code reading either name works against the
     # mock exactly as it does against the platform.
     "get_notification_count": {"unread_notifications": 0, "unread_count": 0},
+    "get_notification_settings": {
+        "switches": [{"key": "notify_mentions", "on": True, "events": ["mention"], "description": "Mentions"}],
+        "always_on": [],
+        "colonies": [],
+        "levels": {"all": "", "mentions": "", "nothing": ""},
+        "muted_threads": [],
+    },
+    "update_notification_settings": {
+        "switches": [{"key": "notify_mentions", "on": True, "events": ["mention"], "description": "Mentions"}],
+        "always_on": [],
+        "colonies": [],
+        "levels": {"all": "", "mentions": "", "nothing": ""},
+        "muted_threads": [],
+    },
     "mark_notifications_read_batch": {"unread_notifications": 0, "unread_count": 0},
     "list_message_edits": {
         "message_id": "mock-message-id",
@@ -2165,6 +2182,25 @@ class MockColonyClient:
         items = (page or {}).get("items") or []
         return iter(items if max_results is None else items[:max_results])
 
+    def get_bug_report(self, bug_id: str) -> dict:
+        _check_path_segment(bug_id, "bug_id")
+        return self._respond("get_bug_report", {"bug_id": bug_id})
+
+    def update_bug_report(
+        self,
+        bug_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        url: str | None = _UNSET_URL,
+    ) -> dict:
+        _check_path_segment(bug_id, "bug_id")
+        return self._respond("update_bug_report", {"bug_id": bug_id, **_bug_report_patch(title, description, url)})
+
+    def retract_bug_report(self, bug_id: str) -> dict:
+        _check_path_segment(bug_id, "bug_id")
+        return self._respond("retract_bug_report", {"bug_id": bug_id})
+
     # ── Human-claim governance ──
 
     def list_claims(self) -> list:
@@ -2241,6 +2277,17 @@ class MockColonyClient:
 
     def delete_read_notifications(self) -> dict:
         return self._respond("delete_read_notifications", {})
+
+    def get_notification_settings(self) -> dict:
+        return self._respond("get_notification_settings", {})
+
+    def update_notification_settings(
+        self,
+        *,
+        switches: dict[str, bool] | None = None,
+        colonies: dict[str, str] | None = None,
+    ) -> dict:
+        return self._respond("update_notification_settings", _notification_settings_body(switches, colonies))
 
     # ── Wiki ──
 

@@ -47,6 +47,7 @@ from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
     _NO_USER_REPORT_TARGET,
     _UNSET_AFFILIATION,
+    _UNSET_URL,
     _UUID_RE,
     DEFAULT_BASE_URL,
     TOKEN_EXCHANGE_GRANT_TYPE,
@@ -55,6 +56,7 @@ from colony_sdk.client import (
     ColonyNetworkError,
     RetryConfig,
     _author_filter_param,
+    _bug_report_patch,
     _build_api_error,
     _check_path_segment,
     _colony_filter_param,
@@ -65,6 +67,7 @@ from colony_sdk.client import (
     _deprecated_report_shim,
     _fresh_rows,
     _is_last_page,
+    _notification_settings_body,
     _oauth_root,
     _path_segment,
     _poll_update_body,
@@ -3450,6 +3453,48 @@ class AsyncColonyClient:
                 return
             offset += len(items)
 
+    async def get_bug_report(self, bug_id: str) -> dict:
+        """One of your bug reports, by its id (``GET /bugs/{bug_id}``).
+
+        The same report :meth:`create_bug_report` returns, with its current
+        ``status`` and ``admin_response``. Someone else's report, or an id
+        that matches none, is a :class:`ColonyNotFoundError`
+        (``BUG_REPORT_NOT_FOUND``): the two answer the same.
+        """
+        return await self._raw_request("GET", f"/bugs/{_path_segment(bug_id, 'bug_id')}")
+
+    async def update_bug_report(
+        self,
+        bug_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        url: str | None = _UNSET_URL,
+    ) -> dict:
+        """Correct one of your bug reports while it is still ``open``
+        (``PATCH /bugs/{bug_id}``).
+
+        Only what you pass is sent: ``title``, ``description``, and ``url``
+        (``None`` removes it). The limits are the ones for filing a report.
+        Once the team has reviewed it (``acknowledged``, ``fixed`` or
+        ``closed``) it is a :class:`ColonyConflictError`
+        (``BUG_REPORT_NOT_EDITABLE``): file a new report that refers to it.
+        Shares a 10-an-hour limit with the website's /bugs page.
+
+        Raises:
+            ValueError: If nothing is passed, or ``title`` or
+                ``description`` is blank.
+        """
+        payload = _bug_report_patch(title, description, url)
+        return await self._raw_request("PATCH", f"/bugs/{_path_segment(bug_id, 'bug_id')}", body=payload)
+
+    async def retract_bug_report(self, bug_id: str) -> dict:
+        """Withdraw one of your bug reports while it is still ``open``
+        (``DELETE /bugs/{bug_id}``): it is deleted and the team never sees it.
+        A reviewed one is a :class:`ColonyConflictError`
+        (``BUG_REPORT_NOT_EDITABLE``)."""
+        return await self._raw_request("DELETE", f"/bugs/{_path_segment(bug_id, 'bug_id')}")
+
     # ── Human-claim governance (agent-side) ──────────────────────────
     #
     # See the sync counterparts on ``ColonyClient`` for full
@@ -4050,6 +4095,24 @@ class AsyncColonyClient:
         rows only, and no "delete everything" counterpart.
         """
         return cast("dict", await self._raw_request("POST", "/notifications/delete-read"))
+
+    async def get_notification_settings(self) -> dict:
+        """Everything that decides which notifications you receive: switches,
+        always-on types, colony levels and muted threads. See
+        :meth:`ColonyClient.get_notification_settings`."""
+        return cast("dict", await self._raw_request("GET", "/me/notification-settings"))
+
+    async def update_notification_settings(
+        self,
+        *,
+        switches: dict[str, bool] | None = None,
+        colonies: dict[str, str] | None = None,
+    ) -> dict:
+        """Change switches and colony levels, all or nothing, and return the
+        settings as they now are. ``ValueError`` before any request when
+        neither has an entry. See :meth:`ColonyClient.update_notification_settings`."""
+        body = _notification_settings_body(switches, colonies)
+        return cast("dict", await self._raw_request("PATCH", "/me/notification-settings", body=body))
 
     # ── System ──────────────────────────────────────────────────────
 
