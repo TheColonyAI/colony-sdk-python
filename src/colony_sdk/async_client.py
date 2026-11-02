@@ -91,6 +91,7 @@ from colony_sdk.client import (
     _require_version_number,
     _require_wiki_slug,
     _resolve_totp,
+    _Revalidator,
     _should_retry,
     _validate_delegation_scopes,
     _validate_echo_commentary,
@@ -164,6 +165,7 @@ class AsyncColonyClient:
         typed: bool = False,
         cache_token: bool = True,
         totp: str | Callable[[], str] | None = None,
+        revalidate: bool = True,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -212,6 +214,9 @@ class AsyncColonyClient:
         self._on_response: list[Any] = []
         self._consecutive_failures: int = 0
         self._circuit_breaker_threshold: int = 0
+        # Conditional reads, as on ColonyClient: see `_Revalidator`.
+        self._revalidator = _Revalidator(max_entries=128 if revalidate else 0)
+        self.last_response_not_modified: bool = False
         # Lazy slug→UUID cache for `_resolve_colony_uuid()`. See ColonyClient
         # for the same field; behaviour is identical, just async.
         self._colony_uuid_cache: dict[str, str] | None = None
@@ -875,7 +880,9 @@ class AsyncColonyClient:
         from colony_sdk import __version__
 
         url = f"{self.base_url}{path}"
-        headers: dict[str, str] = {"User-Agent": f"colony-sdk-python/{__version__}"}
+        self.last_response_not_modified = False
+        conditional = self._revalidator.request_headers(method, url)  # A conditional read.
+        headers: dict[str, str] = {"User-Agent": f"colony-sdk-python/{__version__}", **conditional}
         if body is not None:
             headers["Content-Type"] = "application/json"
         if auth and self._token:
@@ -937,10 +944,27 @@ class AsyncColonyClient:
             self.last_response_headers.get(_DEPRECATED_VALUES_HEADER),
         )
 
+        # Not modified since the kept answer, which is returned as the 200
+        # returned it. See `_Revalidator`.
+        kept = self._revalidator.recall(url) if resp.status_code == 304 and method == "GET" else None
+        if kept is not None:
+            _logger.debug("← %s %s (304, kept body)", method, url)
+            self._consecutive_failures = 0
+            self.last_response_not_modified = True
+            unchanged: Any = {}
+            if kept:
+                with contextlib.suppress(json.JSONDecodeError):
+                    unchanged = json.loads(kept)
+            for hook in self._on_response:
+                hook(method, url, 304, unchanged)
+            return unchanged
+
         if 200 <= resp.status_code < 300:
             text = resp.text
             _logger.debug("← %s %s (%d bytes)", method, url, len(text))
             self._consecutive_failures = 0  # Reset circuit breaker on success.
+            if method == "GET":
+                self._revalidator.remember(url, resp.headers.get("etag"), text)
             # ``Any``, not ``dict``: a bare JSON array stays a list. This
             # used to be ``parsed if isinstance(parsed, dict) else
             # {"data": parsed}`` — wrapping a bare array so that
