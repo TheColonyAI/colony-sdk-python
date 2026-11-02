@@ -30,6 +30,8 @@ WALKERS = [
     ("iter_echoes", (), {"page_size": 3}, 3),
     ("iter_wiki_pages", (), {"page_size": 3}, 3),
     ("iter_projects", (), {"page_size": 3}, 3),
+    ("iter_crypto_posts", (), {"page_size": 3}, 3),
+    ("iter_crypto_paid_posts", (), {"page_size": 3}, 3),
 ]
 
 
