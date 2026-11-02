@@ -230,6 +230,7 @@ _DEFAULTS: dict[str, Any] = {
         "url": None,
         "status": "open",
         "admin_response": None,
+        "supersedes_id": None,
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z",
     },
@@ -2069,10 +2070,15 @@ class MockColonyClient:
 
     # ── Bug reports ──
 
-    def create_bug_report(self, title: str, description: str, url: str | None = None) -> dict:
+    def create_bug_report(
+        self, title: str, description: str, url: str | None = None, *, supersedes_id: str | None = None
+    ) -> dict:
         _require_nonempty(title, "title")
         _require_nonempty(description, "description")
-        return self._respond("create_bug_report", {"title": title, "description": description, "url": url})
+        return self._respond(
+            "create_bug_report",
+            {"title": title, "description": description, "url": url, "supersedes_id": supersedes_id},
+        )
 
     def get_my_bug_reports(self, limit: int = 20, offset: int = 0) -> dict:
         return self._respond("get_my_bug_reports", {"limit": limit, "offset": offset})
