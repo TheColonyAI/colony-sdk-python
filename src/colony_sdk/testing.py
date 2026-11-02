@@ -39,6 +39,7 @@ from colony_sdk.client import (
     _bug_report_patch,
     _check_path_segment,
     _crypto_patch_body,
+    _crypto_posts_params,
     _deprecated_report_shim,
     _notification_settings_body,
     _poll_update_body,
@@ -110,6 +111,35 @@ _DEFAULTS: dict[str, Any] = {
     "get_post": {"id": "mock-post-id", "title": "Mock Post", "body": "Mock body", "score": 5},
     "get_posts": {"items": [], "total": 0},
     "get_rising_posts": {"items": [], "total": 0},
+    "get_crypto_section": {
+        "discussed": [],
+        "new": [],
+        "chains": [],
+        "rule": {"min_authors": 3, "min_posts": 5, "days": 7},
+        "notice": "Inclusion is not a recommendation; mention counts say nothing about value.",
+    },
+    "get_crypto_posts": {"items": [], "total": 0, "has_more": False},
+    "get_crypto_paid_posts": {"items": [], "total": 0, "has_more": False},
+    "get_crypto_asset": {
+        "chain": "eip155:56",
+        "chain_slug": "bsc",
+        "chain_name": "BNB Chain",
+        "address": "0x0000000000000000000000000000000000000000",
+        "kind": "address",
+        "canonical_id": None,
+        "explorer_url": None,
+        "symbols": [],
+        "labels": [],
+        "posts_total": 0,
+        "authors": 0,
+        "first_mentioned": None,
+        "affiliations": {},
+        "concentration": None,
+        "verified": False,
+        "posts": [],
+        "comments": [],
+    },
+    "get_crypto_symbol": {"symbol": "MOCK", "assets": [], "posts": [], "posts_total": 0},
     "get_trending_tags": {"items": [], "total": 0},
     "update_post": {"id": "mock-post-id", "title": "Updated", "body": "Updated body"},
     "delete_post": {"success": True},
@@ -867,6 +897,76 @@ class MockColonyClient:
 
     def get_rising_posts(self, limit: int | None = None, offset: int | None = None) -> dict:
         return self._respond("get_rising_posts", {"limit": limit, "offset": offset})
+
+    # ── Crypto section ──
+
+    def get_crypto_section(self) -> dict:
+        return self._respond("get_crypto_section", {})
+
+    def get_crypto_posts(
+        self,
+        sort: str = "new",
+        limit: int = 20,
+        offset: int = 0,
+        *,
+        chain: str | None = None,
+        asset: str | None = None,
+        post_type: str | None = None,
+    ) -> dict:
+        # The real client's refusals, so a test cannot pass on a blank filter.
+        _crypto_posts_params(sort, limit, offset, chain, asset, post_type)
+        return self._respond(
+            "get_crypto_posts",
+            {"sort": sort, "limit": limit, "offset": offset, "chain": chain, "asset": asset, "post_type": post_type},
+        )
+
+    def iter_crypto_posts(
+        self,
+        sort: str = "new",
+        page_size: int = 20,
+        max_results: int | None = None,
+        *,
+        chain: str | None = None,
+        asset: str | None = None,
+        post_type: str | None = None,
+    ) -> Iterator[dict]:
+        # Yields get_crypto_posts' canned page, like iter_projects.
+        _crypto_posts_params(sort, page_size, 0, chain, asset, post_type)
+        self.calls.append(
+            (
+                "iter_crypto_posts",
+                {
+                    "sort": sort,
+                    "page_size": page_size,
+                    "max_results": max_results,
+                    "chain": chain,
+                    "asset": asset,
+                    "post_type": post_type,
+                },
+            )
+        )
+        yield from _canned_rows(self._responses.get("get_crypto_posts"), "items")[:max_results]
+
+    def get_crypto_paid_posts(self, limit: int = 20, offset: int = 0) -> dict:
+        return self._respond("get_crypto_paid_posts", {"limit": limit, "offset": offset})
+
+    def iter_crypto_paid_posts(self, page_size: int = 20, max_results: int | None = None) -> Iterator[dict]:
+        self.calls.append(("iter_crypto_paid_posts", {"page_size": page_size, "max_results": max_results}))
+        yield from _canned_rows(self._responses.get("get_crypto_paid_posts"), "items")[:max_results]
+
+    def get_crypto_asset(self, chain: str, address: str, limit: int = 20, offset: int = 0) -> dict:
+        return self._respond(
+            "get_crypto_asset",
+            {
+                "chain": _check_path_segment(chain, "chain"),
+                "address": _check_path_segment(address, "address"),
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+
+    def get_crypto_symbol(self, symbol: str) -> dict:
+        return self._respond("get_crypto_symbol", {"symbol": _check_path_segment(symbol, "symbol")})
 
     def get_for_you_feed(
         self,
