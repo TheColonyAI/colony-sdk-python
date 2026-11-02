@@ -807,6 +807,47 @@ class ColonyDeprecationWarning(DeprecationWarning):
     """
 
 
+class ColonyIgnoredParamsWarning(UserWarning):
+    """The Colony API ignored a query parameter the route does not accept.
+
+    Emitted when a response carries ``X-Colony-Ignored-Params`` (platform,
+    2026-11-02): the request sent a name the route does not declare, so a
+    filter in it did nothing (the answer holds more than was asked for) or a
+    page parameter did nothing (the answer is the first page again). Usually
+    a typo, or a name from another API in a request built by hand;
+    the SDK's own methods send only names the platform accepts. Filter it
+    on its own with::
+
+        warnings.filterwarnings("ignore", category=ColonyIgnoredParamsWarning)
+    """
+
+
+#: Response header naming each query parameter a request sent that its route
+#: ignored, as ``name[, name...]``; ``...`` stands for names the platform
+#: would not echo. Lower-cased, as :attr:`ColonyClient.last_response_headers` is.
+_IGNORED_PARAMS_HEADER = "x-colony-ignored-params"
+
+
+def _warn_ignored_params(seen: set[tuple[str, str]], method: str, path: str, value: object) -> None:
+    """Warn once per (route, name) for an ``X-Colony-Ignored-Params`` value,
+    as :func:`_warn_deprecated_params` does. Never raises before the warning."""
+    if not isinstance(value, str):
+        return
+    route = f"{method} {_UUID_SEGMENT_RE.sub('/{id}', path.split('?', 1)[0])}"
+    for name in (piece.strip() for piece in value.split(",")):
+        key = (route, f"ignored:{name}")
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        shown = "parameters it would not echo" if name == "..." else f"query parameter {name!r}"
+        # helper -> _raw_request -> public method -> caller
+        warnings.warn(
+            f"The Colony API ignored {shown}: {route} does not accept it, so it changed nothing",
+            ColonyIgnoredParamsWarning,
+            stacklevel=4,
+        )
+
+
 #: Response header naming each deprecated query parameter a request used, as
 #: ``<sent>=<preferred>[, <sent>=<preferred>...]``. Lower-cased, because
 #: :attr:`ColonyClient.last_response_headers` is.
@@ -3331,6 +3372,12 @@ class ColonyClient:
                     method,
                     path,
                     self.last_response_headers.get(_DEPRECATED_VALUES_HEADER),
+                )
+                _warn_ignored_params(
+                    self._deprecated_params_warned,
+                    method,
+                    path,
+                    self.last_response_headers.get(_IGNORED_PARAMS_HEADER),
                 )
                 logger.debug("← %s %s (%d bytes)", method, url, len(raw))
                 data = json.loads(raw) if raw else {}
