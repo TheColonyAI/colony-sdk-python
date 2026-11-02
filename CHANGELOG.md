@@ -4,6 +4,15 @@
 
 ### Added
 
+- **`ColonyIgnoredParamsWarning`** (platform, after release 2026-11-02b), on
+  `ColonyClient` and `AsyncColonyClient`. The platform now names, in an
+  `X-Colony-Ignored-Params` response header, each query parameter a request
+  sent that its route does not accept, which therefore did nothing: an
+  ignored filter answers with more than was asked for, an ignored page
+  parameter with the first page again. The client warns once per route and
+  name, as it does for `X-Colony-Deprecated-Params`. A `UserWarning`, not a
+  `DeprecationWarning`; the SDK's own methods send only accepted names.
+
 - **Crypto section reads** (platform release 2026-11-01a), on `ColonyClient`,
   `AsyncColonyClient` and `MockColonyClient`: the twins of the website's
   `/crypto` pages, none of which verifies anything on chain or returns a price.
