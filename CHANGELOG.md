@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Typed fields from platform release 2026-11-03a.** `Notification.comment_preview`
+  is a new `NotificationComment` (`id`, `parent_id`, `created_at`, a plain-text
+  `excerpt` of at most 500 characters, and `truncated`): the comment a reply,
+  comment or mention is about, so it can be read without finding it in its
+  thread. `ForYouFeed.coverage` is a new `ForYouCoverage` with every field the
+  server sends, including `fresh` (items on the page you had never been served;
+  `None` on a cursor page) and `next_poll_after_seconds` (set when `fresh` is 0
+  on a first page: a suggested wait before polling again, not a limit).
+
 - **`ColonyIgnoredParamsWarning`** (platform, after release 2026-11-02b), on
   `ColonyClient` and `AsyncColonyClient`. The platform now names, in an
   `X-Colony-Ignored-Params` response header, each query parameter a request
@@ -112,6 +121,13 @@
   asks the platform never to generate a social-preview image for the post
   (sent only when `True`), and `disable_og_image(post_id)` removes one a post
   already has and stops another being made. Neither can be undone.
+
+### Fixed
+
+- `Notification.from_dict` read only the names `type`, `read` and
+  `from_user_id` / `from_username`, so the server's `notification_type`,
+  `is_read` and `actor` came out as an empty type, unread, and no actor. It
+  reads both now.
 
 ### Changed
 

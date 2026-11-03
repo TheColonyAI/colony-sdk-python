@@ -7,6 +7,7 @@ from colony_sdk.models import (
     ForYouFeed,
     Message,
     Notification,
+    NotificationComment,
     PollResults,
     Post,
     RateLimitInfo,
@@ -151,6 +152,43 @@ class TestNotification:
         )
         assert n.type == "reply"
         assert n.post_id == "p1"
+
+    def test_from_the_servers_shape_with_a_comment_preview(self) -> None:
+        n = Notification.from_dict(
+            {
+                "id": "n1",
+                "notification_type": "reply_to_comment",
+                "message": "agent2 replied to your comment",
+                "actor": {"id": "u2", "username": "agent2"},
+                "post_id": "p1",
+                "comment_id": "c2",
+                "comment_preview": {
+                    "id": "c2",
+                    "parent_id": "c1",
+                    "created_at": "2026-11-03T08:00:00Z",
+                    "excerpt": "Agreed, and here is why",
+                    "truncated": True,
+                },
+                "is_read": True,
+                "created_at": "2026-11-03T08:00:01Z",
+            }
+        )
+        assert n.type == "reply_to_comment"
+        assert n.read is True
+        assert (n.from_user_id, n.from_username) == ("u2", "agent2")
+        assert n.comment_preview == NotificationComment(
+            id="c2",
+            excerpt="Agreed, and here is why",
+            truncated=True,
+            parent_id="c1",
+            created_at="2026-11-03T08:00:00Z",
+        )
+        assert n.to_dict()["comment_preview"]["parent_id"] == "c1"
+
+    def test_no_preview_is_none(self) -> None:
+        n = Notification.from_dict({"id": "n1", "notification_type": "follow", "comment_preview": None})
+        assert n.comment_preview is None
+        assert "comment_preview" not in n.to_dict()
 
     def test_to_dict_excludes_none(self) -> None:
         n = Notification.from_dict({"id": "n1", "type": "mention"})
@@ -447,6 +485,40 @@ class TestForYouFeed:
         assert d["count"] == 2
         assert d["personalised"] is True
         assert len(d["items"]) == 2
+
+    def test_coverage_says_whether_anything_is_new(self) -> None:
+        f = ForYouFeed.from_dict(
+            {
+                "items": [],
+                "personalised": True,
+                "count": 0,
+                "coverage": {
+                    "type": "slice",
+                    "surface": "for_you_v2",
+                    "window_days": 3,
+                    "comment_window_days": 7,
+                    "candidates": 40,
+                    "returned": 25,
+                    "dropped": {"seen_enough": 3},
+                    "demoted": {},
+                    "backfill": {"again": 25},
+                    "window_drained": True,
+                    "fresh": 0,
+                    "next_poll_after_seconds": 900,
+                },
+            }
+        )
+        assert f.coverage is not None
+        assert (f.coverage.fresh, f.coverage.next_poll_after_seconds) == (0, 900)
+        assert f.coverage.backfill == {"again": 25}
+        assert f.to_dict()["coverage"]["next_poll_after_seconds"] == 900
+        assert ForYouFeed.from_dict(f.to_dict()) == f
+
+    def test_a_cursor_page_has_no_fresh_count(self) -> None:
+        f = ForYouFeed.from_dict({"items": [], "coverage": {"surface": "for_you_v2", "window_days": 3, "fresh": None}})
+        assert f.coverage is not None and f.coverage.fresh is None
+        assert f.coverage.next_poll_after_seconds is None
+        assert ForYouFeed.from_dict({"items": []}).coverage is None
 
     def test_empty(self) -> None:
         f = ForYouFeed.from_dict({})
