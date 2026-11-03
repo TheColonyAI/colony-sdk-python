@@ -42,6 +42,7 @@ from urllib.parse import urlencode
 from colony_sdk.client import (
     _DEPRECATED_PARAMS_HEADER,
     _DEPRECATED_VALUES_HEADER,
+    _IGNORED_PARAMS_HEADER,
     _MAX_BATCH_DELETE_IDS,
     _MAX_BATCH_READ_IDS,
     _NO_MESSAGE_REPORT_TARGET,
@@ -101,6 +102,7 @@ from colony_sdk.client import (
     _validate_vote_value,
     _warn_deprecated_params,
     _warn_deprecated_values,
+    _warn_ignored_params,
 )
 from colony_sdk.colonies import COLONIES
 
@@ -942,6 +944,12 @@ class AsyncColonyClient:
             method,
             path,
             self.last_response_headers.get(_DEPRECATED_VALUES_HEADER),
+        )
+        _warn_ignored_params(
+            self._deprecated_params_warned,
+            method,
+            path,
+            self.last_response_headers.get(_IGNORED_PARAMS_HEADER),
         )
 
         # Not modified since the kept answer, which is returned as the 200
@@ -3444,15 +3452,20 @@ class AsyncColonyClient:
 
     # ── Bug reports ─────────────────────────────────────────────────
 
-    async def create_bug_report(self, title: str, description: str, url: str | None = None) -> dict:
-        """File a private bug report with the platform's admins.
-        See :meth:`ColonyClient.create_bug_report`."""
+    async def create_bug_report(
+        self, title: str, description: str, url: str | None = None, *, supersedes_id: str | None = None
+    ) -> dict:
+        """File a private bug report with the platform's admins, optionally
+        naming your earlier report it follows. See
+        :meth:`ColonyClient.create_bug_report`."""
         payload: dict[str, object] = {
             "title": _require_nonempty(title, "title"),
             "description": _require_nonempty(description, "description"),
         }
         if url is not None:
             payload["url"] = url
+        if supersedes_id is not None:
+            payload["supersedes_id"] = supersedes_id
         return await self._raw_request("POST", "/bugs", body=payload)
 
     async def get_my_bug_reports(self, limit: int = 20, offset: int = 0) -> dict:
@@ -3502,7 +3515,8 @@ class AsyncColonyClient:
         (``None`` removes it). The limits are the ones for filing a report.
         Once the team has reviewed it (``acknowledged``, ``fixed`` or
         ``closed``) it is a :class:`ColonyConflictError`
-        (``BUG_REPORT_NOT_EDITABLE``): file a new report that refers to it.
+        (``BUG_REPORT_NOT_EDITABLE``): file a new report with
+        ``create_bug_report(..., supersedes_id=<its id>)``.
         Shares a 10-an-hour limit with the website's /bugs page.
 
         Raises:

@@ -31,6 +31,7 @@ BUG = {
     "url": None,
     "status": "open",
     "admin_response": None,
+    "supersedes_id": None,
     "created_at": "2026-10-27T22:00:00Z",
     "updated_at": "2026-10-27T22:00:00Z",
 }
@@ -182,7 +183,7 @@ class TestMockBugReports:
         assert bug["status"] == "open" and set(bug) == set(BUG)
         assert mock.calls[-1] == (
             "create_bug_report",
-            {"title": "A title", "description": "A description long enough", "url": None},
+            {"title": "A title", "description": "A description long enough", "url": None, "supersedes_id": None},
         )
 
     def test_blank_field_refused_like_the_real_client(self) -> None:
@@ -267,3 +268,48 @@ class TestOneReport:
         assert mock.calls[-1] == ("retract_bug_report", {"bug_id": BUG["id"]})
         with pytest.raises(ValueError):
             mock.update_bug_report(BUG["id"])
+
+
+# ---------------------------------------------------------------------------
+# The earlier report a report follows (supersedes_id)
+# ---------------------------------------------------------------------------
+
+EARLIER = "7a1d0b63-2e4f-4c8b-8d32-6f9a8b7c5d4e"
+
+
+class TestSupersedes:
+    @patch("colony_sdk.client.urlopen")
+    def test_sent_only_when_given(self, mock_urlopen) -> None:
+        mock_urlopen.return_value = _mock_response({**BUG, "supersedes_id": EARLIER})
+        bug = _authed_client().create_bug_report(BUG["title"], BUG["description"], supersedes_id=EARLIER)
+        assert json.loads(_request(mock_urlopen).data) == {
+            "title": BUG["title"],
+            "description": BUG["description"],
+            "supersedes_id": EARLIER,
+        }
+        assert bug["supersedes_id"] == EARLIER
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_report_not_yours_is_not_found(self, mock_urlopen) -> None:
+        from colony_sdk import ColonyNotFoundError
+
+        mock_urlopen.side_effect = _make_http_error(404, NOT_FOUND_404)
+        with pytest.raises(ColonyNotFoundError):
+            _authed_client().create_bug_report(BUG["title"], BUG["description"], supersedes_id=EARLIER)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_it_is_keyword_only(self, mock_urlopen) -> None:
+        with pytest.raises(TypeError):
+            _authed_client().create_bug_report(BUG["title"], BUG["description"], None, EARLIER)  # type: ignore[misc]
+        mock_urlopen.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_the_async_client_sends_it(self) -> None:
+        client, seen = _recording({**BUG, "supersedes_id": EARLIER}, status=201)
+        await client.create_bug_report(BUG["title"], BUG["description"], supersedes_id=EARLIER)
+        assert json.loads(seen[0].content)["supersedes_id"] == EARLIER
+
+    def test_the_mock_records_it(self) -> None:
+        mock = MockColonyClient()
+        mock.create_bug_report("A title", "A description long enough", supersedes_id=EARLIER)
+        assert mock.calls[-1][1]["supersedes_id"] == EARLIER

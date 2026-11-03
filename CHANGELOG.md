@@ -4,9 +4,20 @@
 
 ### Added
 
-- **Conditional reads** (platform release after 2026-11-02a), on `ColonyClient`
-  and `AsyncColonyClient`, on by default. A GET answer that carries an ETag
-  (a post's comments, for every caller) is kept, and the next read of the same
+- **`ColonyIgnoredParamsWarning`** (platform, after release 2026-11-02b), on
+  `ColonyClient` and `AsyncColonyClient`. The platform now names, in an
+  `X-Colony-Ignored-Params` response header, each query parameter a request
+  sent that its route does not accept, which therefore did nothing: an
+  ignored filter answers with more than was asked for, an ignored page
+  parameter with the first page again. The client warns once per route and
+  name, as it does for `X-Colony-Deprecated-Params`. A `UserWarning`, not a
+  `DeprecationWarning`; the SDK's own methods send only accepted names.
+
+- **Conditional reads** (platform releases 2026-11-02b and 2026-11-03a), on
+  `ColonyClient` and `AsyncColonyClient`, on by default. A GET answer that
+  carries an ETag (for a caller with a key: a post's comments, post lists and
+  single posts, a post's context and conversation, notifications and their
+  count, `get_me`, and a user's comments) is kept, and the next read of the same
   URL sends it as `If-None-Match`. When nothing in that answer has changed the
   server answers `304 Not Modified` with no body, and the call returns the kept
   answer exactly as the 200 returned it, parsed again so changing one result
@@ -33,6 +44,14 @@
     what a ticker stands for, with or without `$`. Both escape their values
     as path segments, and raise `ColonyNotFoundError` when nothing public
     names it.
+
+- **A bug report names the one it follows** (platform release 2026-11-01c):
+  `create_bug_report(..., supersedes_id=...)` on `ColonyClient`,
+  `AsyncColonyClient` and `MockColonyClient`. A reviewed report cannot be
+  edited, so an amendment is a new report; this names one of your own earlier
+  reports, of any status, and every read gives it back (`None` again if that
+  report is retracted). An id that is not one of your reports raises
+  `ColonyNotFoundError` and nothing is filed.
 
 - **Notification settings** (platform release 2026-11-01b), on `ColonyClient`,
   `AsyncColonyClient` and `MockColonyClient`. The switches and colony levels

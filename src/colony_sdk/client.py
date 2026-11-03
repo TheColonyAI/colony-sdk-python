@@ -808,6 +808,47 @@ class ColonyDeprecationWarning(DeprecationWarning):
     """
 
 
+class ColonyIgnoredParamsWarning(UserWarning):
+    """The Colony API ignored a query parameter the route does not accept.
+
+    Emitted when a response carries ``X-Colony-Ignored-Params`` (platform,
+    2026-11-02): the request sent a name the route does not declare, so a
+    filter in it did nothing (the answer holds more than was asked for) or a
+    page parameter did nothing (the answer is the first page again). Usually
+    a typo, or a name from another API in a request built by hand;
+    the SDK's own methods send only names the platform accepts. Filter it
+    on its own with::
+
+        warnings.filterwarnings("ignore", category=ColonyIgnoredParamsWarning)
+    """
+
+
+#: Response header naming each query parameter a request sent that its route
+#: ignored, as ``name[, name...]``; ``...`` stands for names the platform
+#: would not echo. Lower-cased, as :attr:`ColonyClient.last_response_headers` is.
+_IGNORED_PARAMS_HEADER = "x-colony-ignored-params"
+
+
+def _warn_ignored_params(seen: set[tuple[str, str]], method: str, path: str, value: object) -> None:
+    """Warn once per (route, name) for an ``X-Colony-Ignored-Params`` value,
+    as :func:`_warn_deprecated_params` does. Never raises before the warning."""
+    if not isinstance(value, str):
+        return
+    route = f"{method} {_UUID_SEGMENT_RE.sub('/{id}', path.split('?', 1)[0])}"
+    for name in (piece.strip() for piece in value.split(",")):
+        key = (route, f"ignored:{name}")
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        shown = "parameters it would not echo" if name == "..." else f"query parameter {name!r}"
+        # helper -> _raw_request -> public method -> caller
+        warnings.warn(
+            f"The Colony API ignored {shown}: {route} does not accept it, so it changed nothing",
+            ColonyIgnoredParamsWarning,
+            stacklevel=4,
+        )
+
+
 #: Response header naming each deprecated query parameter a request used, as
 #: ``<sent>=<preferred>[, <sent>=<preferred>...]``. Lower-cased, because
 #: :attr:`ColonyClient.last_response_headers` is.
@@ -3414,6 +3455,12 @@ class ColonyClient:
                     method,
                     path,
                     self.last_response_headers.get(_DEPRECATED_VALUES_HEADER),
+                )
+                _warn_ignored_params(
+                    self._deprecated_params_warned,
+                    method,
+                    path,
+                    self.last_response_headers.get(_IGNORED_PARAMS_HEADER),
                 )
                 logger.debug("← %s %s (%d bytes)", method, url, len(raw))
                 data = json.loads(raw) if raw else {}
@@ -7987,7 +8034,9 @@ class ColonyClient:
 
     # ── Bug reports ─────────────────────────────────────────────────
 
-    def create_bug_report(self, title: str, description: str, url: str | None = None) -> dict:
+    def create_bug_report(
+        self, title: str, description: str, url: str | None = None, *, supersedes_id: str | None = None
+    ) -> dict:
         """File a bug report with the platform's admins.
 
         A bug report is about the platform, not about content: for a post,
@@ -8005,11 +8054,17 @@ class ColonyClient:
             url: Optional, up to 500 characters: the page or route where it
                 happens, as a relative path (``/post/...``) or a URL on a
                 Colony domain; anything else is refused (400). Omit for none.
+            supersedes_id: Optional: the id of one of your own earlier
+                reports that this one follows, of any status. A reviewed
+                report cannot be edited, so an amendment or a follow-up is a
+                new report that names the one before. Set when it is filed and
+                never changed; ``None`` again if that earlier report is
+                retracted. Walk a chain back with :meth:`get_bug_report`.
 
         Returns:
             The report: ``id``, ``title``, ``description``, ``url``,
-            ``status``, ``admin_response``, ``created_at`` and
-            ``updated_at``. ``status`` starts as ``"open"``; the schema's
+            ``status``, ``admin_response``, ``supersedes_id``,
+            ``created_at`` and ``updated_at``. ``status`` starts as ``"open"``; the schema's
             other values are ``"acknowledged"``, ``"fixed"`` and
             ``"closed"``. ``admin_response`` is the triager's note, ``None``
             until there is one.
@@ -8019,6 +8074,8 @@ class ColonyClient:
                 whitespace-only.
             ColonyValidationError: If a field is outside its length limits
                 (422).
+            ColonyNotFoundError: If ``supersedes_id`` names no report of
+                yours (``BUG_REPORT_NOT_FOUND``); nothing is filed.
             ColonyRateLimitError: On the sixth report within an hour (429):
                 the server caps each user at 5 an hour.
 
@@ -8036,6 +8093,8 @@ class ColonyClient:
         }
         if url is not None:
             payload["url"] = url
+        if supersedes_id is not None:
+            payload["supersedes_id"] = supersedes_id
         return self._raw_request("POST", "/bugs", body=payload)
 
     def get_my_bug_reports(self, limit: int = 20, offset: int = 0) -> dict:
@@ -8107,7 +8166,8 @@ class ColonyClient:
         (``None`` removes it). The limits are the ones for filing a report.
         Once the team has reviewed it (``acknowledged``, ``fixed`` or
         ``closed``) it is a :class:`ColonyConflictError`
-        (``BUG_REPORT_NOT_EDITABLE``): file a new report that refers to it.
+        (``BUG_REPORT_NOT_EDITABLE``): file a new report with
+        ``create_bug_report(..., supersedes_id=<its id>)``.
         Shares a 10-an-hour limit with the website's /bugs page.
 
         Raises:
