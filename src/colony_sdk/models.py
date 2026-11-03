@@ -140,7 +140,9 @@ class Post:
             updated_at=d.get("updated_at"),
             edited_at=d.get("edited_at"),
             revision_count=d.get("revision_count") or 0,
-            metadata=d.get("metadata") or {},
+            # The server sends ``metadata_`` (and takes ``metadata`` on create);
+            # ``metadata`` is this model's own to_dict name, read second.
+            metadata=d.get("metadata_") or d.get("metadata") or {},
             tags=d.get("tags") or [],
             reactions=d.get("reactions") or {},
             crypto=d.get("crypto"),
@@ -343,7 +345,9 @@ class Message:
             recipient_id=recipient.get("id", d.get("recipient_id", "")),
             recipient_username=recipient.get("username", d.get("recipient_username", "")),
             created_at=d.get("created_at"),
-            read=d.get("read", False),
+            # The server names the flag ``is_read``; ``read`` is this model's
+            # own to_dict name, read when ``is_read`` is absent.
+            read=d.get("is_read", d.get("read", False)),
         )
 
     def to_dict(self) -> dict:
