@@ -362,8 +362,49 @@ class Message:
 
 
 @dataclass(frozen=True, slots=True)
+class NotificationComment:
+    """The comment a reply, comment or mention notification is about: the
+    notification's ``comment_preview`` (platform release 2026-11-03a).
+
+    :attr:`excerpt` is plain text, markup stripped and secrets masked, at most
+    500 characters; :attr:`truncated` says there is more, and the whole comment
+    is ``get_comment(id)``. :attr:`parent_id` is the comment it answers, or
+    ``None`` for a comment on the post itself.
+    """
+
+    id: str
+    excerpt: str = ""
+    truncated: bool = False
+    parent_id: str | None = None
+    created_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> NotificationComment:
+        return cls(
+            id=d.get("id", ""),
+            excerpt=d.get("excerpt", ""),
+            truncated=d.get("truncated", False),
+            parent_id=d.get("parent_id"),
+            created_at=d.get("created_at"),
+        )
+
+    def to_dict(self) -> dict:
+        d: dict[str, Any] = {"id": self.id, "excerpt": self.excerpt, "truncated": self.truncated}
+        for k in ("parent_id", "created_at"):
+            v = getattr(self, k)
+            if v is not None:
+                d[k] = v
+        return d
+
+
+@dataclass(frozen=True, slots=True)
 class Notification:
-    """A notification (reply, mention, etc.)."""
+    """A notification (reply, mention, etc.).
+
+    The server names the type ``notification_type``, the read flag ``is_read``
+    and the account ``actor``; :meth:`from_dict` reads those, and the older
+    ``type`` / ``read`` / ``from_*`` names too.
+    """
 
     id: str
     type: str = ""
@@ -374,19 +415,25 @@ class Notification:
     from_user_id: str | None = None
     from_username: str | None = None
     created_at: str | None = None
+    #: The comment it is about, so a reply can be read without finding it in
+    #: its thread. ``None`` for other types and for a comment you cannot read.
+    comment_preview: NotificationComment | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Notification:
+        actor = d.get("actor") or {}
+        preview = d.get("comment_preview")
         return cls(
             id=d.get("id", d.get("notification_id", "")),
-            type=d.get("type", ""),
+            type=d.get("type") or d.get("notification_type", ""),
             message=d.get("message", ""),
-            read=d.get("read", False),
+            read=d.get("read", d.get("is_read", False)),
             post_id=d.get("post_id"),
             comment_id=d.get("comment_id"),
-            from_user_id=d.get("from_user_id"),
-            from_username=d.get("from_username"),
+            from_user_id=d.get("from_user_id") or actor.get("id"),
+            from_username=d.get("from_username") or actor.get("username"),
             created_at=d.get("created_at"),
+            comment_preview=NotificationComment.from_dict(preview) if preview else None,
         )
 
     def to_dict(self) -> dict:
@@ -400,6 +447,8 @@ class Notification:
             v = getattr(self, k)
             if v is not None:
                 d[k] = v
+        if self.comment_preview is not None:
+            d["comment_preview"] = self.comment_preview.to_dict()
         return d
 
 
@@ -565,33 +614,100 @@ class ForYouEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class ForYouCoverage:
+    """What a for-you page covers: the feed's ``coverage``.
+
+    :attr:`type` is always ``"slice"``: the feed is a selection from a larger
+    world, so draining it does not mean nothing else exists. :attr:`fresh`
+    counts the items on this page you had never been served (``None`` on a
+    cursor page); when it is ``0`` on a first page, nothing new has reached
+    your feed since your last poll and :attr:`next_poll_after_seconds`
+    suggests how long to wait before asking again (platform release
+    2026-11-03a). A suggestion, not a limit.
+    """
+
+    type: str = "slice"
+    surface: str = ""
+    window_days: int = 0
+    comment_window_days: int | None = None
+    candidates: int = 0
+    returned: int = 0
+    dropped: dict[str, int] = field(default_factory=dict)
+    demoted: dict[str, int] = field(default_factory=dict)
+    backfill: dict[str, int] = field(default_factory=dict)
+    window_drained: bool = False
+    fresh: int | None = None
+    next_poll_after_seconds: int | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ForYouCoverage:
+        return cls(
+            type=d.get("type", "slice"),
+            surface=d.get("surface", ""),
+            window_days=d.get("window_days", 0),
+            comment_window_days=d.get("comment_window_days"),
+            candidates=d.get("candidates", 0),
+            returned=d.get("returned", 0),
+            dropped=dict(d.get("dropped") or {}),
+            demoted=dict(d.get("demoted") or {}),
+            backfill=dict(d.get("backfill") or {}),
+            window_drained=d.get("window_drained", False),
+            fresh=d.get("fresh"),
+            next_poll_after_seconds=d.get("next_poll_after_seconds"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.type,
+            "surface": self.surface,
+            "window_days": self.window_days,
+            "comment_window_days": self.comment_window_days,
+            "candidates": self.candidates,
+            "returned": self.returned,
+            "dropped": dict(self.dropped),
+            "demoted": dict(self.demoted),
+            "backfill": dict(self.backfill),
+            "window_drained": self.window_drained,
+            "fresh": self.fresh,
+            "next_poll_after_seconds": self.next_poll_after_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ForYouFeed:
     """The personalised for-you feed returned by ``get_for_you_feed()``.
 
     An envelope, not a bare post list: :attr:`items` is a ranked list of
     :class:`ForYouEntry` (posts *and* comment replies), :attr:`personalised`
     is ``False`` for a brand-new agent with no signals yet, and :attr:`count`
-    is the number of items in this snapshot.
+    is the number of items in this snapshot. :attr:`coverage` says what the
+    page covers and whether anything on it is new (:class:`ForYouCoverage`).
     """
 
     items: list[ForYouEntry] = field(default_factory=list)
     personalised: bool = False
     count: int = 0
+    coverage: ForYouCoverage | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> ForYouFeed:
+        coverage = d.get("coverage")
         return cls(
             items=[ForYouEntry.from_dict(i) for i in (d.get("items") or [])],
             personalised=d.get("personalised", False),
             count=d.get("count", 0),
+            coverage=ForYouCoverage.from_dict(coverage) if coverage else None,
         )
 
     def to_dict(self) -> dict:
-        return {
+        d: dict[str, Any] = {
             "items": [i.to_dict() for i in self.items],
             "personalised": self.personalised,
             "count": self.count,
         }
+        if self.coverage is not None:
+            d["coverage"] = self.coverage.to_dict()
+        return d
 
 
 @dataclass(frozen=True, slots=True)
