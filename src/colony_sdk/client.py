@@ -19,6 +19,7 @@ import sys
 import time
 import uuid
 import warnings
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -978,6 +979,74 @@ def _warn_deprecated_values(seen: set[tuple[str, str]], method: str, path: str, 
             ColonyDeprecationWarning,
             stacklevel=4,
         )
+
+
+class _Revalidator:
+    """The ETag and body of recent GET answers, so the next read of the same
+    URL asks whether it changed rather than downloading it again.
+
+    The API sends an ETag on some reads (a post's comments, for any caller),
+    a hash of the answer that caller was about to get. Sent back as
+    ``If-None-Match``, an unchanged answer is ``304 Not Modified`` with no
+    body, and the body kept here is returned instead, exactly as the 200
+    returned it. The server compares against the answer for THIS request,
+    so a kept body is never returned for an answer that differs.
+
+    Bodies are kept as the raw text and parsed again on every hit, so a
+    caller that changes the returned dict cannot change what the next hit
+    returns. At most :attr:`max_entries` URLs, least recently used dropped.
+    """
+
+    def __init__(self, max_entries: int = 128) -> None:
+        self.max_entries = max_entries
+        self._entries: OrderedDict[str, tuple[str, str]] = OrderedDict()
+
+    def etag_for(self, url: str) -> str | None:
+        entry = self._entries.get(url)
+        return entry[0] if entry is not None else None
+
+    def kept_answer(self, method: str, url: str) -> tuple[str, str] | None:
+        """The ETag and body kept for a GET of ``url``, or None.
+
+        Taken when the request is SENT and used if its 304 arrives, never
+        looked up again then: other reads can run in the meantime (an async
+        client's concurrent requests, or one client shared across threads),
+        and once 128 newer URLs are kept this one would have been dropped,
+        leaving a 304 with no body to answer it."""
+        if method != "GET":
+            return None
+        return self._entries.get(url)
+
+    @staticmethod
+    def request_headers(kept: tuple[str, str] | None) -> dict[str, str]:
+        """``If-None-Match`` for a request sent with a kept answer, else none."""
+        return {"If-None-Match": kept[0]} if kept else {}
+
+    def remember(self, url: str, etag: str | None, raw: str) -> None:
+        """Keep a 200's body under its ETag, or forget the URL when the
+        answer carried none."""
+        if not etag or self.max_entries <= 0:
+            self._entries.pop(url, None)
+            return
+        self._entries[url] = (etag, raw)
+        self._entries.move_to_end(url)
+        while len(self._entries) > self.max_entries:
+            self._entries.popitem(last=False)
+
+    def confirmed(self, url: str, kept: tuple[str, str]) -> str:
+        """The body for a 304 to a request sent with ``kept``.
+
+        The 304 says that answer is still current, so it is kept again as
+        the most recently used, unless a newer answer for the URL arrived
+        meanwhile, which stays."""
+        if url in self._entries:
+            self._entries.move_to_end(url)
+        else:
+            self.remember(url, *kept)
+        return kept[1]
+
+    def clear(self) -> None:
+        self._entries.clear()
 
 
 def _oauth_root(base_url: str) -> str:
@@ -2368,6 +2437,7 @@ class ColonyClient:
         auth_token_retry: RetryConfig | None = None,
         cache_token: bool = True,
         totp: str | Callable[[], str] | None = None,
+        revalidate: bool = True,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -2433,6 +2503,15 @@ class ColonyClient:
         self._circuit_breaker_threshold: int = 0  # 0 = disabled
         self._cache: dict[str, tuple[float, dict]] = {}
         self._cache_ttl: float = 0  # 0 = disabled
+        # `revalidate=True` (default): a GET answer that carried an ETag is
+        # kept, and the next read of the same URL sends it as
+        # `If-None-Match`; a 304 returns the kept body. See `_Revalidator`.
+        self._revalidator = _Revalidator(max_entries=128 if revalidate else 0)
+        # True when the most recent request was answered 304 Not Modified and
+        # its result is the kept body: nothing changed since this client last
+        # read that URL. Same read-it-straight-after rule as
+        # `last_response_headers`.
+        self.last_response_not_modified: bool = False
         # Lazy slug→UUID cache for `_resolve_colony_uuid()`. Populated on
         # first miss against the hardcoded `COLONIES` map; never invalidated
         # for the lifetime of the client (sub-communities are stable).
@@ -2496,6 +2575,24 @@ class ColonyClient:
         self._consecutive_failures = 0
 
     # ── Cache ────────────────────────────────────────────────────────
+
+    def _not_modified(self, method: str, url: str, kept: str, headers: Any) -> Any:
+        """A 304's result: the kept body, parsed again."""
+        try:
+            resp_headers = {k: v for k, v in headers.items()} if headers is not None else {}
+        except (AttributeError, TypeError):
+            resp_headers = {}
+        self.last_rate_limit = RateLimitInfo.from_headers(resp_headers)
+        self.last_response_headers = {k.lower(): v for k, v in resp_headers.items()}
+        self.last_response_not_modified = True
+        self._consecutive_failures = 0
+        logger.debug("← %s %s (304, kept body)", method, url)
+        data = json.loads(kept) if kept else {}
+        if self._cache_ttl > 0:
+            self._cache[url] = (time.time(), data)
+        for hook in self._on_response:
+            hook(method, url, 304, data)
+        return data
 
     def enable_cache(self, ttl: float = 60.0) -> None:
         """Enable in-memory caching for GET requests.
@@ -3300,6 +3397,7 @@ class ColonyClient:
         from colony_sdk import __version__
 
         url = f"{self.base_url}{path}"
+        self.last_response_not_modified = False
 
         # Cache — return cached response for GET requests within TTL.
         if method == "GET" and self._cache_ttl > 0 and _retry == 0:
@@ -3310,7 +3408,9 @@ class ColonyClient:
                     logger.debug("← %s %s (cached)", method, url)
                     return cached_data
 
-        headers: dict[str, str] = {"User-Agent": f"colony-sdk-python/{__version__}"}
+        kept = self._revalidator.kept_answer(method, url)  # A conditional read.
+        conditional = _Revalidator.request_headers(kept)
+        headers: dict[str, str] = {"User-Agent": f"colony-sdk-python/{__version__}", **conditional}
         if body is not None:
             headers["Content-Type"] = "application/json"
         if auth and self._token:
@@ -3382,6 +3482,8 @@ class ColonyClient:
                 logger.debug("← %s %s (%d bytes)", method, url, len(raw))
                 data = json.loads(raw) if raw else {}
                 self._consecutive_failures = 0  # Reset circuit breaker on success.
+                if method == "GET":
+                    self._revalidator.remember(url, self.last_response_headers.get("etag"), raw)
                 # Cache GET responses.
                 if method == "GET" and self._cache_ttl > 0:
                     self._cache[url] = (time.time(), data)
@@ -3395,6 +3497,10 @@ class ColonyClient:
                     hook(method, url, 200, data)
                 return data
         except HTTPError as e:
+            # urllib raises on a 304: the answer has not changed since the
+            # kept one, which is returned as the 200 returned it.
+            if e.code == 304 and kept is not None:
+                return self._not_modified(method, url, self._revalidator.confirmed(url, kept), e.headers)
             resp_body = e.read().decode()
 
             # Auto-refresh on 401 once (separate from the configurable retry loop).

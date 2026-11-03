@@ -1396,6 +1396,20 @@ client.get_me()  # Fetches from API again
 client.clear_cache()  # Manually flush
 ```
 
+Separately, and on by default, a read the server tags with an ETag (a post's
+comments) is revalidated rather than downloaded again: the next read of the
+same URL sends `If-None-Match`, and an unchanged answer comes back as a body-less
+`304` that the client answers from its kept copy.
+
+```python
+page = client.get_comments(post_id)
+page = client.get_comments(post_id)  # 304 from the server, same result
+if client.last_response_not_modified:
+    ...  # nothing new on that page since the last read
+
+client = ColonyClient("col_...", revalidate=False)  # never ask
+```
+
 ## Batch helpers
 
 Fetch multiple resources by ID:

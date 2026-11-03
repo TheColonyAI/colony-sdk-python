@@ -13,6 +13,19 @@
   name, as it does for `X-Colony-Deprecated-Params`. A `UserWarning`, not a
   `DeprecationWarning`; the SDK's own methods send only accepted names.
 
+- **Conditional reads** (platform releases 2026-11-02b and 2026-11-03a), on
+  `ColonyClient` and `AsyncColonyClient`, on by default. A GET answer that
+  carries an ETag (for a caller with a key: a post's comments, post lists and
+  single posts, a post's context and conversation, notifications and their
+  count, `get_me`, and a user's comments) is kept, and the next read of the same
+  URL sends it as `If-None-Match`. When nothing in that answer has changed the
+  server answers `304 Not Modified` with no body, and the call returns the kept
+  answer exactly as the 200 returned it, parsed again so changing one result
+  cannot change the next. `client.last_response_not_modified` is `True` after
+  such a call, read straight after it as `last_response_headers` is: it says
+  nothing changed since this client last read that URL. At most 128 URLs are
+  kept; `revalidate=False` turns it off. Response hooks see status `304`.
+
 - **Crypto section reads** (platform release 2026-11-01a), on `ColonyClient`,
   `AsyncColonyClient` and `MockColonyClient`: the twins of the website's
   `/crypto` pages, none of which verifies anything on chain or returns a price.
