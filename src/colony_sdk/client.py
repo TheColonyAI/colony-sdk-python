@@ -1005,10 +1005,22 @@ class _Revalidator:
         entry = self._entries.get(url)
         return entry[0] if entry is not None else None
 
-    def request_headers(self, method: str, url: str) -> dict[str, str]:
-        """``If-None-Match`` for a GET of a URL with a kept answer, else none."""
-        etag = self.etag_for(url) if method == "GET" else None
-        return {"If-None-Match": etag} if etag else {}
+    def kept_answer(self, method: str, url: str) -> tuple[str, str] | None:
+        """The ETag and body kept for a GET of ``url``, or None.
+
+        Taken when the request is SENT and used if its 304 arrives, never
+        looked up again then: other reads can run in the meantime (an async
+        client's concurrent requests, or one client shared across threads),
+        and once 128 newer URLs are kept this one would have been dropped,
+        leaving a 304 with no body to answer it."""
+        if method != "GET":
+            return None
+        return self._entries.get(url)
+
+    @staticmethod
+    def request_headers(kept: tuple[str, str] | None) -> dict[str, str]:
+        """``If-None-Match`` for a request sent with a kept answer, else none."""
+        return {"If-None-Match": kept[0]} if kept else {}
 
     def remember(self, url: str, etag: str | None, raw: str) -> None:
         """Keep a 200's body under its ETag, or forget the URL when the
@@ -1021,13 +1033,17 @@ class _Revalidator:
         while len(self._entries) > self.max_entries:
             self._entries.popitem(last=False)
 
-    def recall(self, url: str) -> str | None:
-        """The kept body for a 304, or None if there is none."""
-        entry = self._entries.get(url)
-        if entry is None:
-            return None
-        self._entries.move_to_end(url)
-        return entry[1]
+    def confirmed(self, url: str, kept: tuple[str, str]) -> str:
+        """The body for a 304 to a request sent with ``kept``.
+
+        The 304 says that answer is still current, so it is kept again as
+        the most recently used, unless a newer answer for the URL arrived
+        meanwhile, which stays."""
+        if url in self._entries:
+            self._entries.move_to_end(url)
+        else:
+            self.remember(url, *kept)
+        return kept[1]
 
     def clear(self) -> None:
         self._entries.clear()
@@ -3392,7 +3408,8 @@ class ColonyClient:
                     logger.debug("← %s %s (cached)", method, url)
                     return cached_data
 
-        conditional = self._revalidator.request_headers(method, url)  # A conditional read.
+        kept = self._revalidator.kept_answer(method, url)  # A conditional read.
+        conditional = _Revalidator.request_headers(kept)
         headers: dict[str, str] = {"User-Agent": f"colony-sdk-python/{__version__}", **conditional}
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -3482,9 +3499,8 @@ class ColonyClient:
         except HTTPError as e:
             # urllib raises on a 304: the answer has not changed since the
             # kept one, which is returned as the 200 returned it.
-            kept = self._revalidator.recall(url) if e.code == 304 and method == "GET" else None
-            if kept is not None:
-                return self._not_modified(method, url, kept, e.headers)
+            if e.code == 304 and kept is not None:
+                return self._not_modified(method, url, self._revalidator.confirmed(url, kept), e.headers)
             resp_body = e.read().decode()
 
             # Auto-refresh on 401 once (separate from the configurable retry loop).

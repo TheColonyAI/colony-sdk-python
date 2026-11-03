@@ -117,6 +117,47 @@ class TestSync:
         assert seen == [(200, PAGE), (304, PAGE)]
 
 
+class TestEvictedInFlight:
+    """The kept answer is taken when a request is SENT. Other reads that run
+    before its 304 arrives (async concurrency, or threads sharing a client)
+    can push the URL out of the store; the 304 must still be answered."""
+
+    @staticmethod
+    def _crowd_out(store: _Revalidator) -> None:
+        for i in range(store.max_entries):
+            store.remember(f"https://example.invalid/other/{i}", ETAG, "{}")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_sync(self, mock_urlopen: MagicMock) -> None:
+        client = _authed_client()
+        mock_urlopen.return_value = _with_headers(PAGE, {"ETag": ETAG})
+        client.get_comments(POST_ID)
+
+        def evict_then_304(request: object, *args: object, **kwargs: object) -> None:
+            self._crowd_out(client._revalidator)
+            raise _make_http_error(304)
+
+        mock_urlopen.side_effect = evict_then_304
+        assert client.get_comments(POST_ID) == PAGE
+        assert _sent(mock_urlopen, "If-None-Match") == ETAG
+        assert client.last_response_not_modified is True
+
+    async def test_async(self) -> None:
+        client = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.headers.get("if-none-match") == ETAG:
+                assert client is not None
+                self._crowd_out(client._revalidator)
+                return httpx.Response(304, headers={"ETag": ETAG})
+            return httpx.Response(200, content=json.dumps(PAGE).encode(), headers={"ETag": ETAG})
+
+        client = _make_client(handler)
+        await client.get_comments(POST_ID)
+        assert await client.get_comments(POST_ID) == PAGE
+        assert client.last_response_not_modified is True
+
+
 class TestAsync:
     async def test_a_304_returns_the_kept_body(self) -> None:
         seen: list[httpx.Request] = []
@@ -162,7 +203,9 @@ class TestStore:
         store = _Revalidator(max_entries=2)
         store.remember("a", ETAG, "1")
         store.remember("b", ETAG, "2")
-        store.recall("a")  # a is now the most recently used
+        kept = store.kept_answer("GET", "a")
+        assert kept is not None
+        store.confirmed("a", kept)  # a 304 makes a the most recently used
         store.remember("c", ETAG, "3")
         assert store.etag_for("a") == ETAG
         assert store.etag_for("b") is None
@@ -172,4 +215,29 @@ class TestStore:
         store = _Revalidator()
         store.remember("a", ETAG, "1")
         store.remember("a", None, "2")
-        assert store.etag_for("a") is None and store.recall("a") is None
+        assert store.etag_for("a") is None and store.kept_answer("GET", "a") is None
+
+    def test_only_a_get_is_conditional(self) -> None:
+        store = _Revalidator()
+        store.remember("a", ETAG, "1")
+        assert store.kept_answer("POST", "a") is None
+        assert _Revalidator.request_headers(store.kept_answer("GET", "a")) == {"If-None-Match": ETAG}
+        assert _Revalidator.request_headers(None) == {}
+
+    def test_a_304_keeps_its_answer_again_once_dropped(self) -> None:
+        store = _Revalidator(max_entries=1)
+        store.remember("a", ETAG, "1")
+        kept = store.kept_answer("GET", "a")
+        assert kept is not None
+        store.remember("b", ETAG, "2")  # drops a while its request is in flight
+        assert store.confirmed("a", kept) == "1"
+        assert store.kept_answer("GET", "a") == (ETAG, "1")
+
+    def test_a_304_leaves_a_newer_answer_in_place(self) -> None:
+        store = _Revalidator()
+        store.remember("a", ETAG, "1")
+        kept = store.kept_answer("GET", "a")
+        assert kept is not None
+        store.remember("a", 'W/"newer"', "2")  # another read of a, answered meanwhile
+        assert store.confirmed("a", kept) == "1"
+        assert store.kept_answer("GET", "a") == ('W/"newer"', "2")

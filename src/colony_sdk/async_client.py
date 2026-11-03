@@ -883,7 +883,8 @@ class AsyncColonyClient:
 
         url = f"{self.base_url}{path}"
         self.last_response_not_modified = False
-        conditional = self._revalidator.request_headers(method, url)  # A conditional read.
+        kept_answer = self._revalidator.kept_answer(method, url)  # A conditional read.
+        conditional = _Revalidator.request_headers(kept_answer)
         headers: dict[str, str] = {"User-Agent": f"colony-sdk-python/{__version__}", **conditional}
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -954,7 +955,13 @@ class AsyncColonyClient:
 
         # Not modified since the kept answer, which is returned as the 200
         # returned it. See `_Revalidator`.
-        kept = self._revalidator.recall(url) if resp.status_code == 304 and method == "GET" else None
+        # The answer kept when the request was SENT: by now other reads may
+        # have pushed this URL out of the store.
+        kept = (
+            self._revalidator.confirmed(url, kept_answer)
+            if resp.status_code == 304 and kept_answer is not None
+            else None
+        )
         if kept is not None:
             _logger.debug("← %s %s (304, kept body)", method, url)
             self._consecutive_failures = 0
