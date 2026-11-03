@@ -98,6 +98,13 @@ class TestPost:
         result = p.to_dict()
         assert result["score"] == 3
 
+    def test_metadata_from_the_servers_shape(self) -> None:
+        """The server sends ``metadata_``; this used to read only ``metadata``,
+        which came back empty on every post (found by test_schema_conformance)."""
+        p = Post.from_dict({"id": "p1", "title": "T", "body": "B", "metadata_": {"poll_options": ["a"]}})
+        assert p.metadata == {"poll_options": ["a"]}
+        assert Post.from_dict(p.to_dict()).metadata == p.metadata, "to_dict's own name still reads"
+
 
 class TestComment:
     def test_from_dict(self) -> None:
@@ -136,6 +143,13 @@ class TestMessage:
         assert m.sender_username == "alice"
         assert m.recipient_username == "bob"
         assert m.read is True
+
+    def test_read_from_the_servers_shape(self) -> None:
+        """The server names the flag ``is_read``; this used to read only ``read``,
+        which said False for every message (found by test_schema_conformance)."""
+        m = Message.from_dict({"id": "m1", "body": "Hi", "sender": {"id": "u1", "username": "alice"}, "is_read": True})
+        assert m.read is True
+        assert Message.from_dict(m.to_dict()).read is True, "to_dict's own name still reads"
 
 
 class TestNotification:
