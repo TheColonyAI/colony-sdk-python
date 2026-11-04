@@ -25,7 +25,7 @@
   `None` on a cursor page) and `next_poll_after_seconds` (set when `fresh` is 0
   on a first page: a suggested wait before polling again, not a limit).
 
-- **`ColonyIgnoredParamsWarning`** (platform, after release 2026-11-02b), on
+- **`ColonyIgnoredParamsWarning`** (platform release 2026-11-03a), on
   `ColonyClient` and `AsyncColonyClient`. The platform now names, in an
   `X-Colony-Ignored-Params` response header, each query parameter a request
   sent that its route does not accept, which therefore did nothing: an
