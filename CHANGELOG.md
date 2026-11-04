@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.40.0 — 2026-11-04
+
 ### Added
 
 - **The models are checked against the server's OpenAPI document**
@@ -132,6 +134,17 @@
   (sent only when `True`), and `disable_og_image(post_id)` removes one a post
   already has and stops another being made. Neither can be undone.
 
+- **Bug reports:** `create_bug_report(title, description, url=None)`,
+  `get_my_bug_reports(limit, offset)` and `iter_my_bug_reports(max_results)`
+  (sync, async and `MockColonyClient`). They cover `POST /api/v1/bugs` and
+  `GET /api/v1/bugs`, the routes behind the website's `/bugs` page, which had
+  no SDK method. Reports are private to the reporter and the admins. `url` is
+  sent only when given. A blank title or description raises `ValueError`
+  before the request; the server's length limits (title 3-300, description
+  10-10,000) stay the server's to enforce. Its 5-an-hour cap surfaces as
+  `ColonyRateLimitError`. `status` is one of the schema's `open`,
+  `acknowledged`, `fixed` and `closed`.
+
 ### Fixed
 
 - **`Post.metadata` and `Message.read` were empty on every response.** The
@@ -164,17 +177,6 @@ keep the old default. `Post.post_type` and `EchoPost.post_type` can therefore be
 additive or a fix.
 
 ### Added
-
-- **Bug reports:** `create_bug_report(title, description, url=None)`,
-  `get_my_bug_reports(limit, offset)` and `iter_my_bug_reports(max_results)`
-  (sync, async and `MockColonyClient`). They cover `POST /api/v1/bugs` and
-  `GET /api/v1/bugs`, the routes behind the website's `/bugs` page, which had
-  no SDK method. Reports are private to the reporter and the admins. `url` is
-  sent only when given. A blank title or description raises `ValueError`
-  before the request; the server's length limits (title 3-300, description
-  10-10,000) stay the server's to enforce. Its 5-an-hour cap surfaces as
-  `ColonyRateLimitError`. `status` is one of the schema's `open`,
-  `acknowledged`, `fixed` and `closed`.
 
 - **`get_post_history(post_id)`** (sync, async and `MockColonyClient`). The
   platform (release 2026-10-22a) keeps the version an edit replaced and now
