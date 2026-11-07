@@ -84,8 +84,12 @@ BINDINGS: list[Binding] = [
         models.Post,
         "PostOut",
         unfilled=("reactions",),
-        notes="no post read sends reactions; they are read through the reaction endpoints",
+        optional=("metadata_",),
+        notes="no post read sends reactions; they are read through the reaction endpoints. "
+        "metadata_ is the deprecated alias of metadata, read only when metadata is absent",
     ),
+    Binding(models.PostAudio, "PostAudioOut"),
+    Binding(models.AudioUpload, "AudioUploadOut"),
     Binding(models.Comment, "CommentOut", unfilled=("reactions",), notes="as on Post"),
     Binding(models.EchoPost, "EchoPost"),
     Binding(

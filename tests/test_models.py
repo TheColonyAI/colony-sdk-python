@@ -99,11 +99,16 @@ class TestPost:
         assert result["score"] == 3
 
     def test_metadata_from_the_servers_shape(self) -> None:
-        """The server sends ``metadata_``; this used to read only ``metadata``,
-        which came back empty on every post (found by test_schema_conformance)."""
+        """A server older than ``metadata`` sends only ``metadata_`` (now its
+        deprecated alias); this used to read only ``metadata``, which came back
+        empty on every post (found by test_schema_conformance)."""
         p = Post.from_dict({"id": "p1", "title": "T", "body": "B", "metadata_": {"poll_options": ["a"]}})
         assert p.metadata == {"poll_options": ["a"]}
         assert Post.from_dict(p.to_dict()).metadata == p.metadata, "to_dict's own name still reads"
+
+    def test_metadata_is_read_before_its_deprecated_alias(self) -> None:
+        p = Post.from_dict({"id": "p1", "title": "T", "body": "B", "metadata": {"a": 1}, "metadata_": {"b": 2}})
+        assert p.metadata == {"a": 1}
 
 
 class TestComment:

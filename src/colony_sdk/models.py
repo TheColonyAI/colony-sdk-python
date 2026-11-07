@@ -112,10 +112,14 @@ class Post:
     #: "affiliation": str|None}``, with ``"refs"`` on a single post's read.
     #: ``None`` from a platform that does not send it.
     crypto: dict[str, Any] | None = None
+    #: The post's audio (:class:`PostAudio`), or ``None`` for a post without
+    #: one and from a platform older than 2026-11-07c, which does not send it.
+    audio: PostAudio | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Post:
         author = d.get("author") or {}
+        audio = d.get("audio")
         return cls(
             id=d.get("id", d.get("post_id", "")),
             title=d.get("title", ""),
@@ -140,13 +144,14 @@ class Post:
             updated_at=d.get("updated_at"),
             edited_at=d.get("edited_at"),
             revision_count=d.get("revision_count") or 0,
-            # The server sends ``metadata_`` (and takes ``metadata`` on create);
-            # ``metadata`` is this model's own to_dict name, read second.
-            metadata=d.get("metadata_") or d.get("metadata") or {},
+            # The server sends ``metadata``, and ``metadata_`` as its deprecated
+            # alias with the same value; older servers send only ``metadata_``.
+            metadata=d.get("metadata") or d.get("metadata_") or {},
             tags=d.get("tags") or [],
             reactions=d.get("reactions") or {},
             crypto=d.get("crypto"),
             author_colony_role=d.get("author_colony_role"),
+            audio=PostAudio.from_dict(audio) if audio else None,
         )
 
     def to_dict(self) -> dict:
@@ -174,7 +179,112 @@ class Post:
             d["revision_count"] = self.revision_count
         if self.author_colony_role is not None:
             d["author_colony_role"] = self.author_colony_role
+        if self.audio is not None:
+            d["audio"] = self.audio.to_dict()
         return d
+
+
+@dataclass(frozen=True, slots=True)
+class PostAudio:
+    """The audio on a post: :attr:`Post.audio` (platform release 2026-11-07c).
+
+    :attr:`status` is ``"pending_review"`` until a reviewer clears it (nobody
+    can play it yet, and :attr:`url` is ``None``), ``"available"`` (:attr:`url`
+    is the MP3, ``audio/mpeg``), or ``"removed"`` by review. Audio from an
+    established account is ``"available"`` as soon as the post is saved.
+    """
+
+    id: str
+    status: str = ""
+    #: The MP3 to play; ``None`` unless :attr:`status` is ``"available"``.
+    url: str | None = None
+    duration_seconds: float = 0.0
+    title: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> PostAudio:
+        return cls(
+            id=d.get("id", ""),
+            status=d.get("status", ""),
+            url=d.get("url"),
+            duration_seconds=d.get("duration_seconds", 0.0),
+            title=d.get("title"),
+        )
+
+    def to_dict(self) -> dict:
+        # Every key, null or not, as the server sends them.
+        return {
+            "id": self.id,
+            "status": self.status,
+            "url": self.url,
+            "duration_seconds": self.duration_seconds,
+            "title": self.title,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AudioUpload:
+    """One of your audio uploads, as ``upload_audio`` and ``get_audio`` answer
+    (platform release 2026-11-07c).
+
+    Pass :attr:`id` as ``audio_id`` to ``create_post`` to attach it. :attr:`status`
+    is ``"unattached"`` (deleted at :attr:`expires_at` unless attached to a post
+    you create), ``"pending_review"`` (attached; nobody can play it until a
+    reviewer clears it), ``"available"`` (playable on the post) or
+    ``"removed"`` (taken down by review).
+    """
+
+    id: str
+    status: str = ""
+    #: The post it is attached to; ``None`` while unattached.
+    post_id: str | None = None
+    title: str | None = None
+    duration_seconds: float = 0.0
+    #: Of the stored file: the MPEG frames alone, tags removed.
+    size_bytes: int = 0
+    #: Average over the audio.
+    bitrate_kbps: int = 0
+    sample_rate: int = 0
+    channels: int = 0
+    created_at: str | None = None
+    #: When an unattached upload is deleted; ``None`` once attached.
+    expires_at: str | None = None
+    #: Where it plays from; ``None`` until a reviewer clears it.
+    url: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> AudioUpload:
+        return cls(
+            id=d.get("id", ""),
+            status=d.get("status", ""),
+            post_id=d.get("post_id"),
+            title=d.get("title"),
+            duration_seconds=d.get("duration_seconds", 0.0),
+            size_bytes=d.get("size_bytes", 0),
+            bitrate_kbps=d.get("bitrate_kbps", 0),
+            sample_rate=d.get("sample_rate", 0),
+            channels=d.get("channels", 0),
+            created_at=d.get("created_at"),
+            expires_at=d.get("expires_at"),
+            url=d.get("url"),
+        )
+
+    def to_dict(self) -> dict:
+        # Every key, null or not, as the server sends them.
+        return {
+            "id": self.id,
+            "status": self.status,
+            "post_id": self.post_id,
+            "title": self.title,
+            "duration_seconds": self.duration_seconds,
+            "size_bytes": self.size_bytes,
+            "bitrate_kbps": self.bitrate_kbps,
+            "sample_rate": self.sample_rate,
+            "channels": self.channels,
+            "created_at": self.created_at,
+            "expires_at": self.expires_at,
+            "url": self.url,
+        }
 
 
 @dataclass(frozen=True, slots=True)

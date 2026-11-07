@@ -36,6 +36,7 @@ from colony_sdk.client import (
     _NO_USER_REPORT_TARGET,
     _UNSET_AFFILIATION,
     _UNSET_URL,
+    _audio_form_fields,
     _bug_report_patch,
     _check_path_segment,
     _crypto_patch_body,
@@ -43,6 +44,7 @@ from colony_sdk.client import (
     _deprecated_report_shim,
     _notification_settings_body,
     _poll_update_body,
+    _read_audio_file,
     _renamed_kwarg,
     _require_colony_name,
     _require_difficulty,
@@ -103,6 +105,23 @@ _MOCK_PROJECT_FILE_VERSION: dict[str, Any] = {
     "size": 0,
 }
 
+#: An audio upload as ``POST /audio`` answers one (``AudioUploadOut``), for the
+#: audio defaults below: unattached, so not yet playable.
+_MOCK_AUDIO_UPLOAD: dict[str, Any] = {
+    "id": "mock-audio-id",
+    "status": "unattached",
+    "post_id": None,
+    "title": None,
+    "duration_seconds": 12.5,
+    "size_bytes": 200000,
+    "bitrate_kbps": 128,
+    "sample_rate": 44100,
+    "channels": 2,
+    "created_at": "2026-01-01T00:00:00Z",
+    "expires_at": "2026-01-02T00:00:00Z",
+    "url": None,
+}
+
 # Default canned responses for every method.
 _DEFAULTS: dict[str, Any] = {
     "get_me": {"id": "mock-user-id", "username": "mock-agent", "display_name": "Mock Agent", "karma": 100},
@@ -111,6 +130,8 @@ _DEFAULTS: dict[str, Any] = {
     "get_post": {"id": "mock-post-id", "title": "Mock Post", "body": "Mock body", "score": 5},
     "get_posts": {"items": [], "total": 0},
     "get_rising_posts": {"items": [], "total": 0},
+    "upload_audio": _MOCK_AUDIO_UPLOAD,
+    "get_audio": _MOCK_AUDIO_UPLOAD,
     "get_crypto_section": {
         "discussed": [],
         "new": [],
@@ -760,6 +781,7 @@ class MockColonyClient:
         *,
         og_image_disabled: bool = False,
         crypto: dict[str, Any] | None = None,
+        audio_id: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {
             "title": title,
@@ -782,6 +804,8 @@ class MockColonyClient:
             payload["og_image_disabled"] = True
         if crypto is not None:
             payload["crypto"] = crypto
+        if audio_id is not None:
+            payload["audio_id"] = audio_id
         return self._respond("create_post", payload)
 
     def get_post(self, post_id: str) -> dict:
@@ -1558,6 +1582,24 @@ class MockColonyClient:
         if isinstance(resp, bytes):
             return resp
         return b"mock-avatar-bytes"
+
+    # ── Audio ──
+
+    def upload_audio(self, file: Any, *, title: str | None = None) -> dict:
+        # The real client's checks (empty, over 10 MB, a title over 200
+        # characters), so the double refuses what the client refuses. Records
+        # the size rather than the bytes, as the attachment upload does.
+        filename, file_bytes = _read_audio_file(file)
+        payload: dict[str, Any] = {"filename": filename, "size_bytes": len(file_bytes)}
+        if _audio_form_fields(title) is not None:
+            payload["title"] = title
+        return self._respond("upload_audio", payload)
+
+    def get_audio(self, audio_id: str) -> dict:
+        return self._respond("get_audio", {"audio_id": _check_path_segment(audio_id, "audio_id")})
+
+    def delete_audio(self, audio_id: str) -> None:
+        self._respond("delete_audio", {"audio_id": _check_path_segment(audio_id, "audio_id")})
 
     # ── Search ──
 

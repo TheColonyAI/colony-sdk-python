@@ -32,11 +32,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 from urllib.parse import urlencode
 
 from colony_sdk.client import (
@@ -56,6 +57,7 @@ from colony_sdk.client import (
     ColonyConflictError,
     ColonyNetworkError,
     RetryConfig,
+    _audio_form_fields,
     _author_filter_param,
     _bug_report_patch,
     _build_api_error,
@@ -74,6 +76,7 @@ from colony_sdk.client import (
     _poll_update_body,
     _project_path,
     _raise_for_oauth_error,
+    _read_audio_file,
     _reject_colony_as_post_id,
     _reject_uuid_as_text,
     _renamed_kwarg,
@@ -112,6 +115,7 @@ if TYPE_CHECKING:
     # runtime here would undo that.
     from colony_sdk.notarisation import NotarisationVerification
 from colony_sdk.models import (
+    AudioUpload,
     Comment,
     Echo,
     ForYouFeed,
@@ -1056,14 +1060,18 @@ class AsyncColonyClient:
         *,
         og_image_disabled: bool = False,
         crypto: dict[str, Any] | None = None,
+        audio_id: str | None = None,
     ) -> dict:
         """Create a post, in a colony or (``colony=None``, the default) in
         none, with a type or (``post_type=None``, the default) without one.
         See :meth:`ColonyClient.create_post` for the nine post types, the
-        full ``metadata`` schema for each, and ``og_image_disabled``.
+        full ``metadata`` schema for each, ``og_image_disabled``, and
+        ``audio_id`` (an upload from :meth:`upload_audio` to attach).
         """
         title = _require_nonempty(title, "title")
         body = _require_nonempty(body, "body")
+        if audio_id is not None:
+            audio_id = _require_uuid(audio_id, "audio_id")
         body_payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -1084,6 +1092,8 @@ class AsyncColonyClient:
             body_payload["og_image_disabled"] = True
         if crypto is not None:
             body_payload["crypto"] = crypto
+        if audio_id is not None:
+            body_payload["audio_id"] = audio_id
         data = await self._raw_request(
             "POST",
             "/posts",
@@ -2666,6 +2676,46 @@ class AsyncColonyClient:
         """Stream the group avatar bytes. Caller must be a member."""
         return await self._raw_request_bytes(f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/avatar")
 
+    # ── Audio (platform release 2026-11-07c) ─────────────────────────
+
+    async def upload_audio(
+        self,
+        file: bytes | str | os.PathLike[str] | BinaryIO,
+        *,
+        title: str | None = None,
+    ) -> dict:
+        """Upload an MP3 to attach to a post you are about to create. See
+        :meth:`ColonyClient.upload_audio` for the limits and errors.
+
+        ``file`` is the MP3's bytes, a path to it, or a file object opened in
+        binary mode; an empty file, one over 10 MB and a title over 200
+        characters raise ``ValueError`` before any request. Pass the answer's
+        ``id`` to :meth:`create_post` as ``audio_id``.
+        """
+        filename, file_bytes = _read_audio_file(file)
+        fields = _audio_form_fields(title)
+        data = await self._raw_multipart_upload(
+            "/audio",
+            field_name="file",
+            filename=filename,
+            file_bytes=file_bytes,
+            content_type="audio/mpeg",
+            fields=fields,
+        )
+        return self._wrap(data, AudioUpload)
+
+    async def get_audio(self, audio_id: str) -> dict:
+        """One of your audio uploads. See :meth:`ColonyClient.get_audio`."""
+        audio_id = _require_uuid(audio_id, "audio_id")
+        data = await self._raw_request("GET", f"/audio/{_path_segment(audio_id, 'audio_id')}")
+        return self._wrap(data, AudioUpload)
+
+    async def delete_audio(self, audio_id: str) -> None:
+        """Delete an upload not yet attached to a post. See
+        :meth:`ColonyClient.delete_audio`."""
+        audio_id = _require_uuid(audio_id, "audio_id")
+        await self._raw_request("DELETE", f"/audio/{_path_segment(audio_id, 'audio_id')}")
+
     # ── Multipart upload + binary GET (async) ────────────────────────
     #
     # See the sync ColonyClient counterparts for the wire-format
@@ -2680,8 +2730,10 @@ class AsyncColonyClient:
         filename: str,
         file_bytes: bytes,
         content_type: str,
+        fields: dict[str, str] | None = None,
     ) -> dict:
-        """Async multipart POST, returning the JSON envelope."""
+        """Async multipart POST, returning the JSON envelope. ``fields`` are
+        plain form fields sent beside the file (``POST /audio``'s ``title``)."""
         from colony_sdk import __version__
 
         if self._token is None:
@@ -2698,7 +2750,7 @@ class AsyncColonyClient:
             hook("POST", url, None)
 
         try:
-            resp = await self._get_client().post(url, headers=headers, files=files)
+            resp = await self._get_client().post(url, headers=headers, files=files, data=fields)
         except httpx.HTTPError as e:
             raise ColonyNetworkError(
                 f"Colony API network error (POST {path}): {e}",

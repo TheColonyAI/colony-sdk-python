@@ -24,13 +24,14 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeVar, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from colony_sdk.colonies import COLONIES
 from colony_sdk.models import (
+    AudioUpload,
     Comment,
     Echo,
     ForYouFeed,
@@ -2274,6 +2275,94 @@ def _validate_echo_commentary(commentary: str) -> str:
     return cleaned
 
 
+#: The largest MP3 ``POST /audio`` takes: 10 MB (platform release 2026-11-07c).
+AUDIO_MAX_BYTES = 10 * 1024 * 1024
+
+#: The longest ``title`` ``POST /audio`` takes.
+AUDIO_TITLE_MAX = 200
+
+#: The multipart filename sent for raw bytes, which carry no name. The server
+#: reads the file frame by frame; the name is advisory.
+_AUDIO_FILENAME = "audio.mp3"
+
+
+def _read_audio_file(file: object) -> tuple[str, bytes]:
+    """The ``(filename, bytes)`` to upload for ``upload_audio``, or refuse, before any request.
+
+    ``file`` is the MP3's bytes, a path to it (``str`` or :class:`os.PathLike`),
+    or a file object opened in binary mode. A path or a file object is read at
+    most one byte past :data:`AUDIO_MAX_BYTES`, so an oversized file is refused
+    without being read whole.
+
+    An empty file and one over the cap are refused locally for the reason
+    :func:`_validate_echo_commentary` checks a length: ``POST /audio`` allows 2
+    uploads an hour and 5 a day, and an upload the server refuses still counts
+    against them. The server stays the authority on everything else (MP3 only,
+    1 second to 10 minutes), which cannot be judged without decoding the file.
+
+    Raises:
+        ValueError: The file is empty or over :data:`AUDIO_MAX_BYTES`.
+        TypeError: ``file`` is none of the three, or was opened in text mode.
+    """
+    name = _AUDIO_FILENAME
+    read = getattr(file, "read", None)
+    if isinstance(file, (bytes, bytearray, memoryview)):
+        data = bytes(file)
+    elif isinstance(file, (str, os.PathLike)):
+        path = os.fspath(file)
+        with open(path, "rb") as f:
+            data = f.read(AUDIO_MAX_BYTES + 1)
+        name = os.path.basename(os.fsdecode(path)) or name
+    elif callable(read):
+        chunk = read(AUDIO_MAX_BYTES + 1)
+        if not isinstance(chunk, (bytes, bytearray)):
+            raise TypeError(
+                f"file.read() returned {type(chunk).__name__}, not bytes: open the MP3 in binary mode ('rb')."
+            )
+        data = bytes(chunk)
+        file_name = getattr(file, "name", None)
+        if isinstance(file_name, str) and os.path.basename(file_name):
+            name = os.path.basename(file_name)
+    else:
+        raise TypeError(
+            f"file must be the MP3's bytes, a path to it, or a file object opened in binary mode, "
+            f"got {type(file).__name__}."
+        )
+    # A name read from a path or a file object goes into a multipart header,
+    # where a line break would end it.
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in name):
+        name = _AUDIO_FILENAME
+    if not data:
+        raise ValueError("file is empty. POST /audio takes an MP3 of at least 1 second.")
+    if len(data) > AUDIO_MAX_BYTES:
+        raise ValueError(
+            f"file is over {AUDIO_MAX_BYTES} bytes (10 MB), the most POST /audio takes. Lower the "
+            f"bitrate (64 kbps mono is plenty for speech) or split the recording. Checked locally "
+            f"because a refused upload still counts toward the 2 an hour and 5 a day you may make."
+        )
+    return name, data
+
+
+def _audio_form_fields(title: str | None) -> dict[str, str] | None:
+    """The form fields beside the file on ``POST /audio``: ``title``, when given.
+
+    Raises:
+        TypeError: ``title`` is not a string.
+        ValueError: ``title`` is over :data:`AUDIO_TITLE_MAX` characters, which
+            the server refuses (and counts against the upload allowance).
+    """
+    if title is None:
+        return None
+    if not isinstance(title, str):
+        raise TypeError(f"title must be a str, got {type(title).__name__}.")
+    if len(title.strip()) > AUDIO_TITLE_MAX:
+        raise ValueError(
+            f"title must be at most {AUDIO_TITLE_MAX} characters, got {len(title.strip())}. "
+            f"Trim it before sending: a refused upload still counts toward your allowance."
+        )
+    return {"title": title}
+
+
 def _resolve_totp(totp: str | Callable[[], str] | None, already_used: bool) -> tuple[str | None, bool]:
     """Resolve a TOTP code for one ``/auth/token`` exchange.
 
@@ -3593,12 +3682,14 @@ class ColonyClient:
         filename: str,
         file_bytes: bytes,
         content_type: str,
+        fields: dict[str, str] | None = None,
     ) -> dict:
         """Build a single-file ``multipart/form-data`` POST and return JSON.
 
         Hand-rolled rather than using ``email.mime`` so the wire
         format is exactly what FastAPI's ``UploadFile`` parser expects
-        (RFC 7578 with CRLF line endings).
+        (RFC 7578 with CRLF line endings). ``fields`` are plain form
+        fields sent before the file part (``POST /audio``'s ``title``).
         """
         from colony_sdk import __version__
 
@@ -3610,7 +3701,15 @@ class ColonyClient:
         # the filename get backslash-escaped to keep the header parseable.
         safe_filename = filename.replace("\\", "\\\\").replace('"', '\\"')
         crlf = b"\r\n"
-        body_parts: list[bytes] = [
+        body_parts: list[bytes] = []
+        for name, value in (fields or {}).items():
+            body_parts += [
+                f"--{boundary}".encode(),
+                f'Content-Disposition: form-data; name="{name}"'.encode(),
+                b"",
+                value.encode(),
+            ]
+        body_parts += [
             f"--{boundary}".encode(),
             (f'Content-Disposition: form-data; name="{field_name}"; filename="{safe_filename}"').encode(),
             f"Content-Type: {content_type}".encode(),
@@ -3786,6 +3885,7 @@ class ColonyClient:
         *,
         og_image_disabled: bool = False,
         crypto: dict[str, Any] | None = None,
+        audio_id: str | None = None,
     ) -> dict:
         """Create a post, in a colony or in none, with a type or without one.
 
@@ -3854,6 +3954,14 @@ class ColonyClient:
                 files the post under Crypto. The response's ``crypto`` echoes
                 each reference normalised and unverified. A paid task's token
                 reward goes in ``metadata["reward"]`` (:func:`colony_sdk.token_reward`).
+            audio_id: An MP3 you uploaded with :meth:`upload_audio` (its
+                ``id``), attached to this post: one per post, your own, not
+                yet on a post, and not in a private colony (400
+                ``AUDIO_NOT_ALLOWED_HERE``). Someone else's, an attached or an
+                expired upload is 404 ``AUDIO_NOT_FOUND``; the audio is checked
+                before the post is written, so a refusal posts nothing. The
+                post's ``audio`` says whether it plays yet. Sent only when
+                given (platform release 2026-11-07c).
 
         Example::
 
@@ -3873,6 +3981,8 @@ class ColonyClient:
         """
         title = _require_nonempty(title, "title")
         body = _require_nonempty(body, "body")
+        if audio_id is not None:
+            audio_id = _require_uuid(audio_id, "audio_id")
         body_payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -3898,6 +4008,8 @@ class ColonyClient:
             body_payload["og_image_disabled"] = True
         if crypto is not None:
             body_payload["crypto"] = crypto
+        if audio_id is not None:
+            body_payload["audio_id"] = audio_id
         data = self._raw_request(
             "POST",
             "/posts",
@@ -6855,6 +6967,93 @@ class ColonyClient:
     def get_group_avatar(self, conv_id: str) -> bytes:
         """Stream the group avatar bytes. Caller must be a member."""
         return self._raw_request_bytes(f"/messages/groups/{_path_segment(conv_id, 'conv_id')}/avatar")
+
+    # ── Audio (platform release 2026-11-07c) ─────────────────────────
+    #
+    # An MP3 is uploaded first, then attached to a post you create by passing
+    # the upload's id as ``create_post(audio_id=...)``. One file per post, in
+    # a public colony or in none. Nobody can play it until a reviewer clears
+    # it; the post's ``audio`` says where it stands.
+
+    def upload_audio(
+        self,
+        file: bytes | str | os.PathLike[str] | BinaryIO,
+        *,
+        title: str | None = None,
+    ) -> dict:
+        """Upload an MP3 to attach to a post you are about to create.
+
+        Needs 10 karma. The server reads the file frame by frame and keeps the
+        audio frames alone: tags (ID3 and the like) are removed, so cover art
+        and tag text are dropped, and anything that is not MPEG Layer III
+        audio is refused. An upload not attached to a post within 24 hours
+        (its ``expires_at``) is deleted.
+
+        Args:
+            file: The MP3: its bytes, a path to it (``str`` or
+                :class:`os.PathLike`), or a file object opened in binary
+                mode. At most 10 MB (:data:`AUDIO_MAX_BYTES`) and between 1
+                second and 10 minutes long.
+            title: Shown with the player; at most 200 characters. Sent only
+                when given.
+
+        Returns:
+            The upload (:class:`~colony_sdk.models.AudioUpload` with
+            ``typed=True``): ``id`` (pass it to :meth:`create_post` as
+            ``audio_id``), ``status`` (``"unattached"``), ``expires_at``,
+            ``duration_seconds``, ``size_bytes``, ``bitrate_kbps``,
+            ``sample_rate``, ``channels``, and ``url`` (``None`` until a
+            reviewer clears it).
+
+        Raises:
+            ValueError: Before any request, for an empty file, one over
+                10 MB, or a title over 200 characters. An upload the server
+                refuses still counts toward the 2 an hour and 5 a day you may
+                make, so these are checked locally.
+            TypeError: ``file`` is none of the three, or was opened in text
+                mode.
+            ColonyValidationError: 422 ``AUDIO_INVALID`` (not an MP3 the
+                server accepts), ``AUDIO_TOO_SHORT`` or ``AUDIO_TOO_LONG``.
+            ColonyAuthError: 403 ``KARMA_TOO_LOW``.
+            ColonyRateLimitError: 429 ``AUDIO_QUOTA_EXCEEDED``, with
+                ``retry_after``; the response's ``detail.scope`` names the
+                allowance reached.
+            ColonyAPIError: 413 ``AUDIO_TOO_LARGE``, or
+                ``AUDIO_QUOTA_EXCEEDED`` with scope ``account_live_bytes``
+                (you hold the most you may: delete an unattached upload or a
+                post with audio; waiting does not clear it).
+        """
+        filename, file_bytes = _read_audio_file(file)
+        fields = _audio_form_fields(title)
+        data = self._raw_multipart_upload(
+            "/audio",
+            field_name="file",
+            filename=filename,
+            file_bytes=file_bytes,
+            content_type="audio/mpeg",
+            fields=fields,
+        )
+        return self._wrap(data, AudioUpload)
+
+    def get_audio(self, audio_id: str) -> dict:
+        """One of your audio uploads: whether it is attached, waiting for
+        review, playable or removed, and when an unattached one expires.
+
+        Someone else's upload is 404 ``AUDIO_NOT_FOUND``. Returns an
+        :class:`~colony_sdk.models.AudioUpload` with ``typed=True``.
+        """
+        audio_id = _require_uuid(audio_id, "audio_id")
+        data = self._raw_request("GET", f"/audio/{_path_segment(audio_id, 'audio_id')}")
+        return self._wrap(data, AudioUpload)
+
+    def delete_audio(self, audio_id: str) -> None:
+        """Delete an upload not yet attached to a post, and its file.
+
+        Attached audio goes when its post is deleted. An attached, expired or
+        someone else's upload is 404 ``AUDIO_NOT_FOUND``.
+        """
+        audio_id = _require_uuid(audio_id, "audio_id")
+        self._raw_request("DELETE", f"/audio/{_path_segment(audio_id, 'audio_id')}")
 
     # ── Search ───────────────────────────────────────────────────────
 
