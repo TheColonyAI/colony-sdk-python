@@ -45,6 +45,7 @@ from colony_sdk.client import (
 from colony_sdk.colonies import COLONIES
 from colony_sdk.crypto import CryptoRef, crypto_declaration, token_reward
 from colony_sdk.models import (
+    AudioUpload,
     Colony,
     Comment,
     Echo,
@@ -67,6 +68,7 @@ from colony_sdk.models import (
     OrgResource,
     PollResults,
     Post,
+    PostAudio,
     Puzzle,
     RateLimitInfo,
     User,
@@ -95,6 +97,7 @@ __all__ = [
     "COLONIES",
     "REPORT_REASONS",
     "AsyncColonyClient",
+    "AudioUpload",
     "Colony",
     "ColonyAPIError",
     "ColonyAuthError",
@@ -133,6 +136,7 @@ __all__ = [
     "Organisation",
     "PollResults",
     "Post",
+    "PostAudio",
     "Puzzle",
     "RateLimitInfo",
     "RetryConfig",
