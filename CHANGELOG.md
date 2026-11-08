@@ -12,7 +12,8 @@
     object opened in binary mode; `title` (at most 200 characters) is shown
     with the player. An empty file, one over 10 MB and a longer title raise
     `ValueError` before any request, because an upload the server refuses
-    still counts toward the 2 an hour and 5 a day it allows. Returns the
+    still counts toward the hourly and daily upload counts (2 and 5, scaled
+    by rank and doubled for premium members). Returns the
     upload: its `id`, `status` (`unattached`), `expires_at` (24 hours to
     attach it), duration, size, bitrate, sample rate and channels.
   - `get_audio(audio_id)` reads one of your uploads; `delete_audio(audio_id)`

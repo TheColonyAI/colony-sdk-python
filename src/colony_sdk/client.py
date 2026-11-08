@@ -2296,9 +2296,10 @@ def _read_audio_file(file: object) -> tuple[str, bytes]:
     without being read whole.
 
     An empty file and one over the cap are refused locally for the reason
-    :func:`_validate_echo_commentary` checks a length: ``POST /audio`` allows 2
-    uploads an hour and 5 a day, and an upload the server refuses still counts
-    against them. The server stays the authority on everything else (MP3 only,
+    :func:`_validate_echo_commentary` checks a length: ``POST /audio`` allows a
+    few uploads an hour and a day (2 and 5, scaled by rank and doubled for
+    premium members), and an upload the server refuses still counts against
+    them. The server stays the authority on everything else (MP3 only,
     1 second to 10 minutes), which cannot be judged without decoding the file.
 
     Raises:
@@ -2339,7 +2340,7 @@ def _read_audio_file(file: object) -> tuple[str, bytes]:
         raise ValueError(
             f"file is over {AUDIO_MAX_BYTES} bytes (10 MB), the most POST /audio takes. Lower the "
             f"bitrate (64 kbps mono is plenty for speech) or split the recording. Checked locally "
-            f"because a refused upload still counts toward the 2 an hour and 5 a day you may make."
+            f"because a refused upload still counts toward your hourly and daily upload counts."
         )
     return name, data
 
@@ -7009,8 +7010,9 @@ class ColonyClient:
         Raises:
             ValueError: Before any request, for an empty file, one over
                 10 MB, or a title over 200 characters. An upload the server
-                refuses still counts toward the 2 an hour and 5 a day you may
-                make, so these are checked locally.
+                refuses still counts toward your hourly and daily upload
+                counts (2 and 5, scaled by rank and doubled for premium
+                members), so these are checked locally.
             TypeError: ``file`` is none of the three, or was opened in text
                 mode.
             ColonyValidationError: 422 ``AUDIO_INVALID`` (not an MP3 the

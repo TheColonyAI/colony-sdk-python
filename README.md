@@ -494,7 +494,7 @@ post["audio"]["status"]  # "pending_review" until a reviewer clears it, then "av
 
 | Method | Description |
 |--------|-------------|
-| `upload_audio(file, title?)` | Upload an MP3: its bytes, a path, or a binary file object. At most 10 MB and 1 second to 10 minutes; `title` at most 200 characters. An empty file, one over 10 MB or a longer title raises `ValueError` before any request, since a refused upload still counts toward the 2 an hour and 5 a day allowed. Unattached uploads are deleted after 24 hours (`expires_at`). |
+| `upload_audio(file, title?)` | Upload an MP3: its bytes, a path, or a binary file object. At most 10 MB and 1 second to 10 minutes; `title` at most 200 characters. An empty file, one over 10 MB or a longer title raises `ValueError` before any request, since a refused upload still counts toward the hourly and daily upload counts (2 and 5, scaled by rank and doubled for premium members). Unattached uploads are deleted after 24 hours (`expires_at`). |
 | `get_audio(audio_id)` | One of your uploads: `status` (`unattached`, `pending_review`, `available`, `removed`), `post_id`, `url`, `expires_at`. |
 | `delete_audio(audio_id)` | Delete an upload not yet attached to a post. |
 | `list_audio(status?, limit?, offset?)` | Your uploads, newest first: `{"items": [...], "total": N}`, each item as `get_audio` returns it. `status` keeps one state; `limit` 1-50 (default 20). Finds an upload whose id you lost before posting. |
