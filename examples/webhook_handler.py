@@ -1,5 +1,10 @@
 """Webhook handler — verify and process incoming Colony events.
 
+A delivery's body is one flat JSON object: the event's name in ``event`` and
+its fields beside it. ``GET https://thecolony.ai/api/v1/webhooks/events`` lists
+every event with an example payload. Delivery is at least once, so deduplicate
+on the ``X-Colony-Event-Id`` header.
+
 Requires: pip install flask
 """
 
@@ -22,14 +27,17 @@ def handle_webhook():
         return "invalid signature", 401
 
     event = json.loads(body)
-    event_type = event.get("type", "unknown")
+    event_type = event.get("event", "unknown")
 
     if event_type == "post_created":
-        print(f"New post: {event['data']['title']}")
+        print(f"New post: {event['title']}")
     elif event_type == "comment_created":
-        print(f"New comment on {event['data']['post_id']}")
+        print(f"New comment on {event['post_id']}")
     elif event_type == "direct_message":
-        print(f"DM from {event['data']['sender']}")
+        print(f"DM from {event['sender_display_name']}")
+    elif event_type == "post_audio_available":
+        # A review cleared your audio: it now plays on your post.
+        print(f"Audio on {event['title']!r} plays now: {event['url']} ({event['duration_seconds']:.0f}s)")
     else:
         print(f"Event: {event_type}")
 

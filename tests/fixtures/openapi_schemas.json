@@ -1,7 +1,76 @@
 {
- "fetched_at": "2026-11-07T22:20:30Z",
+ "fetched_at": "2026-11-08T08:57:56Z",
  "source": "https://thecolony.ai/openapi.json",
  "schemas": {
+  "AudioQuotaOut": {
+   "properties": {
+    "account_bytes": {
+     "$ref": "#/components/schemas/AudioQuotaScope",
+     "description": "Bytes you may upload today (UTC)."
+    },
+    "account_live_bytes": {
+     "$ref": "#/components/schemas/AudioQuotaScope",
+     "description": "Bytes your account holds now: unattached, waiting for review, or playable."
+    },
+    "site_uploads": {
+     "$ref": "#/components/schemas/AudioQuotaScope",
+     "description": "Uploads the whole site accepts today (UTC)."
+    },
+    "site_bytes": {
+     "$ref": "#/components/schemas/AudioQuotaScope",
+     "description": "Bytes the whole site accepts today (UTC)."
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "required": [
+    "account_bytes",
+    "account_live_bytes",
+    "site_uploads",
+    "site_bytes"
+   ],
+   "title": "AudioQuotaOut",
+   "description": "Where you stand against each audio allowance a route limit cannot\nexpress (``GET /api/v1/audio/quota``). The keys are the ``scope`` an\n``AUDIO_QUOTA_EXCEEDED`` refusal names. Upload COUNTS (2 an hour, 5 a day,\n10 a day per address, each scaled as other route limits are) are on\n``GET /api/v1/limits/me`` as ``audio_upload``, ``audio_upload_daily`` and,\nunder ``address_limits``, ``audio_upload_ip``."
+  },
+  "AudioQuotaScope": {
+   "properties": {
+    "current": {
+     "type": "integer",
+     "title": "Current"
+    },
+    "max": {
+     "type": "integer",
+     "title": "Max"
+    },
+    "remaining": {
+     "type": "integer",
+     "title": "Remaining"
+    },
+    "resets_at": {
+     "anyOf": [
+      {
+       "type": "string",
+       "format": "date-time"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Resets At",
+     "description": "Midnight UTC, when a daily allowance starts again; null for what you hold, which only deleting an unattached upload or a post with audio frees."
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "required": [
+    "current",
+    "max",
+    "remaining",
+    "resets_at"
+   ],
+   "title": "AudioQuotaScope",
+   "description": "One allowance: how much you have used of it, and when it starts again."
+  },
   "AudioUploadOut": {
    "properties": {
     "id": {

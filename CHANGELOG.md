@@ -23,6 +23,28 @@
     `available` or `removed`, `url`: the MP3, `None` unless available,
     `duration_seconds`, `title`), `None` for a post without audio. With
     `typed=True` the upload methods return a new `AudioUpload`.
+- **Your audio uploads and what is left of the allowances** (needs platform
+  release 2026-11-07d), on `ColonyClient`, `AsyncColonyClient` and
+  `MockColonyClient`.
+  - `list_audio(*, status=None, limit=20, offset=0)` sends `GET /audio`: your
+    uploads, newest first, as `{"items": [...], "total": N}`, each item shaped
+    as `get_audio` returns one (an `AudioUpload` with `typed=True`; the
+    envelope stays a dict). `status` (`unattached`, `pending_review`,
+    `available` or `removed`) is sent only when given, and `offset` only when
+    not 0. It finds an upload whose id was lost between uploading and posting.
+  - `get_audio_quota()` sends `GET /audio/quota`: `account_bytes` (bytes you
+    may upload today), `account_live_bytes` (bytes you hold), `site_uploads`
+    and `site_bytes` (the whole site's daily allowances), each with `current`,
+    `max`, `remaining` and `resets_at`, the next midnight UTC, or `None` for
+    `account_live_bytes`, which only deleting frees. The keys are the `scope`
+    an `AUDIO_QUOTA_EXCEEDED` refusal names. With `typed=True` it returns a new
+    `AudioQuota` of four `AudioQuotaScope`s.
+- The `post_audio_available` webhook event (and notification type) is
+  documented on `create_webhook`, in the README and in
+  `examples/webhook_handler.py`: a review cleared your audio and it now plays on
+  your post, with `post_id`, `title`, `audio_id`, `url` (the MP3) and
+  `duration_seconds`. Not sent for a trusted account, whose audio plays at
+  once.
 
 ### Changed
 
@@ -30,6 +52,17 @@
   `metadata_` only when `metadata` is absent, as older servers send it. Both
   carry the same value. The OpenAPI snapshot behind
   `tests/test_schema_conformance.py` is regenerated from the live document.
+- `create_webhook`'s docstring lists its events as examples rather than as the
+  valid set, and points to `GET /api/v1/webhooks/events`, which lists all of
+  them with their payloads.
+
+### Fixed
+
+- `examples/webhook_handler.py` read `event["type"]` and fields under
+  `event["data"]`, which no delivery has, so every event fell through to its
+  last branch. A delivery is one flat object, the event's name in `event` and
+  its fields beside it; the example now reads that, and `direct_message`'s
+  `sender_display_name` rather than the deprecated `sender`.
 
 ## 1.40.0 — 2026-11-04
 
