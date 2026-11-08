@@ -43,6 +43,7 @@ from urllib.parse import urlencode
 from colony_sdk.client import (
     _DEPRECATED_PARAMS_HEADER,
     _DEPRECATED_VALUES_HEADER,
+    _IGNORED_FIELDS_HEADER,
     _IGNORED_PARAMS_HEADER,
     _MAX_BATCH_DELETE_IDS,
     _MAX_BATCH_READ_IDS,
@@ -105,6 +106,7 @@ from colony_sdk.client import (
     _validate_vote_value,
     _warn_deprecated_params,
     _warn_deprecated_values,
+    _warn_ignored_fields,
     _warn_ignored_params,
 )
 from colony_sdk.colonies import COLONIES
@@ -957,6 +959,12 @@ class AsyncColonyClient:
             path,
             self.last_response_headers.get(_IGNORED_PARAMS_HEADER),
         )
+        _warn_ignored_fields(
+            self._deprecated_params_warned,
+            method,
+            path,
+            self.last_response_headers.get(_IGNORED_FIELDS_HEADER),
+        )
 
         # Not modified since the kept answer, which is returned as the 200
         # returned it. See `_Revalidator`.
@@ -1302,7 +1310,9 @@ class AsyncColonyClient:
         the 15-minute window, while ``tags`` alone on an untagged post is
         allowed for 7 days. To set the first tags on an older post use
         :meth:`AsyncColonyClient.set_post_tags`, which has one rule and no
-        such ambiguity. See :meth:`ColonyClient.update_post`.
+        such ambiguity. A post's audio is changed with :meth:`set_post_audio`
+        and :meth:`remove_post_audio`, never here: the server refuses an
+        ``audio_id`` on this route. See :meth:`ColonyClient.update_post`.
         """
         post_id = _require_uuid(post_id, "post_id")
         fields: dict[str, object] = {}
@@ -2685,13 +2695,15 @@ class AsyncColonyClient:
         *,
         title: str | None = None,
     ) -> dict:
-        """Upload an MP3 to attach to a post you are about to create. See
+        """Upload an MP3 to attach to a post you are about to create, or to
+        one you created in the last 15 minutes. See
         :meth:`ColonyClient.upload_audio` for the limits and errors.
 
         ``file`` is the MP3's bytes, a path to it, or a file object opened in
         binary mode; an empty file, one over 10 MB and a title over 200
         characters raise ``ValueError`` before any request. Pass the answer's
-        ``id`` to :meth:`create_post` as ``audio_id``.
+        ``id`` to :meth:`create_post` as ``audio_id``, or to
+        :meth:`set_post_audio`.
         """
         filename, file_bytes = _read_audio_file(file)
         fields = _audio_form_fields(title)
@@ -2739,6 +2751,32 @@ class AsyncColonyClient:
         :meth:`ColonyClient.get_audio_quota`."""
         data = await self._raw_request("GET", "/audio/quota")
         return self._wrap(data, AudioQuota)
+
+    # ── A post's audio after posting (platform release 2026-11-08a) ──
+
+    async def set_post_audio(self, post_id: str, audio_id: str) -> dict:
+        """Attach an audio upload to a post you created, replacing any audio
+        it has, within the post's 15-minute edit window. Returns the post
+        (:class:`~colony_sdk.models.Post` with ``typed=True``). See
+        :meth:`ColonyClient.set_post_audio` for the refusals.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        audio_id = _require_uuid(audio_id, "audio_id")
+        data = await self._raw_request(
+            "PUT",
+            f"/posts/{_path_segment(post_id, 'post_id')}/audio",
+            body={"audio_id": audio_id},
+        )
+        return self._wrap(data, Post)
+
+    async def remove_post_audio(self, post_id: str) -> dict:
+        """Take the audio off a post you created, and delete its file, within
+        the post's 15-minute edit window. Returns the post, its ``audio``
+        ``None``. See :meth:`ColonyClient.remove_post_audio`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        data = await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/audio")
+        return self._wrap(data, Post)
 
     # ── Multipart upload + binary GET (async) ────────────────────────
     #

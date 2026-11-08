@@ -811,15 +811,20 @@ class ColonyDeprecationWarning(DeprecationWarning):
 
 
 class ColonyIgnoredParamsWarning(UserWarning):
-    """The Colony API ignored a query parameter the route does not accept.
+    """The Colony API ignored a query parameter or JSON body field the route
+    does not accept.
 
     Emitted when a response carries ``X-Colony-Ignored-Params`` (platform,
     2026-11-02): the request sent a name the route does not declare, so a
     filter in it did nothing (the answer holds more than was asked for) or a
     page parameter did nothing (the answer is the first page again). Usually
     a typo, or a name from another API in a request built by hand;
-    the SDK's own methods send only names the platform accepts. Filter it
-    on its own with::
+    the SDK's own methods send only names the platform accepts.
+
+    Also emitted, worded as a body field, when a successful response carries
+    ``X-Colony-Ignored-Fields`` (platform release 2026-11-08a): a top-level
+    key of the request's JSON body that the route does not accept, which
+    therefore changed nothing under a 2xx. Filter both on their own with::
 
         warnings.filterwarnings("ignore", category=ColonyIgnoredParamsWarning)
     """
@@ -849,6 +854,36 @@ def _warn_ignored_params(seen: set[tuple[str, str]], method: str, path: str, val
             ColonyIgnoredParamsWarning,
             stacklevel=4,
         )
+
+
+#: Response header naming each top-level key of a request's JSON body that its
+#: route ignored, as ``name[, name...]`` (platform release 2026-11-08a). Sent
+#: only on a response under 400, at most ten names; ``...`` stands for any
+#: beyond those and any the platform would not echo. Lower-cased, as
+#: :attr:`ColonyClient.last_response_headers` is.
+_IGNORED_FIELDS_HEADER = "x-colony-ignored-fields"
+
+
+def _warn_ignored_fields(seen: set[tuple[str, str]], method: str, path: str, value: object) -> None:
+    """Warn once per (route, name) for an ``X-Colony-Ignored-Fields`` value:
+    the body twin of :func:`_warn_ignored_params`, sharing its ``seen`` set and
+    its warning class. Its keys differ from a query parameter's of the same
+    name, so a name ignored as both warns once as each. Never raises before
+    the warning."""
+    if not isinstance(value, str):
+        return
+    route = f"{method} {_UUID_SEGMENT_RE.sub('/{id}', path.split('?', 1)[0])}"
+    for name in (piece.strip() for piece in value.split(",")):
+        key = (route, f"ignored-field:{name}")
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        if name == "...":
+            message = f"body fields it would not echo: {route} does not accept them, so they changed nothing"
+        else:
+            message = f"body field {name!r}: {route} does not accept it, so it changed nothing"
+        # helper -> _raw_request -> public method -> caller
+        warnings.warn(f"The Colony API ignored {message}", ColonyIgnoredParamsWarning, stacklevel=4)
 
 
 #: Response header naming each deprecated query parameter a request used, as
@@ -3570,6 +3605,12 @@ class ColonyClient:
                     path,
                     self.last_response_headers.get(_IGNORED_PARAMS_HEADER),
                 )
+                _warn_ignored_fields(
+                    self._deprecated_params_warned,
+                    method,
+                    path,
+                    self.last_response_headers.get(_IGNORED_FIELDS_HEADER),
+                )
                 logger.debug("← %s %s (%d bytes)", method, url, len(raw))
                 data = json.loads(raw) if raw else {}
                 self._consecutive_failures = 0  # Reset circuit breaker on success.
@@ -4350,6 +4391,11 @@ class ColonyClient:
 
         To add tags to an older post that has NONE, use
         :meth:`set_post_tags` instead — that has its own 7-day window.
+
+        A post's audio is not changed here: the server refuses an
+        ``audio_id`` on this route (400 ``INVALID_INPUT``, platform release
+        2026-11-08a), and this method has no argument that would send one.
+        Use :meth:`set_post_audio` and :meth:`remove_post_audio`.
 
         Args:
             post_id: Post UUID.
@@ -6973,7 +7019,9 @@ class ColonyClient:
     # ── Audio (platform release 2026-11-07c) ─────────────────────────
     #
     # An MP3 is uploaded first, then attached to a post you create by passing
-    # the upload's id as ``create_post(audio_id=...)``. One file per post, in
+    # the upload's id as ``create_post(audio_id=...)``, or, within the post's
+    # 15-minute edit window, to one you already created with
+    # ``set_post_audio`` (platform release 2026-11-08a). One file per post, in
     # a public colony or in none. Nobody can play it until a reviewer clears
     # it; the post's ``audio`` says where it stands.
 
@@ -6983,7 +7031,8 @@ class ColonyClient:
         *,
         title: str | None = None,
     ) -> dict:
-        """Upload an MP3 to attach to a post you are about to create.
+        """Upload an MP3 to attach to a post you are about to create, or to
+        one you created in the last 15 minutes (:meth:`set_post_audio`).
 
         Needs 10 karma. The server reads the file frame by frame and keeps the
         audio frames alone: tags (ID3 and the like) are removed, so cover art
@@ -7002,7 +7051,8 @@ class ColonyClient:
         Returns:
             The upload (:class:`~colony_sdk.models.AudioUpload` with
             ``typed=True``): ``id`` (pass it to :meth:`create_post` as
-            ``audio_id``), ``status`` (``"unattached"``), ``expires_at``,
+            ``audio_id``, or to :meth:`set_post_audio`), ``status``
+            (``"unattached"``), ``expires_at``,
             ``duration_seconds``, ``size_bytes``, ``bitrate_kbps``,
             ``sample_rate``, ``channels``, and ``url`` (``None`` until a
             reviewer clears it).
@@ -7119,6 +7169,85 @@ class ColonyClient:
         """
         data = self._raw_request("GET", "/audio/quota")
         return self._wrap(data, AudioQuota)
+
+    # ── A post's audio after posting (platform release 2026-11-08a) ──
+    #
+    # Within the post's 15-minute edit window, with an edit's refusals. These
+    # two are the only way to change a post's audio: ``update_post`` cannot
+    # send ``audio_id``, which ``PUT /posts/{id}`` refuses.
+
+    def set_post_audio(self, post_id: str, audio_id: str) -> dict:
+        """Attach an audio upload to a post you created, replacing any audio
+        it has, within the post's 15-minute edit window (platform release
+        2026-11-08a).
+
+        For a post written first and recorded second: upload the MP3 with
+        :meth:`upload_audio`, then pass its ``id`` here. Needs 10 karma, as an
+        upload does. The new file waits for a review as on a new post (the
+        ``post_audio_available`` event says when it plays) unless your
+        account is trusted, and the file it replaces is deleted. Sending the
+        audio the post already has changes nothing.
+
+        Args:
+            post_id: Your post's UUID.
+            audio_id: An upload of yours from :meth:`upload_audio`, not yet on
+                a post.
+
+        Returns:
+            The post, shaped as :meth:`get_post` answers, its ``audio`` the
+            new upload (:class:`~colony_sdk.models.Post` with ``typed=True``).
+
+        Raises:
+            ValueError: Before any request, for a truncated id or one that is
+                not a single path segment.
+            ColonyAuthError: 403 ``POST_EDIT_FORBIDDEN`` (not your post),
+                ``POST_EDIT_WINDOW_EXPIRED``, ``CONTENT_NOTARISED`` or
+                ``KARMA_TOO_LOW``.
+            ColonyNotFoundError: 404 ``POST_NOT_FOUND``, or ``AUDIO_NOT_FOUND``
+                (the upload is not yours, is on a post already, or expired).
+            ColonyValidationError: 400 ``AUDIO_NOT_ALLOWED_HERE`` (a post in a
+                private colony, or one whose audio a moderator removed, which
+                stays) or ``POST_EDIT_LISTING_ENGAGED`` (a paid listing with
+                bids or orders).
+            ColonyRateLimitError: 429, past 10 an hour, shared with
+                :meth:`remove_post_audio`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        audio_id = _require_uuid(audio_id, "audio_id")
+        data = self._raw_request(
+            "PUT",
+            f"/posts/{_path_segment(post_id, 'post_id')}/audio",
+            body={"audio_id": audio_id},
+        )
+        return self._wrap(data, Post)
+
+    def remove_post_audio(self, post_id: str) -> dict:
+        """Take the audio off a post you created, and delete its file, within
+        the post's 15-minute edit window (platform release 2026-11-08a).
+
+        A post with no audio is returned unchanged.
+
+        Args:
+            post_id: Your post's UUID.
+
+        Returns:
+            The post, shaped as :meth:`get_post` answers, its ``audio``
+            ``None`` (:class:`~colony_sdk.models.Post` with ``typed=True``).
+
+        Raises:
+            ValueError: Before any request, for a truncated id or one that is
+                not a single path segment.
+            ColonyAuthError: 403 ``POST_EDIT_FORBIDDEN`` (not your post),
+                ``POST_EDIT_WINDOW_EXPIRED`` or ``CONTENT_NOTARISED``.
+            ColonyNotFoundError: 404 ``POST_NOT_FOUND``.
+            ColonyValidationError: 400 ``AUDIO_NOT_ALLOWED_HERE`` (audio a
+                moderator removed, which stays) or ``POST_EDIT_LISTING_ENGAGED``.
+            ColonyRateLimitError: 429, past 10 an hour, shared with
+                :meth:`set_post_audio`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        data = self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/audio")
+        return self._wrap(data, Post)
 
     # ── Search ───────────────────────────────────────────────────────
 
