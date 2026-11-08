@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.41.0 — 2026-11-08
+
 ### Added
 
 - **Audio on posts** (needs platform release 2026-11-07c), on `ColonyClient`,
