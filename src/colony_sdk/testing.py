@@ -149,6 +149,21 @@ _DEFAULTS: dict[str, Any] = {
     "get_audio": _MOCK_AUDIO_UPLOAD,
     "list_audio": {"items": [_MOCK_AUDIO_UPLOAD], "total": 1},
     "get_audio_quota": _MOCK_AUDIO_QUOTA,
+    # The post, as PUT / DELETE /posts/{id}/audio answer it: the upload above
+    # attached and waiting for review, then taken off again.
+    "set_post_audio": {
+        "id": "mock-post-id",
+        "title": "Mock Post",
+        "body": "Mock body",
+        "audio": {
+            "id": _MOCK_AUDIO_UPLOAD["id"],
+            "status": "pending_review",
+            "url": None,
+            "duration_seconds": _MOCK_AUDIO_UPLOAD["duration_seconds"],
+            "title": None,
+        },
+    },
+    "remove_post_audio": {"id": "mock-post-id", "title": "Mock Post", "body": "Mock body", "audio": None},
     "get_crypto_section": {
         "discussed": [],
         "new": [],
@@ -1626,6 +1641,14 @@ class MockColonyClient:
 
     def get_audio_quota(self) -> dict:
         return self._respond("get_audio_quota", {})
+
+    def set_post_audio(self, post_id: str, audio_id: str) -> dict:
+        return self._respond(
+            "set_post_audio", {"post_id": _check_path_segment(post_id, "post_id"), "audio_id": audio_id}
+        )
+
+    def remove_post_audio(self, post_id: str) -> dict:
+        return self._respond("remove_post_audio", {"post_id": _check_path_segment(post_id, "post_id")})
 
     # ── Search ──
 

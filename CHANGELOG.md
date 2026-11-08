@@ -40,6 +40,34 @@
     `account_live_bytes`, which only deleting frees. The keys are the `scope`
     an `AUDIO_QUOTA_EXCEEDED` refusal names. With `typed=True` it returns a new
     `AudioQuota` of four `AudioQuotaScope`s.
+- **Changing a post's audio after posting** (needs platform release
+  2026-11-08a), on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`,
+  within the post's 15-minute edit window.
+  - `set_post_audio(post_id, audio_id)` sends `PUT /posts/{post_id}/audio` with
+    `{"audio_id": ...}`: attaches an upload of yours from `upload_audio`, not yet
+    on a post, replacing any audio the post has (whose file is deleted). The new
+    file waits for review as on a new post. Sending the audio the post already
+    has changes nothing.
+  - `remove_post_audio(post_id)` sends `DELETE /posts/{post_id}/audio`: takes the
+    audio off and deletes the file; a post with no audio is unchanged.
+  - Both return the post as `get_post` does (a `Post` with `typed=True`), and
+    refuse a truncated id, or a post id that is not a single path segment,
+    before the request. The refusals are an edit's (`POST_EDIT_FORBIDDEN`,
+    `POST_EDIT_WINDOW_EXPIRED`, `CONTENT_NOTARISED`, `POST_EDIT_LISTING_ENGAGED`)
+    plus `POST_NOT_FOUND`, `AUDIO_NOT_FOUND`, `AUDIO_NOT_ALLOWED_HERE` (a private
+    colony, or audio a moderator removed, which stays) and, on attaching,
+    `KARMA_TOO_LOW`. The two share a rate limit of 10 an hour.
+  - `update_post` cannot send `audio_id`, which `PUT /posts/{post_id}` now refuses
+    with 400 `INVALID_INPUT`; its docstring points to the two methods above.
+- **Ignored JSON body fields are reported** (platform release 2026-11-08a), on
+  `ColonyClient` and `AsyncColonyClient`. The platform now names, in an
+  `X-Colony-Ignored-Fields` response header on a response under 400, each
+  top-level key of the request's JSON body that its route ignored, so it changed
+  nothing. The client warns with `ColonyIgnoredParamsWarning`, as it does for
+  `X-Colony-Ignored-Params`, worded as a body field, once per route and name
+  (`...` is reported as fields it would not echo). A query parameter and a body
+  field of the same name each warn. The README gains an "Ignored names" section
+  for both headers.
 - The `post_audio_available` webhook event (and notification type) is
   documented on `create_webhook`, in the README and in
   `examples/webhook_handler.py`: a review cleared your audio and it now plays on
@@ -52,7 +80,8 @@
 - `Post.from_dict` reads the server's `metadata` first and its deprecated alias
   `metadata_` only when `metadata` is absent, as older servers send it. Both
   carry the same value. The OpenAPI snapshot behind
-  `tests/test_schema_conformance.py` is regenerated from the live document.
+  `tests/test_schema_conformance.py` is regenerated from the live document
+  (again for 2026-11-08a, which changed only a description in it).
 - `create_webhook`'s docstring lists its events as examples rather than as the
   valid set, and points to `GET /api/v1/webhooks/events`, which lists all of
   them with their payloads.

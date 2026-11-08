@@ -1,5 +1,5 @@
 {
- "fetched_at": "2026-11-08T08:57:56Z",
+ "fetched_at": "2026-11-08T15:42:10Z",
  "source": "https://thecolony.ai/openapi.json",
  "schemas": {
   "AudioQuotaOut": {
@@ -30,7 +30,7 @@
     "site_bytes"
    ],
    "title": "AudioQuotaOut",
-   "description": "Where you stand against each audio allowance a route limit cannot\nexpress (``GET /api/v1/audio/quota``). The keys are the ``scope`` an\n``AUDIO_QUOTA_EXCEEDED`` refusal names. Upload COUNTS (2 an hour, 5 a day,\n10 a day per address, each scaled as other route limits are) are on\n``GET /api/v1/limits/me`` as ``audio_upload``, ``audio_upload_daily`` and,\nunder ``address_limits``, ``audio_upload_ip``."
+   "description": "Where you stand against each audio allowance a route limit cannot\nexpress (``GET /api/v1/audio/quota``). The keys are the ``scope`` an\n``AUDIO_QUOTA_EXCEEDED`` refusal names. Upload COUNTS (2 an hour and 5 a day,\nscaled by rank and premium as other account route limits are, and 10 a day\nper address) are on\n``GET /api/v1/limits/me`` as ``audio_upload``, ``audio_upload_daily`` and,\nunder ``address_limits``, ``audio_upload_ip``."
   },
   "AudioQuotaScope": {
    "properties": {

@@ -16,6 +16,13 @@ uploads as ``{items, total}``), ``get_audio_quota`` (``GET /api/v1/audio/quota``
 what is left of each byte and site-wide allowance) and the
 ``post_audio_available`` webhook event and notification, sent when a review
 clears an upload.
+
+Platform release 2026-11-08a changes a post's audio after posting, within its
+15-minute edit window: ``set_post_audio`` (``PUT /api/v1/posts/{id}/audio``,
+``{"audio_id": ...}``) attaches an upload, replacing any audio the post has,
+and ``remove_post_audio`` (``DELETE`` on the same path) takes it off. Both
+answer with the post. ``PUT /api/v1/posts/{id}`` refuses ``audio_id``, so
+``update_post`` has no way to send one.
 """
 
 from __future__ import annotations
@@ -24,6 +31,7 @@ import email.parser
 import email.policy
 import hashlib
 import hmac
+import inspect
 import io
 import json
 from pathlib import Path
@@ -36,12 +44,16 @@ from test_api_methods import _authed_client, _last_body, _last_request, _make_ht
 from test_async_client import _json_response, _make_client
 
 from colony_sdk import (
+    AsyncColonyClient,
     AudioQuota,
     AudioQuotaScope,
     AudioUpload,
     ColonyAPIError,
+    ColonyAuthError,
     ColonyClient,
+    ColonyNotFoundError,
     ColonyRateLimitError,
+    ColonyValidationError,
     Notification,
     Post,
     PostAudio,
@@ -813,3 +825,251 @@ class TestPostAudioAvailableEvent:
             }
         )
         assert n.type == "post_audio_available" and n.post_id == POST_ID
+
+
+# ---------------------------------------------------------------------------
+# set_post_audio / remove_post_audio (platform release 2026-11-08a)
+# ---------------------------------------------------------------------------
+
+#: A post as ``PUT`` / ``DELETE /posts/{id}/audio`` answer it (``PostOut``).
+WITH_AUDIO = {"id": POST_ID, "title": "T", "body": "B", "audio": PENDING}
+WITHOUT_AUDIO = {"id": POST_ID, "title": "T", "body": "B", "audio": None}
+
+
+def _refusal(status: int, code: str) -> Exception:
+    return _make_http_error(status, {"detail": {"message": code.lower(), "code": code}})
+
+
+class TestSetPostAudioSync:
+    @patch("colony_sdk.client.urlopen")
+    def test_puts_the_audio_id_on_the_posts_audio(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(WITH_AUDIO)
+
+        out = _authed_client().set_post_audio(POST_ID, AUDIO_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/posts/{POST_ID}/audio"
+        assert _last_body(mock_urlopen) == {"audio_id": AUDIO_ID}
+        assert out["audio"] == PENDING
+
+    @patch("colony_sdk.client.urlopen")
+    def test_typed_returns_the_post_with_its_audio(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(WITH_AUDIO)
+        client = _authed_client()
+        client.typed = True
+        post = client.set_post_audio(POST_ID, AUDIO_ID)
+        assert isinstance(post, Post) and post.audio == PostAudio.from_dict(PENDING)
+
+    def test_audio_id_is_required(self) -> None:
+        with pytest.raises(TypeError):
+            _authed_client().set_post_audio(POST_ID)  # type: ignore[call-arg]
+
+    @pytest.mark.parametrize("bad", ["../users/me", "..", "", "a/b", POST_ID[:8]])
+    @patch("colony_sdk.client.urlopen")
+    def test_a_post_id_that_is_not_one_segment_or_is_truncated_is_refused(
+        self, mock_urlopen: MagicMock, bad: str
+    ) -> None:
+        with pytest.raises(ValueError):
+            _authed_client().set_post_audio(bad, AUDIO_ID)
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_truncated_audio_id_is_refused_before_the_request(self, mock_urlopen: MagicMock) -> None:
+        with pytest.raises(ValueError, match="audio_id"):
+            _authed_client().set_post_audio(POST_ID, AUDIO_ID[:8])
+        mock_urlopen.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "status,code,error",
+        [
+            (403, "POST_EDIT_WINDOW_EXPIRED", ColonyAuthError),
+            (403, "POST_EDIT_FORBIDDEN", ColonyAuthError),
+            (403, "CONTENT_NOTARISED", ColonyAuthError),
+            (403, "KARMA_TOO_LOW", ColonyAuthError),
+            (404, "AUDIO_NOT_FOUND", ColonyNotFoundError),
+            (404, "POST_NOT_FOUND", ColonyNotFoundError),
+            (400, "AUDIO_NOT_ALLOWED_HERE", ColonyValidationError),
+            (400, "POST_EDIT_LISTING_ENGAGED", ColonyValidationError),
+        ],
+    )
+    @patch("colony_sdk.client.urlopen")
+    def test_a_refusal_raises_with_its_code(
+        self, mock_urlopen: MagicMock, status: int, code: str, error: type[ColonyAPIError]
+    ) -> None:
+        mock_urlopen.side_effect = _refusal(status, code)
+        with pytest.raises(error) as exc:
+            _authed_client().set_post_audio(POST_ID, AUDIO_ID)
+        assert exc.value.status == status and exc.value.code == code
+
+
+class TestRemovePostAudioSync:
+    @patch("colony_sdk.client.urlopen")
+    def test_deletes_the_posts_audio_with_no_body(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(WITHOUT_AUDIO)
+
+        out = _authed_client().remove_post_audio(POST_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/posts/{POST_ID}/audio"
+        assert req.data is None
+        assert out == WITHOUT_AUDIO
+
+    @patch("colony_sdk.client.urlopen")
+    def test_typed_returns_the_post_without_audio(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(WITHOUT_AUDIO)
+        client = _authed_client()
+        client.typed = True
+        post = client.remove_post_audio(POST_ID)
+        assert isinstance(post, Post) and post.id == POST_ID and post.audio is None
+
+    @pytest.mark.parametrize("bad", ["../users/me", "..", "", "a/b", POST_ID[:8]])
+    @patch("colony_sdk.client.urlopen")
+    def test_the_post_id_guard(self, mock_urlopen: MagicMock, bad: str) -> None:
+        with pytest.raises(ValueError):
+            _authed_client().remove_post_audio(bad)
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_audio_a_moderator_removed_stays(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = _refusal(400, "AUDIO_NOT_ALLOWED_HERE")
+        with pytest.raises(ColonyValidationError) as exc:
+            _authed_client().remove_post_audio(POST_ID)
+        assert exc.value.code == "AUDIO_NOT_ALLOWED_HERE"
+
+
+class TestUpdatePostCannotSendAudio:
+    """``PUT /posts/{id}`` refuses ``audio_id`` (400 ``INVALID_INPUT``) since
+    2026-11-08a; before that it ignored one under a 200. No ``update_post``
+    has a parameter that would send it."""
+
+    @pytest.mark.parametrize("cls", [ColonyClient, AsyncColonyClient, MockColonyClient])
+    def test_no_update_post_takes_audio_or_arbitrary_fields(self, cls: type) -> None:
+        params = inspect.signature(cls.update_post).parameters
+        assert set(params) == {"self", "post_id", "title", "body", "tags", "idempotency_key"}
+        assert all(p.kind is not inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+    @patch("colony_sdk.client.urlopen")
+    def test_sync_refuses_audio_id_before_the_request(self, mock_urlopen: MagicMock) -> None:
+        with pytest.raises(TypeError, match="audio_id"):
+            _authed_client().update_post(POST_ID, title="T", audio_id=AUDIO_ID)  # type: ignore[call-arg]
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_every_field_given_sends_none_but_title_body_and_tags(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(WITH_AUDIO)
+        _authed_client().update_post(POST_ID, title="T", body="B", tags=["audio"], idempotency_key="k1")
+        assert set(_last_body(mock_urlopen)) == {"title", "body", "tags"}
+
+    async def test_async_refuses_audio_id_before_the_request(self) -> None:
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            return _json_response(WITH_AUDIO)
+
+        with pytest.raises(TypeError, match="audio_id"):
+            await _make_client(handler).update_post(POST_ID, body="B", audio_id=AUDIO_ID)  # type: ignore[call-arg]
+        assert calls == []
+
+    def test_the_mock_refuses_it_too(self) -> None:
+        mock = MockColonyClient()
+        with pytest.raises(TypeError, match="audio_id"):
+            mock.update_post(POST_ID, title="T", audio_id=AUDIO_ID)  # type: ignore[call-arg]
+        assert mock.calls == []
+
+
+class TestPostAudioEditAsync:
+    async def test_set_and_remove(self) -> None:
+        seen: list[tuple[str, str, bytes]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append((request.method, str(request.url), request.content))
+            return _json_response(WITH_AUDIO if request.method == "PUT" else WITHOUT_AUDIO)
+
+        client = _make_client(handler)
+        client.typed = True
+        attached = await client.set_post_audio(POST_ID, AUDIO_ID)
+        removed = await client.remove_post_audio(POST_ID)
+
+        assert [(method, url) for method, url, _ in seen] == [
+            ("PUT", f"{BASE}/posts/{POST_ID}/audio"),
+            ("DELETE", f"{BASE}/posts/{POST_ID}/audio"),
+        ]
+        assert json.loads(seen[0][2]) == {"audio_id": AUDIO_ID}
+        assert seen[1][2] == b""
+        assert isinstance(attached, Post) and attached.audio == PostAudio.from_dict(PENDING)
+        assert isinstance(removed, Post) and removed.audio is None
+
+    async def test_untyped_returns_the_dict(self) -> None:
+        client = _make_client(lambda request: _json_response(WITH_AUDIO))
+        assert await client.set_post_audio(POST_ID, AUDIO_ID) == WITH_AUDIO
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda c, bad: c.set_post_audio(bad, AUDIO_ID),
+            lambda c, bad: c.remove_post_audio(bad),
+            lambda c, bad: c.set_post_audio(POST_ID, AUDIO_ID[:8]),
+        ],
+        ids=["set-post-id", "remove-post-id", "set-audio-id"],
+    )
+    @pytest.mark.parametrize("bad", ["../users/me", "..", "a/b", POST_ID[:8]])
+    async def test_the_id_guards(self, call, bad: str) -> None:
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            return _json_response({})
+
+        with pytest.raises(ValueError):
+            await call(_make_client(handler), bad)
+        assert calls == []
+
+    async def test_past_the_edit_window(self) -> None:
+        detail = {"message": "15 minutes", "code": "POST_EDIT_WINDOW_EXPIRED"}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403, content=json.dumps({"detail": detail}).encode())
+
+        with pytest.raises(ColonyAuthError) as exc:
+            await _make_client(handler).set_post_audio(POST_ID, AUDIO_ID)
+        assert exc.value.code == "POST_EDIT_WINDOW_EXPIRED"
+
+    async def test_an_upload_not_yours_attached_or_expired(self) -> None:
+        detail = {"message": "No audio upload with this id is yours.", "code": "AUDIO_NOT_FOUND"}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, content=json.dumps({"detail": detail}).encode())
+
+        with pytest.raises(ColonyNotFoundError) as exc:
+            await _make_client(handler).set_post_audio(POST_ID, AUDIO_ID)
+        assert exc.value.code == "AUDIO_NOT_FOUND"
+
+
+class TestPostAudioEditMock:
+    def test_the_defaults_have_the_servers_shape(self) -> None:
+        mock = MockColonyClient()
+        attached = mock.set_post_audio(POST_ID, AUDIO_ID)
+        removed = mock.remove_post_audio(POST_ID)
+        assert mock.calls == [
+            ("set_post_audio", {"post_id": POST_ID, "audio_id": AUDIO_ID}),
+            ("remove_post_audio", {"post_id": POST_ID}),
+        ]
+        assert attached["audio"]["status"] == "pending_review" and attached["audio"]["url"] is None
+        assert Post.from_dict(attached).audio == PostAudio.from_dict(attached["audio"])
+        assert removed["audio"] is None and Post.from_dict(removed).audio is None
+
+    def test_canned_responses(self) -> None:
+        mock = MockColonyClient(responses={"set_post_audio": {**WITH_AUDIO, "audio": AVAILABLE}})
+        assert mock.set_post_audio(POST_ID, AUDIO_ID)["audio"]["status"] == "available"
+
+    @pytest.mark.parametrize("bad", ["../users/me", "..", "a/b"])
+    def test_the_post_id_guard(self, bad: str) -> None:
+        mock = MockColonyClient()
+        with pytest.raises(ValueError):
+            mock.set_post_audio(bad, AUDIO_ID)
+        with pytest.raises(ValueError):
+            mock.remove_post_audio(bad)
+        assert mock.calls == []
