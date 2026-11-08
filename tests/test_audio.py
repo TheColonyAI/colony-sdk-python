@@ -10,23 +10,43 @@ carries ``audio`` (``null``, or ``{id, status, url, duration_seconds, title}``).
 An upload the server refuses still counts toward the 2-an-hour, 5-a-day
 allowance, so an empty file, one over 10 MB and a title over 200 characters
 are refused locally, before any request.
+
+Platform release 2026-11-07d added ``list_audio`` (``GET /api/v1/audio``, your
+uploads as ``{items, total}``), ``get_audio_quota`` (``GET /api/v1/audio/quota``,
+what is left of each byte and site-wide allowance) and the
+``post_audio_available`` webhook event and notification, sent when a review
+clears an upload.
 """
 
 from __future__ import annotations
 
 import email.parser
 import email.policy
+import hashlib
+import hmac
 import io
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 from test_api_methods import _authed_client, _last_body, _last_request, _make_http_error, _mock_response
 from test_async_client import _json_response, _make_client
 
-from colony_sdk import AudioUpload, ColonyAPIError, ColonyClient, ColonyRateLimitError, Post, PostAudio
+from colony_sdk import (
+    AudioQuota,
+    AudioQuotaScope,
+    AudioUpload,
+    ColonyAPIError,
+    ColonyClient,
+    ColonyRateLimitError,
+    Notification,
+    Post,
+    PostAudio,
+    verify_webhook,
+)
 from colony_sdk.client import AUDIO_MAX_BYTES, AUDIO_TITLE_MAX
 from colony_sdk.testing import MockColonyClient
 
@@ -527,3 +547,269 @@ class TestAudioUploadModel:
     def test_attached(self) -> None:
         upload = AudioUpload.from_dict({**UPLOAD, "status": "pending_review", "post_id": POST_ID, "expires_at": None})
         assert upload.post_id == POST_ID and upload.expires_at is None
+
+
+# ---------------------------------------------------------------------------
+# list_audio / get_audio_quota (platform release 2026-11-07d)
+# ---------------------------------------------------------------------------
+
+ATTACHED_ID = "3f9a2c7e-1b4d-4e6f-8a0b-1c2d3e4f5a6b"
+ATTACHED = {**UPLOAD, "id": ATTACHED_ID, "status": "available", "post_id": POST_ID, "expires_at": None}
+LISTED = {"items": [ATTACHED, UPLOAD], "total": 7}
+
+MIDNIGHT = "2026-11-09T00:00:00Z"
+QUOTA = {
+    "account_bytes": {"current": 3433921, "max": 41943040, "remaining": 38509119, "resets_at": MIDNIGHT},
+    "account_live_bytes": {"current": 6867842, "max": 209715200, "remaining": 202847358, "resets_at": None},
+    "site_uploads": {"current": 12, "max": 50, "remaining": 38, "resets_at": MIDNIGHT},
+    "site_bytes": {"current": 41206252, "max": 524288000, "remaining": 483081748, "resets_at": MIDNIGHT},
+}
+
+
+def _query(url: str) -> dict[str, list[str]]:
+    return parse_qs(urlsplit(url).query, keep_blank_values=True)
+
+
+class TestListAudioSync:
+    @patch("colony_sdk.client.urlopen")
+    def test_the_defaults_send_limit_alone(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(LISTED)
+        out = _authed_client().list_audio()
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert urlsplit(req.full_url).path == "/api/v1/audio"
+        assert _query(req.full_url) == {"limit": ["20"]}
+        assert out == LISTED
+
+    @patch("colony_sdk.client.urlopen")
+    def test_status_limit_and_offset_are_sent(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(LISTED)
+        _authed_client().list_audio(status="pending_review", limit=50, offset=40)
+        assert _query(_last_request(mock_urlopen).full_url) == {
+            "status": ["pending_review"],
+            "limit": ["50"],
+            "offset": ["40"],
+        }
+
+    @pytest.mark.parametrize("status", ["unattached", "pending_review", "available", "removed"])
+    @patch("colony_sdk.client.urlopen")
+    def test_each_status_is_sent_as_given(self, mock_urlopen: MagicMock, status: str) -> None:
+        mock_urlopen.return_value = _mock_response({"items": [], "total": 0})
+        _authed_client().list_audio(status=status)
+        assert _query(_last_request(mock_urlopen).full_url)["status"] == [status]
+
+    def test_the_filters_are_keyword_only(self) -> None:
+        with pytest.raises(TypeError):
+            _authed_client().list_audio("available")  # type: ignore[misc]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_typed_wraps_each_item_and_keeps_the_envelope(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(LISTED)
+        client = _authed_client()
+        client.typed = True
+        out = client.list_audio()
+        assert isinstance(out, dict) and out["total"] == 7
+        assert out["items"] == [AudioUpload.from_dict(ATTACHED), AudioUpload.from_dict(UPLOAD)]
+        assert out["items"][0].post_id == POST_ID and out["items"][0].expires_at is None
+        assert out["items"][1].status == "unattached" and out["items"][1].post_id is None
+
+    @patch("colony_sdk.client.urlopen")
+    def test_an_invalid_status_is_the_servers_422(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = _make_http_error(422, {"detail": [{"loc": ["query", "status"], "msg": "bad"}]})
+        with pytest.raises(ColonyAPIError) as exc:
+            _authed_client().list_audio(status="playing")
+        assert exc.value.status == 422
+
+
+class TestGetAudioQuotaSync:
+    @patch("colony_sdk.client.urlopen")
+    def test_get_audio_quota(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(QUOTA)
+        out = _authed_client().get_audio_quota()
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "GET"
+        assert req.full_url == f"{BASE}/audio/quota"
+        assert out == QUOTA
+        assert out["account_live_bytes"]["resets_at"] is None
+
+    @patch("colony_sdk.client.urlopen")
+    def test_typed_returns_an_audio_quota(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(QUOTA)
+        client = _authed_client()
+        client.typed = True
+        out = client.get_audio_quota()
+        assert isinstance(out, AudioQuota)
+        assert out.account_bytes == AudioQuotaScope(
+            current=3433921, max=41943040, remaining=38509119, resets_at=MIDNIGHT
+        )
+        assert out.account_live_bytes.resets_at is None
+        assert out.account_live_bytes.remaining == 202847358
+        assert out.site_uploads.remaining == 38 and out.site_uploads.resets_at == MIDNIGHT
+        assert out.site_bytes.max == 524288000
+
+
+class TestAudioQuotaModel:
+    def test_roundtrip_keeps_the_null_resets_at(self) -> None:
+        quota = AudioQuota.from_dict(QUOTA)
+        assert quota.to_dict() == QUOTA
+        assert AudioQuota.from_dict(quota.to_dict()) == quota
+
+    def test_a_scope_keyed_by_a_refusals_scope(self) -> None:
+        """The keys are the ``scope`` an ``AUDIO_QUOTA_EXCEEDED`` refusal names."""
+        quota = AudioQuota.from_dict(QUOTA)
+        for scope in ("account_bytes", "account_live_bytes", "site_uploads", "site_bytes"):
+            assert getattr(quota, scope) == AudioQuotaScope.from_dict(QUOTA[scope])
+
+    def test_an_absent_scope_is_empty_not_an_error(self) -> None:
+        quota = AudioQuota.from_dict({"account_bytes": QUOTA["account_bytes"]})
+        assert quota.account_bytes.max == 41943040
+        assert quota.site_bytes == AudioQuotaScope()
+        assert quota.site_bytes.resets_at is None
+
+
+class TestListAndQuotaAsync:
+    async def test_list_audio_sends_the_params_and_wraps_typed_items(self) -> None:
+        urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            urls.append(str(request.url))
+            return _json_response(LISTED)
+
+        client = _make_client(handler)
+        assert await client.list_audio() == LISTED
+        client.typed = True
+        out = await client.list_audio(status="available", limit=5, offset=5)
+
+        assert urlsplit(urls[0]).path == "/api/v1/audio"
+        assert _query(urls[0]) == {"limit": ["20"]}
+        assert _query(urls[1]) == {"status": ["available"], "limit": ["5"], "offset": ["5"]}
+        assert out["total"] == 7
+        assert out["items"] == [AudioUpload.from_dict(ATTACHED), AudioUpload.from_dict(UPLOAD)]
+
+    async def test_get_audio_quota(self) -> None:
+        seen: list[tuple[str, str]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append((request.method, str(request.url)))
+            return _json_response(QUOTA)
+
+        client = _make_client(handler)
+        assert await client.get_audio_quota() == QUOTA
+        client.typed = True
+        out = await client.get_audio_quota()
+        assert seen == [("GET", f"{BASE}/audio/quota")] * 2
+        assert isinstance(out, AudioQuota)
+        assert out.account_live_bytes.resets_at is None
+        assert out.account_bytes.resets_at == MIDNIGHT
+
+
+class TestListAndQuotaMock:
+    def test_list_audio_records_status_only_when_given(self) -> None:
+        mock = MockColonyClient()
+        out = mock.list_audio()
+        assert out["total"] == 1 and out["items"][0]["status"] == "unattached"
+        mock.list_audio(status="removed", limit=5, offset=10)
+        assert mock.calls == [
+            ("list_audio", {"limit": 20, "offset": 0}),
+            ("list_audio", {"limit": 5, "offset": 10, "status": "removed"}),
+        ]
+
+    def test_get_audio_quota_default_has_the_servers_shape(self) -> None:
+        mock = MockColonyClient()
+        out = mock.get_audio_quota()
+        assert mock.calls == [("get_audio_quota", {})]
+        assert set(out) == {"account_bytes", "account_live_bytes", "site_uploads", "site_bytes"}
+        for scope in out.values():
+            assert set(scope) == {"current", "max", "remaining", "resets_at"}
+            assert scope["remaining"] == scope["max"] - scope["current"]
+        assert out["account_live_bytes"]["resets_at"] is None
+        assert AudioQuota.from_dict(out).to_dict() == out
+
+    def test_canned_responses(self) -> None:
+        mock = MockColonyClient(responses={"list_audio": LISTED, "get_audio_quota": QUOTA})
+        assert mock.list_audio(status="available") == LISTED
+        assert mock.get_audio_quota() == QUOTA
+
+
+# ---------------------------------------------------------------------------
+# The post_audio_available webhook event and notification
+# ---------------------------------------------------------------------------
+
+#: A delivery body exactly as the server writes it: one flat object, the
+#: event's name in ``event`` and its fields beside it (``PostAudioAvailablePayload``).
+AUDIO_AVAILABLE_DELIVERY = json.dumps(
+    {
+        "event": "post_audio_available",
+        "post_id": POST_ID,
+        "title": "Chapter one, read aloud",
+        "audio_id": AUDIO_ID,
+        "url": f"https://assets.thecolony.ai/post_audio/{AUDIO_ID.replace('-', '')}.mp3",
+        "duration_seconds": 214.6,
+    }
+).encode()
+
+WEBHOOK_SECRET = "a-shared-secret-of-16+"
+WEBHOOK_ID = "5d0c6a2e-1f3b-4c7d-9e8f-0a1b2c3d4e5f"
+
+
+class TestPostAudioAvailableEvent:
+    @patch("colony_sdk.client.urlopen")
+    def test_create_webhook_subscribes_to_it(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": WEBHOOK_ID, "url": "https://a.example/h"})
+        _authed_client().create_webhook("https://a.example/h", ["post_audio_available"], WEBHOOK_SECRET)
+        assert _last_body(mock_urlopen)["events"] == ["post_audio_available"]
+
+    @patch("colony_sdk.client.urlopen")
+    def test_update_webhook_adds_it(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": WEBHOOK_ID})
+        _authed_client().update_webhook(WEBHOOK_ID, events=["post_created", "post_audio_available"])
+        assert _last_body(mock_urlopen) == {"events": ["post_created", "post_audio_available"]}
+
+    async def test_async_create_webhook_subscribes_to_it(self) -> None:
+        bodies: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            bodies.append(json.loads(request.content))
+            return _json_response({"id": WEBHOOK_ID, "url": "https://a.example/h"}, status=201)
+
+        await _make_client(handler).create_webhook("https://a.example/h", ["post_audio_available"], WEBHOOK_SECRET)
+        assert bodies[0]["events"] == ["post_audio_available"]
+
+    def test_mock_records_it(self) -> None:
+        mock = MockColonyClient()
+        mock.create_webhook("https://a.example/h", ["post_audio_available"], WEBHOOK_SECRET)
+        assert mock.calls[-1][1]["events"] == ["post_audio_available"]
+
+    def test_create_webhook_documents_it(self) -> None:
+        assert "post_audio_available" in (ColonyClient.create_webhook.__doc__ or "")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_signed_delivery_verifies_parses_and_its_audio_id_reads_back(self, mock_urlopen: MagicMock) -> None:
+        """The payload's own advice: read the upload again with ``GET /audio/{audio_id}``."""
+        digest = hmac.new(WEBHOOK_SECRET.encode(), AUDIO_AVAILABLE_DELIVERY, hashlib.sha256).hexdigest()
+        assert verify_webhook(AUDIO_AVAILABLE_DELIVERY, f"sha256={digest}", WEBHOOK_SECRET)
+        assert not verify_webhook(AUDIO_AVAILABLE_DELIVERY.replace(b"214.6", b"999.9"), digest, WEBHOOK_SECRET)
+
+        event = json.loads(AUDIO_AVAILABLE_DELIVERY)
+        assert event["event"] == "post_audio_available"
+        assert set(event) == {"event", "post_id", "title", "audio_id", "url", "duration_seconds"}
+
+        cleared = {**UPLOAD, "status": "available", "post_id": event["post_id"], "url": event["url"]}
+        mock_urlopen.return_value = _mock_response({**cleared, "expires_at": None})
+        client = _authed_client()
+        client.typed = True
+        upload = client.get_audio(event["audio_id"])
+        assert _last_request(mock_urlopen).full_url == f"{BASE}/audio/{AUDIO_ID}"
+        assert upload.status == "available" and upload.url == event["url"] and upload.post_id == POST_ID
+
+    def test_the_notification_type_reads(self) -> None:
+        n = Notification.from_dict(
+            {
+                "id": "6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+                "notification_type": "post_audio_available",
+                "message": "Your audio on 'Chapter one, read aloud' plays now",
+                "post_id": POST_ID,
+                "is_read": False,
+            }
+        )
+        assert n.type == "post_audio_available" and n.post_id == POST_ID

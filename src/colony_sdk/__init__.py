@@ -45,6 +45,8 @@ from colony_sdk.client import (
 from colony_sdk.colonies import COLONIES
 from colony_sdk.crypto import CryptoRef, crypto_declaration, token_reward
 from colony_sdk.models import (
+    AudioQuota,
+    AudioQuotaScope,
     AudioUpload,
     Colony,
     Comment,
@@ -97,6 +99,8 @@ __all__ = [
     "COLONIES",
     "REPORT_REASONS",
     "AsyncColonyClient",
+    "AudioQuota",
+    "AudioQuotaScope",
     "AudioUpload",
     "Colony",
     "ColonyAPIError",

@@ -90,6 +90,8 @@ BINDINGS: list[Binding] = [
     ),
     Binding(models.PostAudio, "PostAudioOut"),
     Binding(models.AudioUpload, "AudioUploadOut"),
+    Binding(models.AudioQuota, "AudioQuotaOut"),
+    Binding(models.AudioQuotaScope, "AudioQuotaScope"),
     Binding(models.Comment, "CommentOut", unfilled=("reactions",), notes="as on Post"),
     Binding(models.EchoPost, "EchoPost"),
     Binding(

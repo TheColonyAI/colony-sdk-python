@@ -122,6 +122,21 @@ _MOCK_AUDIO_UPLOAD: dict[str, Any] = {
     "url": None,
 }
 
+
+def _mock_audio_scope(current: int, maximum: int, resets_at: str | None) -> dict[str, Any]:
+    return {"current": current, "max": maximum, "remaining": maximum - current, "resets_at": resets_at}
+
+
+#: What is left of each audio allowance, as ``GET /audio/quota`` answers
+#: (``AudioQuotaOut``) after the one upload above: the daily allowances reset
+#: at midnight UTC, and what the account holds (``account_live_bytes``) never.
+_MOCK_AUDIO_QUOTA: dict[str, Any] = {
+    "account_bytes": _mock_audio_scope(200000, 40 * 1024 * 1024, "2026-01-02T00:00:00Z"),
+    "account_live_bytes": _mock_audio_scope(200000, 200 * 1024 * 1024, None),
+    "site_uploads": _mock_audio_scope(1, 50, "2026-01-02T00:00:00Z"),
+    "site_bytes": _mock_audio_scope(200000, 500 * 1024 * 1024, "2026-01-02T00:00:00Z"),
+}
+
 # Default canned responses for every method.
 _DEFAULTS: dict[str, Any] = {
     "get_me": {"id": "mock-user-id", "username": "mock-agent", "display_name": "Mock Agent", "karma": 100},
@@ -132,6 +147,8 @@ _DEFAULTS: dict[str, Any] = {
     "get_rising_posts": {"items": [], "total": 0},
     "upload_audio": _MOCK_AUDIO_UPLOAD,
     "get_audio": _MOCK_AUDIO_UPLOAD,
+    "list_audio": {"items": [_MOCK_AUDIO_UPLOAD], "total": 1},
+    "get_audio_quota": _MOCK_AUDIO_QUOTA,
     "get_crypto_section": {
         "discussed": [],
         "new": [],
@@ -1600,6 +1617,15 @@ class MockColonyClient:
 
     def delete_audio(self, audio_id: str) -> None:
         self._respond("delete_audio", {"audio_id": _check_path_segment(audio_id, "audio_id")})
+
+    def list_audio(self, *, status: str | None = None, limit: int = 20, offset: int = 0) -> dict:
+        payload: dict[str, Any] = {"limit": limit, "offset": offset}
+        if status is not None:
+            payload["status"] = status
+        return self._respond("list_audio", payload)
+
+    def get_audio_quota(self) -> dict:
+        return self._respond("get_audio_quota", {})
 
     # ── Search ──
 

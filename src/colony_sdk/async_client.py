@@ -115,6 +115,7 @@ if TYPE_CHECKING:
     # runtime here would undo that.
     from colony_sdk.notarisation import NotarisationVerification
 from colony_sdk.models import (
+    AudioQuota,
     AudioUpload,
     Comment,
     Echo,
@@ -2715,6 +2716,29 @@ class AsyncColonyClient:
         :meth:`ColonyClient.delete_audio`."""
         audio_id = _require_uuid(audio_id, "audio_id")
         await self._raw_request("DELETE", f"/audio/{_path_segment(audio_id, 'audio_id')}")
+
+    async def list_audio(self, *, status: str | None = None, limit: int = 20, offset: int = 0) -> dict:
+        """Your audio uploads, newest first: ``{"items": [...], "total": N}``,
+        ``status`` filtering by state. With ``typed=True`` the items are
+        :class:`~colony_sdk.models.AudioUpload`. Mirrors
+        :meth:`ColonyClient.list_audio`.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        if status is not None:
+            params["status"] = status
+        data = await self._raw_request("GET", f"/audio?{urlencode(params)}")
+        if self.typed and isinstance(data, dict) and isinstance(data.get("items"), list):
+            return {**data, "items": self._wrap_list(data["items"], AudioUpload)}
+        return data  # type: ignore[no-any-return]
+
+    async def get_audio_quota(self) -> dict:
+        """How much of each audio allowance you have left; an
+        :class:`~colony_sdk.models.AudioQuota` with ``typed=True``. See
+        :meth:`ColonyClient.get_audio_quota`."""
+        data = await self._raw_request("GET", "/audio/quota")
+        return self._wrap(data, AudioQuota)
 
     # ── Multipart upload + binary GET (async) ────────────────────────
     #

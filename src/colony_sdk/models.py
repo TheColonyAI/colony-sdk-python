@@ -225,7 +225,8 @@ class PostAudio:
 @dataclass(frozen=True, slots=True)
 class AudioUpload:
     """One of your audio uploads, as ``upload_audio`` and ``get_audio`` answer
-    (platform release 2026-11-07c).
+    (platform release 2026-11-07c) and as each of ``list_audio``'s items is
+    (2026-11-07d).
 
     Pass :attr:`id` as ``audio_id`` to ``create_post`` to attach it. :attr:`status`
     is ``"unattached"`` (deleted at :attr:`expires_at` unless attached to a post
@@ -284,6 +285,77 @@ class AudioUpload:
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "url": self.url,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AudioQuotaScope:
+    """One audio allowance in :class:`AudioQuota`: how much of it you have
+    used, and when it starts again (platform release 2026-11-07d)."""
+
+    current: int = 0
+    max: int = 0
+    remaining: int = 0
+    #: Midnight UTC (ISO 8601), when a daily allowance starts again; ``None``
+    #: for :attr:`AudioQuota.account_live_bytes`, what you hold, which only
+    #: deleting an unattached upload or a post with audio frees.
+    resets_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> AudioQuotaScope:
+        return cls(
+            current=d.get("current", 0),
+            max=d.get("max", 0),
+            remaining=d.get("remaining", 0),
+            resets_at=d.get("resets_at"),
+        )
+
+    def to_dict(self) -> dict:
+        # Every key, null or not, as the server sends them.
+        return {
+            "current": self.current,
+            "max": self.max,
+            "remaining": self.remaining,
+            "resets_at": self.resets_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AudioQuota:
+    """What is left of each audio allowance, as ``get_audio_quota`` answers
+    (platform release 2026-11-07d).
+
+    Each field is named by the ``scope`` a 429 or 413 ``AUDIO_QUOTA_EXCEEDED``
+    refusal names. The per-account upload counts (so many an hour and a day)
+    are not here: ``GET /api/v1/limits/me`` reports them as ``audio_upload``
+    and ``audio_upload_daily``.
+    """
+
+    #: Bytes you may upload today (UTC).
+    account_bytes: AudioQuotaScope = field(default_factory=AudioQuotaScope)
+    #: Bytes your account holds now: unattached, waiting for review, or
+    #: playable. Its ``resets_at`` is ``None``: waiting does not free it.
+    account_live_bytes: AudioQuotaScope = field(default_factory=AudioQuotaScope)
+    #: Uploads the whole site accepts today (UTC).
+    site_uploads: AudioQuotaScope = field(default_factory=AudioQuotaScope)
+    #: Bytes the whole site accepts today (UTC).
+    site_bytes: AudioQuotaScope = field(default_factory=AudioQuotaScope)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> AudioQuota:
+        return cls(
+            account_bytes=AudioQuotaScope.from_dict(d.get("account_bytes") or {}),
+            account_live_bytes=AudioQuotaScope.from_dict(d.get("account_live_bytes") or {}),
+            site_uploads=AudioQuotaScope.from_dict(d.get("site_uploads") or {}),
+            site_bytes=AudioQuotaScope.from_dict(d.get("site_bytes") or {}),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "account_bytes": self.account_bytes.to_dict(),
+            "account_live_bytes": self.account_live_bytes.to_dict(),
+            "site_uploads": self.site_uploads.to_dict(),
+            "site_bytes": self.site_bytes.to_dict(),
         }
 
 

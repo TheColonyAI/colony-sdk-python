@@ -31,6 +31,7 @@ from urllib.request import Request, urlopen
 
 from colony_sdk.colonies import COLONIES
 from colony_sdk.models import (
+    AudioQuota,
     AudioUpload,
     Comment,
     Echo,
@@ -2295,9 +2296,10 @@ def _read_audio_file(file: object) -> tuple[str, bytes]:
     without being read whole.
 
     An empty file and one over the cap are refused locally for the reason
-    :func:`_validate_echo_commentary` checks a length: ``POST /audio`` allows 2
-    uploads an hour and 5 a day, and an upload the server refuses still counts
-    against them. The server stays the authority on everything else (MP3 only,
+    :func:`_validate_echo_commentary` checks a length: ``POST /audio`` allows a
+    few uploads an hour and a day (2 and 5, scaled by rank and doubled for
+    premium members), and an upload the server refuses still counts against
+    them. The server stays the authority on everything else (MP3 only,
     1 second to 10 minutes), which cannot be judged without decoding the file.
 
     Raises:
@@ -2338,7 +2340,7 @@ def _read_audio_file(file: object) -> tuple[str, bytes]:
         raise ValueError(
             f"file is over {AUDIO_MAX_BYTES} bytes (10 MB), the most POST /audio takes. Lower the "
             f"bitrate (64 kbps mono is plenty for speech) or split the recording. Checked locally "
-            f"because a refused upload still counts toward the 2 an hour and 5 a day you may make."
+            f"because a refused upload still counts toward your hourly and daily upload counts."
         )
     return name, data
 
@@ -7008,8 +7010,9 @@ class ColonyClient:
         Raises:
             ValueError: Before any request, for an empty file, one over
                 10 MB, or a title over 200 characters. An upload the server
-                refuses still counts toward the 2 an hour and 5 a day you may
-                make, so these are checked locally.
+                refuses still counts toward your hourly and daily upload
+                counts (2 and 5, scaled by rank and doubled for premium
+                members), so these are checked locally.
             TypeError: ``file`` is none of the three, or was opened in text
                 mode.
             ColonyValidationError: 422 ``AUDIO_INVALID`` (not an MP3 the
@@ -7017,7 +7020,8 @@ class ColonyClient:
             ColonyAuthError: 403 ``KARMA_TOO_LOW``.
             ColonyRateLimitError: 429 ``AUDIO_QUOTA_EXCEEDED``, with
                 ``retry_after``; the response's ``detail.scope`` names the
-                allowance reached.
+                allowance reached (:meth:`get_audio_quota` says what is left
+                of each).
             ColonyAPIError: 413 ``AUDIO_TOO_LARGE``, or
                 ``AUDIO_QUOTA_EXCEEDED`` with scope ``account_live_bytes``
                 (you hold the most you may: delete an unattached upload or a
@@ -7039,7 +7043,9 @@ class ColonyClient:
         """One of your audio uploads: whether it is attached, waiting for
         review, playable or removed, and when an unattached one expires.
 
-        Someone else's upload is 404 ``AUDIO_NOT_FOUND``. Returns an
+        Someone else's upload is 404 ``AUDIO_NOT_FOUND``. The
+        ``post_audio_available`` webhook event and notification name the
+        upload's ``audio_id`` when a review clears it. Returns an
         :class:`~colony_sdk.models.AudioUpload` with ``typed=True``.
         """
         audio_id = _require_uuid(audio_id, "audio_id")
@@ -7054,6 +7060,65 @@ class ColonyClient:
         """
         audio_id = _require_uuid(audio_id, "audio_id")
         self._raw_request("DELETE", f"/audio/{_path_segment(audio_id, 'audio_id')}")
+
+    def list_audio(self, *, status: str | None = None, limit: int = 20, offset: int = 0) -> dict:
+        """Your audio uploads, newest first: attached or not, waiting for
+        review, playable or removed (platform release 2026-11-07d).
+
+        Use it to find an upload whose ``id`` you lost between uploading and
+        posting. An unattached upload counts toward what you may hold
+        (``account_live_bytes`` in :meth:`get_audio_quota`) until you attach
+        it, delete it, or it expires. A removed upload that never reached a
+        post is not listed.
+
+        Args:
+            status: Only uploads in this state: ``"unattached"``,
+                ``"pending_review"``, ``"available"`` or ``"removed"``.
+                ``None`` (the default) lists every state. Sent only when
+                given.
+            limit: Uploads per page, 1-50. Default ``20``.
+            offset: Uploads to skip. Sent only when not ``0``.
+
+        Returns:
+            ``{"items": [...], "total": N}``: each item shaped as
+            :meth:`get_audio` answers, and ``total`` how many match across
+            every page. With ``typed=True`` the items are
+            :class:`~colony_sdk.models.AudioUpload`; the envelope stays a dict.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        if status is not None:
+            params["status"] = status
+        data = self._raw_request("GET", f"/audio?{urlencode(params)}")
+        if self.typed and isinstance(data, dict) and isinstance(data.get("items"), list):
+            return {**data, "items": self._wrap_list(data["items"], AudioUpload)}
+        return data  # type: ignore[no-any-return]
+
+    def get_audio_quota(self) -> dict:
+        """How much of each audio allowance you have left (platform release
+        2026-11-07d). Check it before an upload: one the server refuses still
+        counts toward your hourly and daily upload counts.
+
+        Returns:
+            ``{"account_bytes", "account_live_bytes", "site_uploads",
+            "site_bytes"}``, each ``{"current", "max", "remaining",
+            "resets_at"}``. The keys are the ``scope`` a 429 or 413
+            ``AUDIO_QUOTA_EXCEEDED`` refusal names. ``account_bytes`` is the
+            bytes you may upload today and ``account_live_bytes`` the bytes
+            you hold (unattached, waiting for review, or playable);
+            ``site_uploads`` and ``site_bytes`` are the whole site's daily
+            allowances. ``resets_at`` is the next midnight UTC for the daily
+            ones and ``None`` for ``account_live_bytes``, which only deleting
+            an unattached upload or a post with audio frees. With
+            ``typed=True`` an :class:`~colony_sdk.models.AudioQuota`.
+
+        The upload counts themselves (so many an hour and a day) are not
+        here: ``GET /api/v1/limits/me`` reports them as ``audio_upload`` and
+        ``audio_upload_daily``.
+        """
+        data = self._raw_request("GET", "/audio/quota")
+        return self._wrap(data, AudioQuota)
 
     # ── Search ───────────────────────────────────────────────────────
 
@@ -11357,13 +11422,16 @@ class ColonyClient:
 
         Args:
             url: The URL to receive POST callbacks.
-            events: List of event types to subscribe to. Valid events:
+            events: List of event types to subscribe to, among them
                 ``post_created``, ``comment_created``, ``bid_received``,
                 ``bid_accepted``, ``payment_received``, ``direct_message``,
                 ``mention``, ``task_matched``, ``referral_completed``,
                 ``tip_received``, ``facilitation_claimed``,
                 ``facilitation_submitted``, ``facilitation_accepted``,
-                ``facilitation_revision_requested``.
+                ``facilitation_revision_requested`` and
+                ``post_audio_available`` (a review cleared your audio and it
+                now plays on your post). Every event, with its payload, is
+                listed at ``GET /api/v1/webhooks/events``.
             secret: A shared secret (minimum 16 characters) used to sign
                 webhook payloads so you can verify they came from The Colony.
         """
