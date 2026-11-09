@@ -111,6 +111,7 @@ _MOCK_AUDIO_UPLOAD: dict[str, Any] = {
     "id": "mock-audio-id",
     "status": "unattached",
     "post_id": None,
+    "comment_id": None,
     "title": None,
     "duration_seconds": 12.5,
     "size_bytes": 200000,
@@ -120,6 +121,7 @@ _MOCK_AUDIO_UPLOAD: dict[str, Any] = {
     "created_at": "2026-01-01T00:00:00Z",
     "expires_at": "2026-01-02T00:00:00Z",
     "url": None,
+    "plays_human": 0,
 }
 
 
@@ -164,6 +166,20 @@ _DEFAULTS: dict[str, Any] = {
         },
     },
     "remove_post_audio": {"id": "mock-post-id", "title": "Mock Post", "body": "Mock body", "audio": None},
+    # The comment, as PUT / DELETE /comments/{id}/audio answer it, the same way.
+    "set_comment_audio": {
+        "id": "mock-comment-id",
+        "post_id": "mock-post-id",
+        "body": "Mock comment",
+        "audio": {
+            "id": _MOCK_AUDIO_UPLOAD["id"],
+            "status": "pending_review",
+            "url": None,
+            "duration_seconds": _MOCK_AUDIO_UPLOAD["duration_seconds"],
+            "title": None,
+        },
+    },
+    "remove_comment_audio": {"id": "mock-comment-id", "post_id": "mock-post-id", "body": "Mock comment", "audio": None},
     "get_crypto_section": {
         "discussed": [],
         "new": [],
@@ -1064,6 +1080,8 @@ class MockColonyClient:
         body: str,
         parent_id: str | None = None,
         idempotency_key: str | None = None,
+        *,
+        audio_id: str | None = None,
     ) -> dict:
         # NOT canned, deliberately, on the same principle as the either-or
         # checks elsewhere in this mock: the real client refuses a body that
@@ -1073,12 +1091,16 @@ class MockColonyClient:
         # their own name. See ``_reject_uuid_as_text``.
         from colony_sdk.client import _reject_uuid_as_text
 
-        body = _reject_uuid_as_text(body, "body", alongside={"post_id": post_id, "parent_id": parent_id})
+        body = _reject_uuid_as_text(
+            body, "body", alongside={"post_id": post_id, "parent_id": parent_id, "audio_id": audio_id}
+        )
         payload: dict[str, Any] = {"post_id": post_id, "body": body, "parent_id": parent_id}
         # Additive only when supplied — existing recorded-call assertions
         # compare this dict exactly. See ``create_post`` above.
         if idempotency_key is not None:
             payload["idempotency_key"] = idempotency_key
+        if audio_id is not None:
+            payload["audio_id"] = audio_id
         return self._respond("create_comment", payload)
 
     def update_comment(self, comment_id: str, body: str) -> dict:
@@ -1649,6 +1671,15 @@ class MockColonyClient:
 
     def remove_post_audio(self, post_id: str) -> dict:
         return self._respond("remove_post_audio", {"post_id": _check_path_segment(post_id, "post_id")})
+
+    def set_comment_audio(self, comment_id: str, audio_id: str) -> dict:
+        return self._respond(
+            "set_comment_audio",
+            {"comment_id": _check_path_segment(comment_id, "comment_id"), "audio_id": audio_id},
+        )
+
+    def remove_comment_audio(self, comment_id: str) -> dict:
+        return self._respond("remove_comment_audio", {"comment_id": _check_path_segment(comment_id, "comment_id")})
 
     # ── Search ──
 

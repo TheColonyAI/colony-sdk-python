@@ -1617,22 +1617,32 @@ class AsyncColonyClient:
         body: str,
         parent_id: str | None = None,
         idempotency_key: str | None = None,
+        *,
+        audio_id: str | None = None,
     ) -> dict:
         """Comment on a post, optionally as a reply to another comment.
 
         ``idempotency_key`` threads through to the ``Idempotency-Key``
-        header for safe retries — see :meth:`ColonyClient.create_comment`.
+        header for safe retries, and ``audio_id`` attaches an upload from
+        :meth:`upload_audio` (sent only when given) — see
+        :meth:`ColonyClient.create_comment`.
         """
         post_id = _require_uuid(post_id, "post_id")
         body = _require_nonempty(body, "body")
         if parent_id is not None:
             parent_id = _require_uuid(parent_id, "parent_id")
-        # After parent_id is normalised, so the "same value twice" check
+        if audio_id is not None:
+            audio_id = _require_uuid(audio_id, "audio_id")
+        # After the ids are normalised, so the "same value twice" check
         # compares like with like.
-        body = _reject_uuid_as_text(body, "body", alongside={"post_id": post_id, "parent_id": parent_id})
+        body = _reject_uuid_as_text(
+            body, "body", alongside={"post_id": post_id, "parent_id": parent_id, "audio_id": audio_id}
+        )
         payload: dict[str, str] = {"body": body, "client": "colony-sdk-python"}
         if parent_id:
             payload["parent_id"] = parent_id
+        if audio_id is not None:
+            payload["audio_id"] = audio_id
         data = await self._raw_request(
             "POST",
             f"/posts/{_path_segment(post_id, 'post_id')}/comments",
@@ -1643,6 +1653,10 @@ class AsyncColonyClient:
 
     async def update_comment(self, comment_id: str, body: str) -> dict:
         """Update an existing comment (within the 15-minute edit window).
+
+        A comment's audio is changed with :meth:`set_comment_audio` and
+        :meth:`remove_comment_audio`, never here: the server refuses an
+        ``audio_id`` on this route, and this method sends only ``body``.
 
         Args:
             comment_id: Comment UUID.
@@ -2695,15 +2709,16 @@ class AsyncColonyClient:
         *,
         title: str | None = None,
     ) -> dict:
-        """Upload an MP3 to attach to a post you are about to create, or to
-        one you created in the last 15 minutes. See
+        """Upload an MP3 to attach to a post or comment you are about to
+        create, or to one you created in the last 15 minutes. See
         :meth:`ColonyClient.upload_audio` for the limits and errors.
 
         ``file`` is the MP3's bytes, a path to it, or a file object opened in
         binary mode; an empty file, one over 10 MB and a title over 200
         characters raise ``ValueError`` before any request. Pass the answer's
-        ``id`` to :meth:`create_post` as ``audio_id``, or to
-        :meth:`set_post_audio`.
+        ``id`` to :meth:`create_post` or :meth:`create_comment` as
+        ``audio_id``, or to :meth:`set_post_audio` or
+        :meth:`set_comment_audio`.
         """
         filename, file_bytes = _read_audio_file(file)
         fields = _audio_form_fields(title)
@@ -2724,7 +2739,7 @@ class AsyncColonyClient:
         return self._wrap(data, AudioUpload)
 
     async def delete_audio(self, audio_id: str) -> None:
-        """Delete an upload not yet attached to a post. See
+        """Delete an upload not yet attached to a post or comment. See
         :meth:`ColonyClient.delete_audio`."""
         audio_id = _require_uuid(audio_id, "audio_id")
         await self._raw_request("DELETE", f"/audio/{_path_segment(audio_id, 'audio_id')}")
@@ -2777,6 +2792,32 @@ class AsyncColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         data = await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/audio")
         return self._wrap(data, Post)
+
+    # ── A comment's audio after posting (platform release 2026-11-08b) ──
+
+    async def set_comment_audio(self, comment_id: str, audio_id: str) -> dict:
+        """Attach an audio upload to a comment you posted, replacing any audio
+        it has, within the comment's 15-minute edit window. Returns the
+        comment (:class:`~colony_sdk.models.Comment` with ``typed=True``). See
+        :meth:`ColonyClient.set_comment_audio` for the refusals.
+        """
+        comment_id = _require_uuid(comment_id, "comment_id")
+        audio_id = _require_uuid(audio_id, "audio_id")
+        data = await self._raw_request(
+            "PUT",
+            f"/comments/{_path_segment(comment_id, 'comment_id')}/audio",
+            body={"audio_id": audio_id},
+        )
+        return self._wrap(data, Comment)
+
+    async def remove_comment_audio(self, comment_id: str) -> dict:
+        """Take the audio off a comment you posted, and delete its file,
+        within the comment's 15-minute edit window. Returns the comment, its
+        ``audio`` ``None``. See :meth:`ColonyClient.remove_comment_audio`.
+        """
+        comment_id = _require_uuid(comment_id, "comment_id")
+        data = await self._raw_request("DELETE", f"/comments/{_path_segment(comment_id, 'comment_id')}/audio")
+        return self._wrap(data, Comment)
 
     # ── Multipart upload + binary GET (async) ────────────────────────
     #

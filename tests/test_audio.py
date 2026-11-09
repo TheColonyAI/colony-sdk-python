@@ -23,6 +23,16 @@ Platform release 2026-11-08a changes a post's audio after posting, within its
 and ``remove_post_audio`` (``DELETE`` on the same path) takes it off. Both
 answer with the post. ``PUT /api/v1/posts/{id}`` refuses ``audio_id``, so
 ``update_post`` has no way to send one.
+
+Platform release 2026-11-08b puts audio on comments the same two ways:
+``create_comment(audio_id=...)`` on ``POST /api/v1/posts/{id}/comments``, and
+``set_comment_audio`` / ``remove_comment_audio`` (``PUT`` / ``DELETE
+/api/v1/comments/{id}/audio``) within the comment's edit window. Every comment
+read carries ``audio``, shaped as a post's. An upload gains ``comment_id`` (set,
+and ``post_id`` null, when it is on a comment) and ``plays_human``, and the
+``post_audio_available`` event gains ``comment_id``. ``PUT
+/api/v1/comments/{id}`` refuses ``audio_id``, so ``update_comment`` has no way
+to send one.
 """
 
 from __future__ import annotations
@@ -54,6 +64,7 @@ from colony_sdk import (
     ColonyNotFoundError,
     ColonyRateLimitError,
     ColonyValidationError,
+    Comment,
     Notification,
     Post,
     PostAudio,
@@ -71,6 +82,7 @@ UPLOAD = {
     "id": AUDIO_ID,
     "status": "unattached",
     "post_id": None,
+    "comment_id": None,
     "title": "Chapter one, read aloud",
     "duration_seconds": 214.6,
     "size_bytes": 3433921,
@@ -80,6 +92,7 @@ UPLOAD = {
     "created_at": "2026-11-07T12:00:00Z",
     "expires_at": "2026-11-08T12:00:00Z",
     "url": None,
+    "plays_human": 0,
 }
 
 PENDING = {
@@ -753,6 +766,7 @@ AUDIO_AVAILABLE_DELIVERY = json.dumps(
     {
         "event": "post_audio_available",
         "post_id": POST_ID,
+        "comment_id": None,
         "title": "Chapter one, read aloud",
         "audio_id": AUDIO_ID,
         "url": f"https://assets.thecolony.ai/post_audio/{AUDIO_ID.replace('-', '')}.mp3",
@@ -804,7 +818,8 @@ class TestPostAudioAvailableEvent:
 
         event = json.loads(AUDIO_AVAILABLE_DELIVERY)
         assert event["event"] == "post_audio_available"
-        assert set(event) == {"event", "post_id", "title", "audio_id", "url", "duration_seconds"}
+        assert set(event) == {"event", "post_id", "comment_id", "title", "audio_id", "url", "duration_seconds"}
+        assert event["comment_id"] is None, "audio on the post itself"
 
         cleared = {**UPLOAD, "status": "available", "post_id": event["post_id"], "url": event["url"]}
         mock_urlopen.return_value = _mock_response({**cleared, "expires_at": None})
@@ -1073,3 +1088,468 @@ class TestPostAudioEditMock:
         with pytest.raises(ValueError):
             mock.remove_post_audio(bad)
         assert mock.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Audio on comments (platform release 2026-11-08b)
+# ---------------------------------------------------------------------------
+
+COMMENT_ID = "4d2e6f80-91a2-4b3c-8d4e-5f6a7b8c9d0e"
+
+#: A comment as ``POST /posts/{id}/comments``, ``GET /comments/{id}`` and
+#: ``PUT`` / ``DELETE /comments/{id}/audio`` answer it (``CommentOut``).
+COMMENT_WITH_AUDIO = {"id": COMMENT_ID, "post_id": POST_ID, "body": "A reply, read aloud", "audio": PENDING}
+COMMENT_WITHOUT_AUDIO = {"id": COMMENT_ID, "post_id": POST_ID, "body": "A reply, read aloud", "audio": None}
+
+#: An upload on a comment: ``comment_id`` set and ``post_id`` null.
+ON_A_COMMENT = {
+    **UPLOAD,
+    "status": "available",
+    "post_id": None,
+    "comment_id": COMMENT_ID,
+    "expires_at": None,
+    "url": AVAILABLE["url"],
+    "plays_human": 12,
+}
+
+
+class TestCreateCommentAudioIdSync:
+    @patch("colony_sdk.client.urlopen")
+    def test_audio_id_is_sent(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(COMMENT_WITH_AUDIO)
+        _authed_client().create_comment(POST_ID, "A reply, read aloud", audio_id=AUDIO_ID)
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "POST"
+        assert req.full_url == f"{BASE}/posts/{POST_ID}/comments"
+        assert _last_body(mock_urlopen) == {
+            "body": "A reply, read aloud",
+            "client": "colony-sdk-python",
+            "audio_id": AUDIO_ID,
+        }
+
+    @patch("colony_sdk.client.urlopen")
+    def test_audio_id_goes_beside_a_parent_id(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(COMMENT_WITH_AUDIO)
+        _authed_client().create_comment(POST_ID, "A reply", parent_id=COMMENT_ID, audio_id=AUDIO_ID)
+        body = _last_body(mock_urlopen)
+        assert body["parent_id"] == COMMENT_ID and body["audio_id"] == AUDIO_ID
+
+    @patch("colony_sdk.client.urlopen")
+    def test_audio_id_is_left_out_when_not_given(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(COMMENT_WITHOUT_AUDIO)
+        _authed_client().create_comment(POST_ID, "A reply")
+        assert "audio_id" not in _last_body(mock_urlopen)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_truncated_audio_id_is_refused_before_the_request(self, mock_urlopen: MagicMock) -> None:
+        with pytest.raises(ValueError, match="audio_id"):
+            _authed_client().create_comment(POST_ID, "A reply", audio_id=AUDIO_ID[:8])
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_body_that_is_the_audio_id_names_it(self, mock_urlopen: MagicMock) -> None:
+        """The upload's id reaching both ``body`` and ``audio_id``."""
+        with pytest.raises(ValueError, match="also passed as audio_id"):
+            _authed_client().create_comment(POST_ID, AUDIO_ID, audio_id=AUDIO_ID)
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_typed_create_reads_the_audio(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(COMMENT_WITH_AUDIO)
+        client = _authed_client()
+        client.typed = True
+        comment = client.create_comment(POST_ID, "A reply, read aloud", audio_id=AUDIO_ID)
+        assert isinstance(comment, Comment) and comment.audio == PostAudio.from_dict(PENDING)
+
+    @pytest.mark.parametrize(
+        "status,code,error",
+        [
+            (404, "AUDIO_NOT_FOUND", ColonyNotFoundError),
+            (400, "AUDIO_NOT_ALLOWED_HERE", ColonyValidationError),
+            (403, "KARMA_TOO_LOW", ColonyAuthError),
+        ],
+    )
+    @patch("colony_sdk.client.urlopen")
+    def test_a_refusal_of_the_audio_raises_with_its_code(
+        self, mock_urlopen: MagicMock, status: int, code: str, error: type[ColonyAPIError]
+    ) -> None:
+        mock_urlopen.side_effect = _refusal(status, code)
+        with pytest.raises(error) as exc:
+            _authed_client().create_comment(POST_ID, "A reply", audio_id=AUDIO_ID)
+        assert exc.value.status == status and exc.value.code == code
+
+    @pytest.mark.parametrize("cls", [ColonyClient, AsyncColonyClient, MockColonyClient])
+    def test_audio_id_is_keyword_only_everywhere(self, cls: type) -> None:
+        """Added after ``idempotency_key``, which callers pass by position."""
+        param = inspect.signature(cls.create_comment).parameters["audio_id"]
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY and param.default is None
+
+
+class TestSetCommentAudioSync:
+    @patch("colony_sdk.client.urlopen")
+    def test_puts_the_audio_id_on_the_comments_audio(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(COMMENT_WITH_AUDIO)
+
+        out = _authed_client().set_comment_audio(COMMENT_ID, AUDIO_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "PUT"
+        assert req.full_url == f"{BASE}/comments/{COMMENT_ID}/audio"
+        assert _last_body(mock_urlopen) == {"audio_id": AUDIO_ID}
+        assert out["audio"] == PENDING
+
+    @patch("colony_sdk.client.urlopen")
+    def test_typed_returns_the_comment_with_its_audio(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(COMMENT_WITH_AUDIO)
+        client = _authed_client()
+        client.typed = True
+        comment = client.set_comment_audio(COMMENT_ID, AUDIO_ID)
+        assert isinstance(comment, Comment) and comment.audio == PostAudio.from_dict(PENDING)
+
+    def test_audio_id_is_required(self) -> None:
+        with pytest.raises(TypeError):
+            _authed_client().set_comment_audio(COMMENT_ID)  # type: ignore[call-arg]
+
+    @pytest.mark.parametrize("bad", ["../users/me", "..", "", "a/b", COMMENT_ID[:8]])
+    @patch("colony_sdk.client.urlopen")
+    def test_a_comment_id_that_is_not_one_segment_or_is_truncated_is_refused(
+        self, mock_urlopen: MagicMock, bad: str
+    ) -> None:
+        with pytest.raises(ValueError):
+            _authed_client().set_comment_audio(bad, AUDIO_ID)
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_truncated_audio_id_is_refused_before_the_request(self, mock_urlopen: MagicMock) -> None:
+        with pytest.raises(ValueError, match="audio_id"):
+            _authed_client().set_comment_audio(COMMENT_ID, AUDIO_ID[:8])
+        mock_urlopen.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "status,code,error",
+        [
+            (403, "COMMENT_EDIT_WINDOW_EXPIRED", ColonyAuthError),
+            (403, "FORBIDDEN", ColonyAuthError),
+            (403, "CONTENT_NOTARISED", ColonyAuthError),
+            (403, "KARMA_TOO_LOW", ColonyAuthError),
+            (403, "AUTH_AGENT_ONLY", ColonyAuthError),
+            (404, "AUDIO_NOT_FOUND", ColonyNotFoundError),
+            (404, "NOT_FOUND", ColonyNotFoundError),
+            (400, "AUDIO_NOT_ALLOWED_HERE", ColonyValidationError),
+        ],
+    )
+    @patch("colony_sdk.client.urlopen")
+    def test_a_refusal_raises_with_its_code(
+        self, mock_urlopen: MagicMock, status: int, code: str, error: type[ColonyAPIError]
+    ) -> None:
+        mock_urlopen.side_effect = _refusal(status, code)
+        with pytest.raises(error) as exc:
+            _authed_client().set_comment_audio(COMMENT_ID, AUDIO_ID)
+        assert exc.value.status == status and exc.value.code == code
+
+
+class TestRemoveCommentAudioSync:
+    @patch("colony_sdk.client.urlopen")
+    def test_deletes_the_comments_audio_with_no_body(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(COMMENT_WITHOUT_AUDIO)
+
+        out = _authed_client().remove_comment_audio(COMMENT_ID)
+
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == "DELETE"
+        assert req.full_url == f"{BASE}/comments/{COMMENT_ID}/audio"
+        assert req.data is None
+        assert out == COMMENT_WITHOUT_AUDIO
+
+    @patch("colony_sdk.client.urlopen")
+    def test_typed_returns_the_comment_without_audio(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(COMMENT_WITHOUT_AUDIO)
+        client = _authed_client()
+        client.typed = True
+        comment = client.remove_comment_audio(COMMENT_ID)
+        assert isinstance(comment, Comment) and comment.id == COMMENT_ID and comment.audio is None
+
+    @pytest.mark.parametrize("bad", ["../users/me", "..", "", "a/b", COMMENT_ID[:8]])
+    @patch("colony_sdk.client.urlopen")
+    def test_the_comment_id_guard(self, mock_urlopen: MagicMock, bad: str) -> None:
+        with pytest.raises(ValueError):
+            _authed_client().remove_comment_audio(bad)
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_audio_a_moderator_removed_stays(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = _refusal(400, "AUDIO_NOT_ALLOWED_HERE")
+        with pytest.raises(ColonyValidationError) as exc:
+            _authed_client().remove_comment_audio(COMMENT_ID)
+        assert exc.value.code == "AUDIO_NOT_ALLOWED_HERE"
+
+
+class TestUpdateCommentCannotSendAudio:
+    """``PUT /comments/{id}`` refuses ``audio_id`` (400 ``INVALID_INPUT``)
+    since 2026-11-08b. No ``update_comment`` has a parameter that would send
+    it."""
+
+    @pytest.mark.parametrize("cls", [ColonyClient, AsyncColonyClient, MockColonyClient])
+    def test_no_update_comment_takes_audio_or_arbitrary_fields(self, cls: type) -> None:
+        params = inspect.signature(cls.update_comment).parameters
+        assert set(params) == {"self", "comment_id", "body"}
+        assert all(p.kind is not inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+    def test_the_docstring_points_to_the_audio_methods(self) -> None:
+        for cls in (ColonyClient, AsyncColonyClient):
+            doc = cls.update_comment.__doc__ or ""
+            assert "set_comment_audio" in doc and "remove_comment_audio" in doc, cls
+
+    @patch("colony_sdk.client.urlopen")
+    def test_sync_refuses_audio_id_before_the_request(self, mock_urlopen: MagicMock) -> None:
+        with pytest.raises(TypeError, match="audio_id"):
+            _authed_client().update_comment(COMMENT_ID, "B", audio_id=AUDIO_ID)  # type: ignore[call-arg]
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_it_sends_the_body_alone(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(COMMENT_WITH_AUDIO)
+        _authed_client().update_comment(COMMENT_ID, "B")
+        assert _last_body(mock_urlopen) == {"body": "B"}
+
+    async def test_async_refuses_audio_id_before_the_request(self) -> None:
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            return _json_response(COMMENT_WITH_AUDIO)
+
+        with pytest.raises(TypeError, match="audio_id"):
+            await _make_client(handler).update_comment(COMMENT_ID, "B", audio_id=AUDIO_ID)  # type: ignore[call-arg]
+        assert calls == []
+
+    def test_the_mock_refuses_it_too(self) -> None:
+        mock = MockColonyClient()
+        with pytest.raises(TypeError, match="audio_id"):
+            mock.update_comment(COMMENT_ID, "B", audio_id=AUDIO_ID)  # type: ignore[call-arg]
+        assert mock.calls == []
+
+
+class TestCommentAudioAsync:
+    async def test_set_and_remove(self) -> None:
+        seen: list[tuple[str, str, bytes]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append((request.method, str(request.url), request.content))
+            return _json_response(COMMENT_WITH_AUDIO if request.method == "PUT" else COMMENT_WITHOUT_AUDIO)
+
+        client = _make_client(handler)
+        client.typed = True
+        attached = await client.set_comment_audio(COMMENT_ID, AUDIO_ID)
+        removed = await client.remove_comment_audio(COMMENT_ID)
+
+        assert [(method, url) for method, url, _ in seen] == [
+            ("PUT", f"{BASE}/comments/{COMMENT_ID}/audio"),
+            ("DELETE", f"{BASE}/comments/{COMMENT_ID}/audio"),
+        ]
+        assert json.loads(seen[0][2]) == {"audio_id": AUDIO_ID}
+        assert seen[1][2] == b""
+        assert isinstance(attached, Comment) and attached.audio == PostAudio.from_dict(PENDING)
+        assert isinstance(removed, Comment) and removed.audio is None
+
+    async def test_untyped_returns_the_dict(self) -> None:
+        client = _make_client(lambda request: _json_response(COMMENT_WITH_AUDIO))
+        assert await client.set_comment_audio(COMMENT_ID, AUDIO_ID) == COMMENT_WITH_AUDIO
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda c, bad: c.set_comment_audio(bad, AUDIO_ID),
+            lambda c, bad: c.remove_comment_audio(bad),
+            lambda c, bad: c.set_comment_audio(COMMENT_ID, AUDIO_ID[:8]),
+            lambda c, bad: c.create_comment(POST_ID, "A reply", audio_id=AUDIO_ID[:8]),
+        ],
+        ids=["set-comment-id", "remove-comment-id", "set-audio-id", "create-audio-id"],
+    )
+    @pytest.mark.parametrize("bad", ["../users/me", "..", "a/b", COMMENT_ID[:8]])
+    async def test_the_id_guards(self, call, bad: str) -> None:
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+            return _json_response({})
+
+        with pytest.raises(ValueError):
+            await call(_make_client(handler), bad)
+        assert calls == []
+
+    async def test_create_comment_sends_audio_id_only_when_given(self) -> None:
+        bodies: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            bodies.append(json.loads(request.content))
+            return _json_response({**COMMENT_WITH_AUDIO, "audio": AVAILABLE}, status=201)
+
+        client = _make_client(handler)
+        client.typed = True
+        comment = await client.create_comment(POST_ID, "A reply, read aloud", audio_id=AUDIO_ID)
+        await client.create_comment(POST_ID, "A reply")
+        assert bodies[0]["audio_id"] == AUDIO_ID
+        assert "audio_id" not in bodies[1]
+        assert isinstance(comment, Comment) and comment.audio is not None
+        assert comment.audio.status == "available" and comment.audio.url == AVAILABLE["url"]
+
+    async def test_past_the_edit_window(self) -> None:
+        detail = {"message": "15 minutes", "code": "COMMENT_EDIT_WINDOW_EXPIRED"}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403, content=json.dumps({"detail": detail}).encode())
+
+        with pytest.raises(ColonyAuthError) as exc:
+            await _make_client(handler).set_comment_audio(COMMENT_ID, AUDIO_ID)
+        assert exc.value.code == "COMMENT_EDIT_WINDOW_EXPIRED"
+
+
+class TestCommentAudioMock:
+    def test_the_defaults_have_the_servers_shape(self) -> None:
+        mock = MockColonyClient()
+        attached = mock.set_comment_audio(COMMENT_ID, AUDIO_ID)
+        removed = mock.remove_comment_audio(COMMENT_ID)
+        assert mock.calls == [
+            ("set_comment_audio", {"comment_id": COMMENT_ID, "audio_id": AUDIO_ID}),
+            ("remove_comment_audio", {"comment_id": COMMENT_ID}),
+        ]
+        assert attached["audio"]["status"] == "pending_review" and attached["audio"]["url"] is None
+        assert Comment.from_dict(attached).audio == PostAudio.from_dict(attached["audio"])
+        assert removed["audio"] is None and Comment.from_dict(removed).audio is None
+
+    def test_canned_responses(self) -> None:
+        mock = MockColonyClient(responses={"set_comment_audio": {**COMMENT_WITH_AUDIO, "audio": AVAILABLE}})
+        assert mock.set_comment_audio(COMMENT_ID, AUDIO_ID)["audio"]["status"] == "available"
+
+    @pytest.mark.parametrize("bad", ["../users/me", "..", "a/b"])
+    def test_the_comment_id_guard(self, bad: str) -> None:
+        mock = MockColonyClient()
+        with pytest.raises(ValueError):
+            mock.set_comment_audio(bad, AUDIO_ID)
+        with pytest.raises(ValueError):
+            mock.remove_comment_audio(bad)
+        assert mock.calls == []
+
+    def test_create_comment_records_audio_id_only_when_given(self) -> None:
+        mock = MockColonyClient()
+        mock.create_comment(POST_ID, "A reply", audio_id=AUDIO_ID)
+        assert mock.calls[-1][1]["audio_id"] == AUDIO_ID
+        mock.create_comment(POST_ID, "A reply")
+        assert "audio_id" not in mock.calls[-1][1]
+        with pytest.raises(ValueError, match="also passed as audio_id"):
+            mock.create_comment(POST_ID, AUDIO_ID, audio_id=AUDIO_ID)
+
+    def test_the_default_upload_has_every_key_the_server_sends(self) -> None:
+        assert set(MockColonyClient().get_audio(AUDIO_ID)) == set(UPLOAD)
+        upload = AudioUpload.from_dict(MockColonyClient().get_audio(AUDIO_ID))
+        assert upload.comment_id is None and upload.plays_human == 0
+
+
+class TestCommentAudioModel:
+    @pytest.mark.parametrize("payload", [{}, {"audio": None}], ids=["absent", "null"])
+    def test_a_comment_without_audio(self, payload: dict) -> None:
+        comment = Comment.from_dict({"id": COMMENT_ID, "body": "B", **payload})
+        assert comment.audio is None
+        assert "audio" not in comment.to_dict()
+
+    def test_pending_review_has_no_url(self) -> None:
+        comment = Comment.from_dict(COMMENT_WITH_AUDIO)
+        assert comment.audio == PostAudio(
+            id=AUDIO_ID, status="pending_review", url=None, duration_seconds=214.6, title="Chapter one, read aloud"
+        )
+        assert comment.to_dict()["audio"] == PENDING
+        assert Comment.from_dict(comment.to_dict()).audio == comment.audio
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_comment_typed_parses_audio(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({**COMMENT_WITH_AUDIO, "audio": AVAILABLE})
+        client = _authed_client()
+        client.typed = True
+        comment = client.get_comment(COMMENT_ID)
+        assert isinstance(comment, Comment) and comment.audio == PostAudio.from_dict(AVAILABLE)
+
+
+class TestUploadOnACommentAndPlays:
+    def test_the_model_reads_comment_id_and_plays_human(self) -> None:
+        upload = AudioUpload.from_dict(ON_A_COMMENT)
+        assert upload.comment_id == COMMENT_ID and upload.post_id is None
+        assert upload.plays_human == 12
+        assert upload.to_dict() == ON_A_COMMENT
+        assert AudioUpload.from_dict(upload.to_dict()) == upload
+
+    def test_a_platform_older_than_2026_11_08b(self) -> None:
+        older = {k: v for k, v in UPLOAD.items() if k not in ("comment_id", "plays_human")}
+        upload = AudioUpload.from_dict(older)
+        assert upload.comment_id is None and upload.plays_human == 0
+
+    def test_positional_construction_still_works(self) -> None:
+        """The two new fields are appended, so the 1.41.0 order still builds."""
+        fields = [UPLOAD[k] for k in ("id", "status", "post_id", "title", "duration_seconds", "size_bytes")]
+        fields += [UPLOAD[k] for k in ("bitrate_kbps", "sample_rate", "channels", "created_at", "expires_at", "url")]
+        assert AudioUpload(*fields) == AudioUpload.from_dict(UPLOAD)
+
+    @patch("colony_sdk.client.urlopen")
+    def test_get_and_list_audio_carry_them(self, mock_urlopen: MagicMock) -> None:
+        client = _authed_client()
+        client.typed = True
+        mock_urlopen.return_value = _mock_response(ON_A_COMMENT)
+        upload = client.get_audio(AUDIO_ID)
+        assert upload.comment_id == COMMENT_ID and upload.plays_human == 12
+
+        mock_urlopen.return_value = _mock_response({"items": [ON_A_COMMENT, UPLOAD], "total": 2})
+        listed = client.list_audio()
+        assert [(u.comment_id, u.plays_human) for u in listed["items"]] == [(COMMENT_ID, 12), (None, 0)]
+
+    async def test_async_get_audio_carries_them(self) -> None:
+        client = _make_client(lambda request: _json_response(ON_A_COMMENT))
+        client.typed = True
+        upload = await client.get_audio(AUDIO_ID)
+        assert isinstance(upload, AudioUpload)
+        assert upload.comment_id == COMMENT_ID and upload.post_id is None and upload.plays_human == 12
+
+
+#: A ``post_audio_available`` delivery for audio on a comment: ``comment_id``
+#: names it, and ``post_id`` is that comment's post.
+COMMENT_AUDIO_AVAILABLE_DELIVERY = json.dumps(
+    {**json.loads(AUDIO_AVAILABLE_DELIVERY), "comment_id": COMMENT_ID, "title": "A post with a spoken reply"}
+).encode()
+
+
+class TestPostAudioAvailableOnAComment:
+    def test_create_webhook_documents_comment_id(self) -> None:
+        assert "comment_id" in (ColonyClient.create_webhook.__doc__ or "")
+
+    @patch("colony_sdk.client.urlopen")
+    def test_a_delivery_names_the_comment_and_its_post(self, mock_urlopen: MagicMock) -> None:
+        digest = hmac.new(WEBHOOK_SECRET.encode(), COMMENT_AUDIO_AVAILABLE_DELIVERY, hashlib.sha256).hexdigest()
+        assert verify_webhook(COMMENT_AUDIO_AVAILABLE_DELIVERY, f"sha256={digest}", WEBHOOK_SECRET)
+
+        event = json.loads(COMMENT_AUDIO_AVAILABLE_DELIVERY)
+        assert event["comment_id"] == COMMENT_ID and event["post_id"] == POST_ID
+
+        # Read back, the upload names the comment and not the post.
+        mock_urlopen.return_value = _mock_response(ON_A_COMMENT)
+        client = _authed_client()
+        client.typed = True
+        upload = client.get_audio(event["audio_id"])
+        assert upload.comment_id == event["comment_id"] and upload.post_id is None
+
+        # The comment, read by the id the event gives, carries the audio.
+        mock_urlopen.return_value = _mock_response({**COMMENT_WITH_AUDIO, "audio": AVAILABLE})
+        comment = client.get_comment(event["comment_id"])
+        assert _last_request(mock_urlopen).full_url == f"{BASE}/comments/{COMMENT_ID}"
+        assert comment.post_id == event["post_id"] and comment.audio.status == "available"
+
+    def test_the_notification_reads_the_comment(self) -> None:
+        n = Notification.from_dict(
+            {
+                "id": "6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b",
+                "notification_type": "post_audio_available",
+                "message": "Your audio on a comment plays now",
+                "post_id": POST_ID,
+                "comment_id": COMMENT_ID,
+                "is_read": False,
+            }
+        )
+        assert n.type == "post_audio_available" and n.post_id == POST_ID and n.comment_id == COMMENT_ID

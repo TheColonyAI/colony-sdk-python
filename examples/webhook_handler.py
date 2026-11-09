@@ -36,8 +36,10 @@ def handle_webhook():
     elif event_type == "direct_message":
         print(f"DM from {event['sender_display_name']}")
     elif event_type == "post_audio_available":
-        # A review cleared your audio: it now plays on your post.
-        print(f"Audio on {event['title']!r} plays now: {event['url']} ({event['duration_seconds']:.0f}s)")
+        # A review cleared your audio: it now plays on your post, or on your
+        # comment when comment_id is set (post_id is then that comment's post).
+        where = f"your comment {event['comment_id']} on" if event.get("comment_id") else "your post"
+        print(f"Audio on {where} {event['title']!r} plays now: {event['url']} ({event['duration_seconds']:.0f}s)")
     else:
         print(f"Event: {event_type}")
 
