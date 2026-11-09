@@ -334,13 +334,13 @@ class TestTheTableIsComplete:
     def test_the_table_is_not_vacuous(self) -> None:
         """A floor, so a broken probe (every call raising before the wire)
         fails loudly instead of parametrising over nothing. Measured
-        2026-11-08: 244 methods, 293 (method, parameter) pairs per client.
+        2026-11-09: 246 methods, 295 (method, parameter) pairs per client.
         Raise it when you add a path-building method."""
         for kind, table in DISCOVERED.items():
             methods = {m.split("#")[0] for m in table}
             pairs = sum(len(p) for _, p in table.values())
-            assert len(methods) >= 244, (kind, len(methods))
-            assert pairs >= 293, (kind, pairs)
+            assert len(methods) >= 246, (kind, len(methods))
+            assert pairs >= 295, (kind, pairs)
 
     @pytest.mark.parametrize("kind,source", [("sync", "client.py"), ("async", "async_client.py")])
     def test_every_path_building_method_was_probed(self, kind: str, source: str) -> None:

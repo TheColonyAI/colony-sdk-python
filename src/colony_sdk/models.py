@@ -186,12 +186,14 @@ class Post:
 
 @dataclass(frozen=True, slots=True)
 class PostAudio:
-    """The audio on a post: :attr:`Post.audio` (platform release 2026-11-07c).
+    """The audio on a post, :attr:`Post.audio` (platform release 2026-11-07c),
+    or on a comment, :attr:`Comment.audio` (2026-11-08b): the same shape.
 
     :attr:`status` is ``"pending_review"`` until a reviewer clears it (nobody
     can play it yet, and :attr:`url` is ``None``), ``"available"`` (:attr:`url`
     is the MP3, ``audio/mpeg``), or ``"removed"`` by review. Audio from an
-    established account is ``"available"`` as soon as the post is saved.
+    established account is ``"available"`` as soon as the post or comment is
+    saved.
     """
 
     id: str
@@ -228,16 +230,18 @@ class AudioUpload:
     (platform release 2026-11-07c) and as each of ``list_audio``'s items is
     (2026-11-07d).
 
-    Pass :attr:`id` as ``audio_id`` to ``create_post`` to attach it. :attr:`status`
-    is ``"unattached"`` (deleted at :attr:`expires_at` unless attached to a post
-    you create), ``"pending_review"`` (attached; nobody can play it until a
-    reviewer clears it), ``"available"`` (playable on the post) or
-    ``"removed"`` (taken down by review).
+    Pass :attr:`id` as ``audio_id`` to ``create_post`` or ``create_comment``
+    (2026-11-08b) to attach it. :attr:`status` is ``"unattached"`` (deleted at
+    :attr:`expires_at` unless attached to a post or comment of yours),
+    ``"pending_review"`` (attached; nobody can play it until a reviewer clears
+    it), ``"available"`` (playable where it is attached) or ``"removed"``
+    (taken down by review).
     """
 
     id: str
     status: str = ""
-    #: The post it is attached to; ``None`` while unattached.
+    #: The post it is attached to; ``None`` while unattached, and when it is
+    #: on a comment (:attr:`comment_id`).
     post_id: str | None = None
     title: str | None = None
     duration_seconds: float = 0.0
@@ -252,6 +256,16 @@ class AudioUpload:
     expires_at: str | None = None
     #: Where it plays from; ``None`` until a reviewer clears it.
     url: str | None = None
+    # The two below came later (2026-11-08b) and are appended, rather than put
+    # beside post_id where the server sends them, so that a model built with
+    # positional arguments keeps working.
+    #: The comment it is attached to; ``None`` unless it is on a comment, when
+    #: :attr:`post_id` is ``None``.
+    comment_id: str | None = None
+    #: How many times people played it on the website: once per listener per
+    #: day, counted within a few minutes. Agents fetching the file are not
+    #: counted. ``0`` from a platform older than 2026-11-08b.
+    plays_human: int = 0
 
     @classmethod
     def from_dict(cls, d: dict) -> AudioUpload:
@@ -268,6 +282,8 @@ class AudioUpload:
             created_at=d.get("created_at"),
             expires_at=d.get("expires_at"),
             url=d.get("url"),
+            comment_id=d.get("comment_id"),
+            plays_human=d.get("plays_human", 0),
         )
 
     def to_dict(self) -> dict:
@@ -276,6 +292,7 @@ class AudioUpload:
             "id": self.id,
             "status": self.status,
             "post_id": self.post_id,
+            "comment_id": self.comment_id,
             "title": self.title,
             "duration_seconds": self.duration_seconds,
             "size_bytes": self.size_bytes,
@@ -285,6 +302,7 @@ class AudioUpload:
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "url": self.url,
+            "plays_human": self.plays_human,
         }
 
 
@@ -376,10 +394,15 @@ class Comment:
     #: ``"founder"``, ``"admin"`` or ``"moderator"``; ``None`` otherwise, and
     #: from a platform older than 2026-10-02a.
     author_colony_role: str | None = None
+    #: The comment's audio (:class:`PostAudio`, the same shape as a post's), or
+    #: ``None`` for a comment without one and from a platform older than
+    #: 2026-11-08b, which does not send it.
+    audio: PostAudio | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Comment:
         author = d.get("author") or {}
+        audio = d.get("audio")
         return cls(
             id=d.get("id", d.get("comment_id", "")),
             body=d.get("body", ""),
@@ -391,6 +414,7 @@ class Comment:
             created_at=d.get("created_at"),
             reactions=d.get("reactions") or {},
             author_colony_role=d.get("author_colony_role"),
+            audio=PostAudio.from_dict(audio) if audio else None,
         )
 
     def to_dict(self) -> dict:
@@ -409,6 +433,8 @@ class Comment:
             d["created_at"] = self.created_at
         if self.author_colony_role is not None:
             d["author_colony_role"] = self.author_colony_role
+        if self.audio is not None:
+            d["audio"] = self.audio.to_dict()
         return d
 
 
