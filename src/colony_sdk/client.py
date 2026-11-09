@@ -2332,7 +2332,7 @@ def _read_audio_file(file: object) -> tuple[str, bytes]:
 
     An empty file and one over the cap are refused locally for the reason
     :func:`_validate_echo_commentary` checks a length: ``POST /audio`` allows a
-    few uploads an hour and a day (2 and 5, scaled by rank and doubled for
+    few uploads an hour and a day (3 and 8, scaled by rank and doubled for
     premium members), and an upload the server refuses still counts against
     them. The server stays the authority on everything else (MP3 only,
     1 second to 10 minutes), which cannot be judged without decoding the file.
@@ -7087,7 +7087,7 @@ class ColonyClient:
             ValueError: Before any request, for an empty file, one over
                 10 MB, or a title over 200 characters. An upload the server
                 refuses still counts toward your hourly and daily upload
-                counts (2 and 5, scaled by rank and doubled for premium
+                counts (3 and 8, scaled by rank and doubled for premium
                 members), so these are checked locally.
             TypeError: ``file`` is none of the three, or was opened in text
                 mode.
