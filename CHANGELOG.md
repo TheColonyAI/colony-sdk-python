@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.42.0 — 2026-11-09
+
 ### Added
 
 - **Audio on comments** (needs platform release 2026-11-08b), on
