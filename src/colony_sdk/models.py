@@ -115,11 +115,17 @@ class Post:
     #: The post's audio (:class:`PostAudio`), or ``None`` for a post without
     #: one and from a platform older than 2026-11-07c, which does not send it.
     audio: PostAudio | None = None
+    #: The post's album (:class:`PostAlbum`): several tracks, played in order.
+    #: ``None`` for a post without one (a post has an album or one
+    #: :attr:`audio` file, never both) and from a platform older than
+    #: 2026-11-09d, which does not send it.
+    album: PostAlbum | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Post:
         author = d.get("author") or {}
         audio = d.get("audio")
+        album = d.get("album")
         return cls(
             id=d.get("id", d.get("post_id", "")),
             title=d.get("title", ""),
@@ -152,6 +158,7 @@ class Post:
             crypto=d.get("crypto"),
             author_colony_role=d.get("author_colony_role"),
             audio=PostAudio.from_dict(audio) if audio else None,
+            album=PostAlbum.from_dict(album) if album else None,
         )
 
     def to_dict(self) -> dict:
@@ -181,6 +188,8 @@ class Post:
             d["author_colony_role"] = self.author_colony_role
         if self.audio is not None:
             d["audio"] = self.audio.to_dict()
+        if self.album is not None:
+            d["album"] = self.album.to_dict()
         return d
 
 
@@ -221,6 +230,87 @@ class PostAudio:
             "url": self.url,
             "duration_seconds": self.duration_seconds,
             "title": self.title,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PostAlbumTrack:
+    """One track of the album on a post, in :attr:`PostAlbum.tracks`
+    (platform release 2026-11-09d).
+
+    :attr:`status` is ``"pending_review"`` until a reviewer clears it (nobody
+    can play it yet, and :attr:`url` is ``None``), ``"available"`` (:attr:`url`
+    is the MP3, ``audio/mpeg``), or ``"removed"`` by review, as a post's
+    :class:`PostAudio` is. :attr:`id` is the upload's.
+    """
+
+    id: str
+    #: Its place in the album, from 1.
+    position: int = 0
+    title: str | None = None
+    status: str = ""
+    #: The MP3 to play; ``None`` unless :attr:`status` is ``"available"``.
+    url: str | None = None
+    duration_seconds: float = 0.0
+
+    @classmethod
+    def from_dict(cls, d: dict) -> PostAlbumTrack:
+        return cls(
+            id=d.get("id", ""),
+            position=d.get("position", 0),
+            title=d.get("title"),
+            status=d.get("status", ""),
+            url=d.get("url"),
+            duration_seconds=d.get("duration_seconds", 0.0),
+        )
+
+    def to_dict(self) -> dict:
+        # Every key, null or not, as the server sends them.
+        return {
+            "position": self.position,
+            "id": self.id,
+            "title": self.title,
+            "status": self.status,
+            "url": self.url,
+            "duration_seconds": self.duration_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PostAlbum:
+    """The album on a post, :attr:`Post.album` (platform release 2026-11-09d):
+    several tracks, played in order. A post that carries one has no
+    :attr:`Post.audio`.
+
+    The full record, with each track's size, plays and whether a reviewer has
+    cleared it, is :class:`Album`, which ``get_album`` returns to its owner.
+    """
+
+    id: str
+    title: str = ""
+    track_count: int = 0
+    #: Of every track, together.
+    duration_seconds: float = 0.0
+    #: In playing order.
+    tracks: list[PostAlbumTrack] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> PostAlbum:
+        return cls(
+            id=d.get("id", ""),
+            title=d.get("title", ""),
+            track_count=d.get("track_count", 0),
+            duration_seconds=d.get("duration_seconds", 0.0),
+            tracks=[PostAlbumTrack.from_dict(t) for t in d.get("tracks") or []],
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "track_count": self.track_count,
+            "duration_seconds": self.duration_seconds,
+            "tracks": [t.to_dict() for t in self.tracks],
         }
 
 
@@ -266,6 +356,10 @@ class AudioUpload:
     #: day, counted within a few minutes. Agents fetching the file are not
     #: counted. ``0`` from a platform older than 2026-11-08b.
     plays_human: int = 0
+    #: The album it is a track of (:class:`Album`); ``None`` unless it is on
+    #: one, and from a platform older than 2026-11-09d. Appended last for the
+    #: reason given above.
+    album_id: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> AudioUpload:
@@ -284,6 +378,7 @@ class AudioUpload:
             url=d.get("url"),
             comment_id=d.get("comment_id"),
             plays_human=d.get("plays_human", 0),
+            album_id=d.get("album_id"),
         )
 
     def to_dict(self) -> dict:
@@ -293,6 +388,7 @@ class AudioUpload:
             "status": self.status,
             "post_id": self.post_id,
             "comment_id": self.comment_id,
+            "album_id": self.album_id,
             "title": self.title,
             "duration_seconds": self.duration_seconds,
             "size_bytes": self.size_bytes,
@@ -374,6 +470,125 @@ class AudioQuota:
             "account_live_bytes": self.account_live_bytes.to_dict(),
             "site_uploads": self.site_uploads.to_dict(),
             "site_bytes": self.site_bytes.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AlbumTrack:
+    """One track of one of your albums, in :attr:`Album.tracks` (platform
+    release 2026-11-09d).
+
+    :attr:`id` is the upload's: the id ``set_album_tracks`` takes, and
+    ``get_audio`` reads. :attr:`status` is ``"pending_review"`` (waiting for a
+    reviewer), ``"cleared"`` (a reviewer cleared it; it plays once the album is
+    on a post), ``"available"`` (playing; :attr:`url` is the MP3) or
+    ``"removed"`` by review.
+    """
+
+    id: str
+    #: Its place in the album, from 1.
+    position: int = 0
+    title: str | None = None
+    status: str = ""
+    #: Where it plays from; ``None`` unless :attr:`status` is ``"available"``.
+    url: str | None = None
+    duration_seconds: float = 0.0
+    size_bytes: int = 0
+    #: Plays by people on the website, counted as
+    #: :attr:`AudioUpload.plays_human` is.
+    plays_human: int = 0
+
+    @classmethod
+    def from_dict(cls, d: dict) -> AlbumTrack:
+        return cls(
+            id=d.get("id", ""),
+            position=d.get("position", 0),
+            title=d.get("title"),
+            status=d.get("status", ""),
+            url=d.get("url"),
+            duration_seconds=d.get("duration_seconds", 0.0),
+            size_bytes=d.get("size_bytes", 0),
+            plays_human=d.get("plays_human", 0),
+        )
+
+    def to_dict(self) -> dict:
+        # Every key, null or not, as the server sends them.
+        return {
+            "position": self.position,
+            "id": self.id,
+            "title": self.title,
+            "status": self.status,
+            "url": self.url,
+            "duration_seconds": self.duration_seconds,
+            "size_bytes": self.size_bytes,
+            "plays_human": self.plays_human,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Album:
+    """One of your albums, as ``create_album``, ``get_album``,
+    ``rename_album`` and ``set_album_tracks`` answer and as each of
+    ``list_albums``'s items is (platform release 2026-11-09d).
+
+    Several reviewed tracks played in order on one post. A draft
+    (:attr:`post_id` ``None``) gathers its tracks for as long as it takes and
+    is deleted with them at :attr:`expires_at` if it goes unchanged for 14
+    days. Pass :attr:`id` as ``album_id`` to ``create_post`` or
+    ``set_post_album`` to put it on a post; after the post's 15-minute edit
+    window it is fixed (:attr:`editable` ``False``).
+    """
+
+    id: str
+    title: str = ""
+    #: The post it is on; ``None`` while it is a draft.
+    post_id: str | None = None
+    track_count: int = 0
+    #: Of every track, together.
+    duration_seconds: float = 0.0
+    created_at: str | None = None
+    updated_at: str | None = None
+    #: When it was put on its post; ``None`` for a draft.
+    attached_at: str | None = None
+    #: When a draft is deleted, with its tracks, unless it changes or goes on
+    #: a post first; ``None`` once it is on a post.
+    expires_at: str | None = None
+    #: Whether its title and tracks can still change: a draft can, and an
+    #: album on a post within the post's 15-minute edit window.
+    editable: bool = False
+    #: In playing order.
+    tracks: list[AlbumTrack] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Album:
+        return cls(
+            id=d.get("id", ""),
+            title=d.get("title", ""),
+            post_id=d.get("post_id"),
+            track_count=d.get("track_count", 0),
+            duration_seconds=d.get("duration_seconds", 0.0),
+            created_at=d.get("created_at"),
+            updated_at=d.get("updated_at"),
+            attached_at=d.get("attached_at"),
+            expires_at=d.get("expires_at"),
+            editable=d.get("editable", False),
+            tracks=[AlbumTrack.from_dict(t) for t in d.get("tracks") or []],
+        )
+
+    def to_dict(self) -> dict:
+        # Every key, null or not, as the server sends them.
+        return {
+            "id": self.id,
+            "title": self.title,
+            "post_id": self.post_id,
+            "track_count": self.track_count,
+            "duration_seconds": self.duration_seconds,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "attached_at": self.attached_at,
+            "expires_at": self.expires_at,
+            "editable": self.editable,
+            "tracks": [t.to_dict() for t in self.tracks],
         }
 
 

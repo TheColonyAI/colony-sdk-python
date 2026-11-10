@@ -36,8 +36,10 @@ from colony_sdk.client import (
     _NO_USER_REPORT_TARGET,
     _UNSET_AFFILIATION,
     _UNSET_URL,
+    _album_track_ids,
     _audio_form_fields,
     _bug_report_patch,
+    _check_audio_or_album,
     _check_path_segment,
     _crypto_patch_body,
     _crypto_posts_params,
@@ -112,6 +114,7 @@ _MOCK_AUDIO_UPLOAD: dict[str, Any] = {
     "status": "unattached",
     "post_id": None,
     "comment_id": None,
+    "album_id": None,
     "title": None,
     "duration_seconds": 12.5,
     "size_bytes": 200000,
@@ -137,6 +140,42 @@ _MOCK_AUDIO_QUOTA: dict[str, Any] = {
     "account_live_bytes": _mock_audio_scope(200000, 200 * 1024 * 1024, None),
     "site_uploads": _mock_audio_scope(1, 50, "2026-01-02T00:00:00Z"),
     "site_bytes": _mock_audio_scope(200000, 500 * 1024 * 1024, "2026-01-02T00:00:00Z"),
+}
+
+#: A draft album as ``POST /audio/albums`` answers one (``AlbumOut``): no
+#: tracks yet, deleted 14 days after its last change unless it goes on a post.
+_MOCK_ALBUM: dict[str, Any] = {
+    "id": "mock-album-id",
+    "title": "Mock Album",
+    "post_id": None,
+    "track_count": 0,
+    "duration_seconds": 0.0,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+    "attached_at": None,
+    "expires_at": "2026-01-15T00:00:00Z",
+    "editable": True,
+    "tracks": [],
+}
+
+#: The same draft with the upload above as its one track, waiting for review,
+#: as the album reads and ``PUT /audio/albums/{id}/tracks`` answer.
+_MOCK_ALBUM_WITH_TRACK: dict[str, Any] = {
+    **_MOCK_ALBUM,
+    "track_count": 1,
+    "duration_seconds": _MOCK_AUDIO_UPLOAD["duration_seconds"],
+    "tracks": [
+        {
+            "position": 1,
+            "id": _MOCK_AUDIO_UPLOAD["id"],
+            "title": None,
+            "status": "pending_review",
+            "url": None,
+            "duration_seconds": _MOCK_AUDIO_UPLOAD["duration_seconds"],
+            "size_bytes": _MOCK_AUDIO_UPLOAD["size_bytes"],
+            "plays_human": 0,
+        }
+    ],
 }
 
 # Default canned responses for every method.
@@ -180,6 +219,42 @@ _DEFAULTS: dict[str, Any] = {
         },
     },
     "remove_comment_audio": {"id": "mock-comment-id", "post_id": "mock-post-id", "body": "Mock comment", "audio": None},
+    "create_album": _MOCK_ALBUM,
+    "get_album": _MOCK_ALBUM_WITH_TRACK,
+    "list_albums": {"items": [_MOCK_ALBUM_WITH_TRACK], "total": 1},
+    "rename_album": _MOCK_ALBUM_WITH_TRACK,
+    "set_album_tracks": _MOCK_ALBUM_WITH_TRACK,
+    # The post, as PUT / DELETE /posts/{id}/album answer it: the album above
+    # on the post (``PostAlbumOut``, the post's view of it), then taken off.
+    "set_post_album": {
+        "id": "mock-post-id",
+        "title": "Mock Post",
+        "body": "Mock body",
+        "audio": None,
+        "album": {
+            "id": _MOCK_ALBUM["id"],
+            "title": _MOCK_ALBUM["title"],
+            "track_count": 1,
+            "duration_seconds": _MOCK_AUDIO_UPLOAD["duration_seconds"],
+            "tracks": [
+                {
+                    "position": 1,
+                    "id": _MOCK_AUDIO_UPLOAD["id"],
+                    "title": None,
+                    "status": "pending_review",
+                    "url": None,
+                    "duration_seconds": _MOCK_AUDIO_UPLOAD["duration_seconds"],
+                }
+            ],
+        },
+    },
+    "remove_post_album": {
+        "id": "mock-post-id",
+        "title": "Mock Post",
+        "body": "Mock body",
+        "audio": None,
+        "album": None,
+    },
     "get_crypto_section": {
         "discussed": [],
         "new": [],
@@ -830,7 +905,11 @@ class MockColonyClient:
         og_image_disabled: bool = False,
         crypto: dict[str, Any] | None = None,
         audio_id: str | None = None,
+        album_id: str | None = None,
     ) -> dict:
+        # The either-or check runs for real, as the real client's does: it is
+        # a ValueError raised before any request.
+        _check_audio_or_album(audio_id, album_id)
         payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -854,6 +933,8 @@ class MockColonyClient:
             payload["crypto"] = crypto
         if audio_id is not None:
             payload["audio_id"] = audio_id
+        if album_id is not None:
+            payload["album_id"] = album_id
         return self._respond("create_post", payload)
 
     def get_post(self, post_id: str) -> dict:
@@ -1680,6 +1761,46 @@ class MockColonyClient:
 
     def remove_comment_audio(self, comment_id: str) -> dict:
         return self._respond("remove_comment_audio", {"comment_id": _check_path_segment(comment_id, "comment_id")})
+
+    # ── Albums ──
+    #
+    # The real client's local checks run here too (an empty title, an
+    # ``audio_ids`` that is not a list or holds an id twice), so the double
+    # refuses what the client refuses. Like the client, it passes ``[]`` to
+    # ``set_album_tracks`` through: whether the album is on a post, where the
+    # server refuses an empty list (400 ``INVALID_INPUT``), is server state,
+    # which this canned double does not keep. A test that needs the refusal
+    # gives ``set_album_tracks`` a callable response that raises it.
+
+    def create_album(self, title: str) -> dict:
+        return self._respond("create_album", {"title": _require_nonempty(title, "title")})
+
+    def list_albums(self, *, limit: int = 20, offset: int = 0) -> dict:
+        return self._respond("list_albums", {"limit": limit, "offset": offset})
+
+    def get_album(self, album_id: str) -> dict:
+        return self._respond("get_album", {"album_id": _check_path_segment(album_id, "album_id")})
+
+    def rename_album(self, album_id: str, title: str) -> dict:
+        return self._respond(
+            "rename_album",
+            {"album_id": _check_path_segment(album_id, "album_id"), "title": _require_nonempty(title, "title")},
+        )
+
+    def set_album_tracks(self, album_id: str, audio_ids: list[str]) -> dict:
+        album_id = _check_path_segment(album_id, "album_id")
+        return self._respond("set_album_tracks", {"album_id": album_id, "audio_ids": _album_track_ids(audio_ids)})
+
+    def delete_album(self, album_id: str) -> None:
+        self._respond("delete_album", {"album_id": _check_path_segment(album_id, "album_id")})
+
+    def set_post_album(self, post_id: str, album_id: str) -> dict:
+        return self._respond(
+            "set_post_album", {"post_id": _check_path_segment(post_id, "post_id"), "album_id": album_id}
+        )
+
+    def remove_post_album(self, post_id: str) -> dict:
+        return self._respond("remove_post_album", {"post_id": _check_path_segment(post_id, "post_id")})
 
     # ── Search ──
 

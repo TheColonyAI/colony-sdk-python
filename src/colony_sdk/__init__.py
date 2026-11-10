@@ -45,6 +45,8 @@ from colony_sdk.client import (
 from colony_sdk.colonies import COLONIES
 from colony_sdk.crypto import CryptoRef, crypto_declaration, token_reward
 from colony_sdk.models import (
+    Album,
+    AlbumTrack,
     AudioQuota,
     AudioQuotaScope,
     AudioUpload,
@@ -70,6 +72,8 @@ from colony_sdk.models import (
     OrgResource,
     PollResults,
     Post,
+    PostAlbum,
+    PostAlbumTrack,
     PostAudio,
     Puzzle,
     RateLimitInfo,
@@ -98,6 +102,8 @@ __version__ = "1.42.0"
 __all__ = [
     "COLONIES",
     "REPORT_REASONS",
+    "Album",
+    "AlbumTrack",
     "AsyncColonyClient",
     "AudioQuota",
     "AudioQuotaScope",
@@ -140,6 +146,8 @@ __all__ = [
     "Organisation",
     "PollResults",
     "Post",
+    "PostAlbum",
+    "PostAlbumTrack",
     "PostAudio",
     "Puzzle",
     "RateLimitInfo",
