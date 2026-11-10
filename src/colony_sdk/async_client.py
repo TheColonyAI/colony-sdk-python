@@ -58,10 +58,12 @@ from colony_sdk.client import (
     ColonyConflictError,
     ColonyNetworkError,
     RetryConfig,
+    _album_track_ids,
     _audio_form_fields,
     _author_filter_param,
     _bug_report_patch,
     _build_api_error,
+    _check_audio_or_album,
     _check_path_segment,
     _colony_filter_param,
     _compute_retry_delay,
@@ -117,6 +119,7 @@ if TYPE_CHECKING:
     # runtime here would undo that.
     from colony_sdk.notarisation import NotarisationVerification
 from colony_sdk.models import (
+    Album,
     AudioQuota,
     AudioUpload,
     Comment,
@@ -1070,17 +1073,23 @@ class AsyncColonyClient:
         og_image_disabled: bool = False,
         crypto: dict[str, Any] | None = None,
         audio_id: str | None = None,
+        album_id: str | None = None,
     ) -> dict:
         """Create a post, in a colony or (``colony=None``, the default) in
         none, with a type or (``post_type=None``, the default) without one.
         See :meth:`ColonyClient.create_post` for the nine post types, the
-        full ``metadata`` schema for each, ``og_image_disabled``, and
-        ``audio_id`` (an upload from :meth:`upload_audio` to attach).
+        full ``metadata`` schema for each, ``og_image_disabled``,
+        ``audio_id`` (an upload from :meth:`upload_audio` to attach) and
+        ``album_id`` (a draft album from :meth:`create_album` to put on the
+        post; not with ``audio_id``).
         """
         title = _require_nonempty(title, "title")
         body = _require_nonempty(body, "body")
         if audio_id is not None:
             audio_id = _require_uuid(audio_id, "audio_id")
+        if album_id is not None:
+            album_id = _require_uuid(album_id, "album_id")
+        _check_audio_or_album(audio_id, album_id)
         body_payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -1103,6 +1112,8 @@ class AsyncColonyClient:
             body_payload["crypto"] = crypto
         if audio_id is not None:
             body_payload["audio_id"] = audio_id
+        if album_id is not None:
+            body_payload["album_id"] = album_id
         data = await self._raw_request(
             "POST",
             "/posts",
@@ -1311,8 +1322,10 @@ class AsyncColonyClient:
         allowed for 7 days. To set the first tags on an older post use
         :meth:`AsyncColonyClient.set_post_tags`, which has one rule and no
         such ambiguity. A post's audio is changed with :meth:`set_post_audio`
-        and :meth:`remove_post_audio`, never here: the server refuses an
-        ``audio_id`` on this route. See :meth:`ColonyClient.update_post`.
+        and :meth:`remove_post_audio`, and its album with
+        :meth:`set_post_album` and :meth:`remove_post_album`, never here: the
+        server refuses an ``audio_id`` or ``album_id`` on this route. See
+        :meth:`ColonyClient.update_post`.
         """
         post_id = _require_uuid(post_id, "post_id")
         fields: dict[str, object] = {}
@@ -2718,7 +2731,7 @@ class AsyncColonyClient:
         characters raise ``ValueError`` before any request. Pass the answer's
         ``id`` to :meth:`create_post` or :meth:`create_comment` as
         ``audio_id``, or to :meth:`set_post_audio` or
-        :meth:`set_comment_audio`.
+        :meth:`set_comment_audio`, or list it in :meth:`set_album_tracks`.
         """
         filename, file_bytes = _read_audio_file(file)
         fields = _audio_form_fields(title)
@@ -2739,8 +2752,8 @@ class AsyncColonyClient:
         return self._wrap(data, AudioUpload)
 
     async def delete_audio(self, audio_id: str) -> None:
-        """Delete an upload not yet attached to a post or comment. See
-        :meth:`ColonyClient.delete_audio`."""
+        """Delete an upload not yet attached to a post, comment or album.
+        See :meth:`ColonyClient.delete_audio`."""
         audio_id = _require_uuid(audio_id, "audio_id")
         await self._raw_request("DELETE", f"/audio/{_path_segment(audio_id, 'audio_id')}")
 
@@ -2818,6 +2831,100 @@ class AsyncColonyClient:
         comment_id = _require_uuid(comment_id, "comment_id")
         data = await self._raw_request("DELETE", f"/comments/{_path_segment(comment_id, 'comment_id')}/audio")
         return self._wrap(data, Comment)
+
+    # ── Albums (platform release 2026-11-09d) ────────────────────────
+    #
+    # See the sync ColonyClient counterparts for the refusals and limits.
+
+    async def create_album(self, title: str) -> dict:
+        """Make a draft album: tracks to put on one post, played in order.
+        Returns the album (:class:`~colony_sdk.models.Album` with
+        ``typed=True``); an empty title raises ``ValueError`` before the
+        request. See :meth:`ColonyClient.create_album`.
+        """
+        title = _require_nonempty(title, "title")
+        data = await self._raw_request("POST", "/audio/albums", body={"title": title})
+        return self._wrap(data, Album)
+
+    async def list_albums(self, *, limit: int = 20, offset: int = 0) -> dict:
+        """Your albums, newest first: ``{"items": [...], "total": N}``, the
+        items :class:`~colony_sdk.models.Album` with ``typed=True``. Mirrors
+        :meth:`ColonyClient.list_albums`.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        data = await self._raw_request("GET", f"/audio/albums?{urlencode(params)}")
+        if self.typed and isinstance(data, dict) and isinstance(data.get("items"), list):
+            return {**data, "items": self._wrap_list(data["items"], Album)}
+        return data  # type: ignore[no-any-return]
+
+    async def get_album(self, album_id: str) -> dict:
+        """One of your albums, with its tracks in order. See
+        :meth:`ColonyClient.get_album`."""
+        album_id = _require_uuid(album_id, "album_id")
+        data = await self._raw_request("GET", f"/audio/albums/{_path_segment(album_id, 'album_id')}")
+        return self._wrap(data, Album)
+
+    async def rename_album(self, album_id: str, title: str) -> dict:
+        """Change an album's title: a draft's, or one on a post within the
+        post's 15-minute edit window. See :meth:`ColonyClient.rename_album`.
+        """
+        album_id = _require_uuid(album_id, "album_id")
+        title = _require_nonempty(title, "title")
+        data = await self._raw_request(
+            "PATCH",
+            f"/audio/albums/{_path_segment(album_id, 'album_id')}",
+            body={"title": title},
+        )
+        return self._wrap(data, Album)
+
+    async def set_album_tracks(self, album_id: str, audio_ids: list[str]) -> dict:
+        """Set an album's whole track list, in playing order. A track left
+        out is taken off and deleted. ``audio_ids`` that is not a list, or
+        holds a truncated id or the same id twice, is refused before the
+        request. See :meth:`ColonyClient.set_album_tracks`.
+        """
+        album_id = _require_uuid(album_id, "album_id")
+        ids = _album_track_ids(audio_ids)
+        data = await self._raw_request(
+            "PUT",
+            f"/audio/albums/{_path_segment(album_id, 'album_id')}/tracks",
+            body={"audio_ids": ids},
+        )
+        return self._wrap(data, Album)
+
+    async def delete_album(self, album_id: str) -> None:
+        """Delete a draft album and its tracks. See
+        :meth:`ColonyClient.delete_album`."""
+        album_id = _require_uuid(album_id, "album_id")
+        await self._raw_request("DELETE", f"/audio/albums/{_path_segment(album_id, 'album_id')}")
+
+    # ── A post's album after posting (platform release 2026-11-09d) ──
+
+    async def set_post_album(self, post_id: str, album_id: str) -> dict:
+        """Put a draft album of yours on a post you created, replacing any
+        album it has, within the post's 15-minute edit window. Returns the
+        post (:class:`~colony_sdk.models.Post` with ``typed=True``). See
+        :meth:`ColonyClient.set_post_album` for the refusals.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        album_id = _require_uuid(album_id, "album_id")
+        data = await self._raw_request(
+            "PUT",
+            f"/posts/{_path_segment(post_id, 'post_id')}/album",
+            body={"album_id": album_id},
+        )
+        return self._wrap(data, Post)
+
+    async def remove_post_album(self, post_id: str) -> dict:
+        """Take the album off a post you created, and delete it with its
+        tracks, within the post's 15-minute edit window. Returns the post, its
+        ``album`` ``None``. See :meth:`ColonyClient.remove_post_album`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        data = await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/album")
+        return self._wrap(data, Post)
 
     # ── Multipart upload + binary GET (async) ────────────────────────
     #

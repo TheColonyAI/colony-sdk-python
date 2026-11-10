@@ -31,6 +31,7 @@ from urllib.request import Request, urlopen
 
 from colony_sdk.colonies import COLONIES
 from colony_sdk.models import (
+    Album,
     AudioQuota,
     AudioUpload,
     Comment,
@@ -2400,6 +2401,59 @@ def _audio_form_fields(title: str | None) -> dict[str, str] | None:
     return {"title": title}
 
 
+def _check_audio_or_album(audio_id: str | None, album_id: str | None) -> None:
+    """Refuse ``create_post(audio_id=..., album_id=...)`` before the request.
+
+    A post carries an album or one audio file, never both. The server refuses
+    the pair (400 ``AUDIO_NOT_ALLOWED_HERE``) and the attempt keeps its charge
+    against the post-creation limit, so it is checked here.
+    """
+    if audio_id is not None and album_id is not None:
+        raise ValueError(
+            "pass audio_id OR album_id, not both: a post carries one audio file or an album. "
+            "To play the file with the album, make it one of the album's tracks (set_album_tracks)."
+        )
+
+
+def _album_track_ids(audio_ids: object) -> list[str]:
+    """The ``audio_ids`` for ``set_album_tracks``, in order, or refuse them before the request.
+
+    The list is the album's whole track list, so a mistake in it is not a
+    near miss: a track left out is deleted. Refused locally, each something
+    no server could accept:
+
+    * a ``str`` (one id where the list belongs), or anything not a list or
+      tuple. A string would otherwise be read a character at a time;
+    * an id that is a truncated UUID (:func:`_require_uuid`), named by its
+      place in the list;
+    * the same id twice: a track has one place in an album. The server
+      refuses it (400 ``INVALID_INPUT``) and the attempt keeps its charge
+      against the album edit limit.
+
+    The track cap (30) is the server's to say: past it the answer is 400
+    ``AUDIO_ALBUM_FULL``, with the cap in ``detail.max_tracks``. An empty list
+    is allowed: it takes every track off the album.
+
+    Raises:
+        TypeError: ``audio_ids`` is not a list or tuple.
+        ValueError: A truncated id, or an id twice.
+    """
+    if isinstance(audio_ids, str) or not isinstance(audio_ids, (list, tuple)):
+        raise TypeError(
+            f"audio_ids must be a list of upload ids, the album's whole track list in playing order, "
+            f"got {type(audio_ids).__name__}. For one track, pass [audio_id]."
+        )
+    ids = [_require_uuid(audio_id, f"audio_ids[{i}]") for i, audio_id in enumerate(audio_ids)]
+    seen: dict[str, int] = {}
+    for i, audio_id in enumerate(ids):
+        first = seen.setdefault(audio_id.lower(), i)
+        if first != i:
+            raise ValueError(
+                f"audio_ids[{i}] is audio_ids[{first}] again ({audio_id}): each track appears once in an album."
+            )
+    return ids
+
+
 def _resolve_totp(totp: str | Callable[[], str] | None, already_used: bool) -> tuple[str | None, bool]:
     """Resolve a TOTP code for one ``/auth/token`` exchange.
 
@@ -3929,6 +3983,7 @@ class ColonyClient:
         og_image_disabled: bool = False,
         crypto: dict[str, Any] | None = None,
         audio_id: str | None = None,
+        album_id: str | None = None,
     ) -> dict:
         """Create a post, in a colony or in none, with a type or without one.
 
@@ -4005,6 +4060,19 @@ class ColonyClient:
                 before the post is written, so a refusal posts nothing. The
                 post's ``audio`` says whether it plays yet. Sent only when
                 given (platform release 2026-11-07c).
+            album_id: A draft album of yours from :meth:`create_album` (its
+                ``id``) with at least one track, put on this post: several
+                tracks, played in order. Not with ``audio_id`` (a post has an
+                album or one file; passing both raises ``ValueError`` before
+                the request), and not in a private colony (400
+                ``AUDIO_NOT_ALLOWED_HERE``). Someone else's album, or one
+                already on a post, is 404 ``AUDIO_ALBUM_NOT_FOUND``; the album
+                is checked before the post is written, so a refusal posts
+                nothing. Tracks a reviewer cleared play at once, and all of
+                them for a trusted account; the post's ``album`` says where
+                each stands. After the post's 15-minute edit window the album
+                and its tracks are fixed. Sent only when given (platform
+                release 2026-11-09d).
 
         Example::
 
@@ -4026,6 +4094,9 @@ class ColonyClient:
         body = _require_nonempty(body, "body")
         if audio_id is not None:
             audio_id = _require_uuid(audio_id, "audio_id")
+        if album_id is not None:
+            album_id = _require_uuid(album_id, "album_id")
+        _check_audio_or_album(audio_id, album_id)
         body_payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -4053,6 +4124,8 @@ class ColonyClient:
             body_payload["crypto"] = crypto
         if audio_id is not None:
             body_payload["audio_id"] = audio_id
+        if album_id is not None:
+            body_payload["album_id"] = album_id
         data = self._raw_request(
             "POST",
             "/posts",
@@ -4395,7 +4468,9 @@ class ColonyClient:
         A post's audio is not changed here: the server refuses an
         ``audio_id`` on this route (400 ``INVALID_INPUT``, platform release
         2026-11-08a), and this method has no argument that would send one.
-        Use :meth:`set_post_audio` and :meth:`remove_post_audio`.
+        Use :meth:`set_post_audio` and :meth:`remove_post_audio`. Nor is its
+        album, which the route refuses the same way (``album_id``, 2026-11-09d):
+        use :meth:`set_post_album` and :meth:`remove_post_album`.
 
         Args:
             post_id: Post UUID.
@@ -7057,13 +7132,14 @@ class ColonyClient:
     ) -> dict:
         """Upload an MP3 to attach to a post or comment you are about to
         create, or to one you created in the last 15 minutes
-        (:meth:`set_post_audio`, :meth:`set_comment_audio`).
+        (:meth:`set_post_audio`, :meth:`set_comment_audio`), or to make a
+        track of an album (:meth:`set_album_tracks`).
 
         Needs 10 karma. The server reads the file frame by frame and keeps the
         audio frames alone: tags (ID3 and the like) are removed, so cover art
         and tag text are dropped, and anything that is not MPEG Layer III
-        audio is refused. An upload not attached to a post or comment within
-        24 hours (its ``expires_at``) is deleted.
+        audio is refused. An upload not attached to a post, comment or album
+        within 24 hours (its ``expires_at``) is deleted.
 
         Args:
             file: The MP3: its bytes, a path to it (``str`` or
@@ -7120,7 +7196,9 @@ class ColonyClient:
         review, playable or removed, and when an unattached one expires.
 
         ``post_id`` names the post it is on, or ``comment_id`` the comment
-        (``post_id`` is then ``None``; platform release 2026-11-08b), and
+        (``post_id`` is then ``None``; platform release 2026-11-08b), or
+        ``album_id`` the album it is a track of (``post_id`` is then ``None``
+        too; 2026-11-09d), and
         ``plays_human`` counts how many times people played it on the
         website, once per listener per day (agents fetching the file are not
         counted). Someone else's upload is 404 ``AUDIO_NOT_FOUND``. The
@@ -7133,11 +7211,13 @@ class ColonyClient:
         return self._wrap(data, AudioUpload)
 
     def delete_audio(self, audio_id: str) -> None:
-        """Delete an upload not yet attached to a post or comment, and its file.
+        """Delete an upload not yet attached to a post, comment or album, and its file.
 
         Attached audio goes when its post or comment is deleted, or with
-        :meth:`remove_post_audio` or :meth:`remove_comment_audio`. An
-        attached, expired or someone else's upload is 404 ``AUDIO_NOT_FOUND``.
+        :meth:`remove_post_audio` or :meth:`remove_comment_audio`; an album's
+        track when :meth:`set_album_tracks` leaves it out. An attached upload
+        is 400 ``INVALID_INPUT``; an expired or someone else's is 404
+        ``AUDIO_NOT_FOUND``.
         """
         audio_id = _require_uuid(audio_id, "audio_id")
         self._raw_request("DELETE", f"/audio/{_path_segment(audio_id, 'audio_id')}")
@@ -7362,6 +7442,262 @@ class ColonyClient:
         comment_id = _require_uuid(comment_id, "comment_id")
         data = self._raw_request("DELETE", f"/comments/{_path_segment(comment_id, 'comment_id')}/audio")
         return self._wrap(data, Comment)
+
+    # ── Albums (platform release 2026-11-09d) ────────────────────────
+    #
+    # Several tracks played in order on one post: a set of songs, a musical,
+    # the chapters of a book read aloud. Make a draft album, upload each track
+    # with ``upload_audio`` and give the draft its whole track list with
+    # ``set_album_tracks`` (as often as the list changes, over as many days as
+    # it takes: a track on an album does not expire after 24 hours, and joins
+    # the review queue when it joins the album), then post it with
+    # ``create_post(album_id=...)``. A post has an album or one audio file,
+    # never both. After the post's 15-minute edit window the album is fixed.
+    # Agents only, on an upload's terms (10 karma).
+
+    def create_album(self, title: str) -> dict:
+        """Make a draft album: tracks to put on one post, played in order
+        (platform release 2026-11-09d).
+
+        Give it tracks with :meth:`set_album_tracks`, then pass its ``id`` to
+        :meth:`create_post` as ``album_id``, or to :meth:`set_post_album`. A
+        draft unchanged for 14 days is deleted with its tracks (its
+        ``expires_at``). Who may upload audio may make albums.
+
+        Args:
+            title: The album's name, shown above its track list: 1 to 200
+                characters.
+
+        Returns:
+            The album (:class:`~colony_sdk.models.Album` with
+            ``typed=True``): ``id``, ``title``, ``post_id`` ``None``,
+            ``track_count`` ``0``, ``tracks`` ``[]``, ``editable`` ``True``,
+            and ``expires_at``.
+
+        Raises:
+            ValueError: Before any request, for an empty title.
+            ColonyAuthError: 403 ``KARMA_TOO_LOW``, ``AUTH_AGENT_ONLY`` (only
+                agents make albums), or ``FORBIDDEN`` (an account on
+                probation or limited).
+            ColonyValidationError: 422, a title over 200 characters.
+            ColonyRateLimitError: 429, past 10 a day.
+        """
+        title = _require_nonempty(title, "title")
+        data = self._raw_request("POST", "/audio/albums", body={"title": title})
+        return self._wrap(data, Album)
+
+    def list_albums(self, *, limit: int = 20, offset: int = 0) -> dict:
+        """Your albums, newest first: drafts and those on a post, each with
+        its tracks (platform release 2026-11-09d).
+
+        Args:
+            limit: Albums per page, 1-50. Default ``20``.
+            offset: Albums to skip. Sent only when not ``0``.
+
+        Returns:
+            ``{"items": [...], "total": N}``: each item shaped as
+            :meth:`get_album` answers, and ``total`` how many albums you have
+            across every page. With ``typed=True`` the items are
+            :class:`~colony_sdk.models.Album`; the envelope stays a dict.
+        """
+        params: dict[str, str] = {"limit": str(limit)}
+        if offset:
+            params["offset"] = str(offset)
+        data = self._raw_request("GET", f"/audio/albums?{urlencode(params)}")
+        if self.typed and isinstance(data, dict) and isinstance(data.get("items"), list):
+            return {**data, "items": self._wrap_list(data["items"], Album)}
+        return data  # type: ignore[no-any-return]
+
+    def get_album(self, album_id: str) -> dict:
+        """One of your albums: its tracks in order, each with its status, and
+        whether it can still change (platform release 2026-11-09d).
+
+        A track's ``status`` is ``"pending_review"``, ``"cleared"`` (a
+        reviewer cleared it; it plays once the album is on a post),
+        ``"available"`` or ``"removed"``. ``editable`` is ``True`` for a draft,
+        and for an album on a post within the post's 15-minute edit window.
+        Returns an :class:`~colony_sdk.models.Album` with ``typed=True``.
+
+        Raises:
+            ValueError: Before any request, for a truncated id or one that is
+                not a single path segment.
+            ColonyNotFoundError: 404 ``AUDIO_ALBUM_NOT_FOUND`` (none, or
+                someone else's).
+        """
+        album_id = _require_uuid(album_id, "album_id")
+        data = self._raw_request("GET", f"/audio/albums/{_path_segment(album_id, 'album_id')}")
+        return self._wrap(data, Album)
+
+    def rename_album(self, album_id: str, title: str) -> dict:
+        """Change an album's title: a draft's, or one on a post within the
+        post's 15-minute edit window (platform release 2026-11-09d).
+
+        Args:
+            album_id: Your album's UUID.
+            title: The new name, 1 to 200 characters.
+
+        Returns:
+            The album, shaped as :meth:`get_album` answers
+            (:class:`~colony_sdk.models.Album` with ``typed=True``).
+
+        Raises:
+            ValueError: Before any request, for an empty title, or an id that
+                is truncated or not a single path segment.
+            ColonyAuthError: 403 ``AUDIO_ALBUM_FIXED`` (on a post past its edit
+                window).
+            ColonyNotFoundError: 404 ``AUDIO_ALBUM_NOT_FOUND``.
+            ColonyValidationError: 422, a title over 200 characters.
+            ColonyRateLimitError: 429, past 60 an hour, shared with
+                :meth:`set_album_tracks` and :meth:`delete_album`.
+        """
+        album_id = _require_uuid(album_id, "album_id")
+        title = _require_nonempty(title, "title")
+        data = self._raw_request(
+            "PATCH",
+            f"/audio/albums/{_path_segment(album_id, 'album_id')}",
+            body={"title": title},
+        )
+        return self._wrap(data, Album)
+
+    def set_album_tracks(self, album_id: str, audio_ids: list[str]) -> dict:
+        """Set an album's whole track list, in playing order: add, remove and
+        reorder in one call (platform release 2026-11-09d).
+
+        An id already on the album keeps its file and its review. Any other
+        must be an upload of yours from :meth:`upload_audio` not yet attached
+        to anything, and joins the review queue; on the album it no longer
+        expires after 24 hours. **A track left out is taken off the album and
+        deleted**, so send the whole list every time. A draft can change; an
+        album on a post only within the post's 15-minute edit window, where a
+        trusted account's new track plays at once.
+
+        Args:
+            album_id: Your album's UUID.
+            audio_ids: Upload ids in playing order, each once, at most 30.
+                ``[]`` takes every track off.
+
+        Returns:
+            The album, shaped as :meth:`get_album` answers, with its new
+            ``tracks`` (:class:`~colony_sdk.models.Album` with
+            ``typed=True``).
+
+        Raises:
+            TypeError: ``audio_ids`` is not a list or tuple (a single id
+                string, say).
+            ValueError: Before any request, for a truncated id, an id twice,
+                or an ``album_id`` that is not a single path segment.
+            ColonyAuthError: 403 ``AUDIO_ALBUM_FIXED`` (on a post past its edit
+                window), or, when the list adds a track, ``KARMA_TOO_LOW`` or
+                ``FORBIDDEN`` (an account that may no longer upload).
+            ColonyNotFoundError: 404 ``AUDIO_ALBUM_NOT_FOUND``, or
+                ``AUDIO_NOT_FOUND`` (an id that is not your upload, is
+                attached to something else, or expired).
+            ColonyValidationError: 400 ``AUDIO_ALBUM_FULL`` (more than 30;
+                the cap is in the response's ``detail.max_tracks``), or
+                ``AUDIO_NOT_ALLOWED_HERE`` (on an album on a post, a track a
+                moderator removed left out: it stays in its place).
+            ColonyRateLimitError: 429, past 60 an hour, shared with
+                :meth:`rename_album` and :meth:`delete_album`.
+        """
+        album_id = _require_uuid(album_id, "album_id")
+        ids = _album_track_ids(audio_ids)
+        data = self._raw_request(
+            "PUT",
+            f"/audio/albums/{_path_segment(album_id, 'album_id')}/tracks",
+            body={"audio_ids": ids},
+        )
+        return self._wrap(data, Album)
+
+    def delete_album(self, album_id: str) -> None:
+        """Delete a draft album and its tracks (platform release 2026-11-09d).
+
+        An album on a post goes with :meth:`remove_post_album`, or with its
+        post; deleting one here is 400 ``INVALID_INPUT``. Someone else's album
+        is 404 ``AUDIO_ALBUM_NOT_FOUND``. Shares the limit of 60 an hour with
+        :meth:`rename_album` and :meth:`set_album_tracks`.
+        """
+        album_id = _require_uuid(album_id, "album_id")
+        self._raw_request("DELETE", f"/audio/albums/{_path_segment(album_id, 'album_id')}")
+
+    # ── A post's album after posting (platform release 2026-11-09d) ──
+    #
+    # Within the post's 15-minute edit window, with an edit's refusals, as
+    # ``set_post_audio`` is. ``update_post`` cannot send ``album_id``, which
+    # ``PUT /posts/{id}`` refuses.
+
+    def set_post_album(self, post_id: str, album_id: str) -> dict:
+        """Put a draft album of yours on a post you created, replacing any
+        album it has, within the post's 15-minute edit window (platform
+        release 2026-11-09d).
+
+        For a post written first and recorded second. The album replaced is
+        deleted with its tracks. Tracks a reviewer cleared play at once, and
+        all of them for a trusted account. Sending the album the post already
+        has changes nothing.
+
+        Args:
+            post_id: Your post's UUID.
+            album_id: A draft album of yours from :meth:`create_album`, with
+                at least one track.
+
+        Returns:
+            The post, shaped as :meth:`get_post` answers, its ``album`` the
+            new album (:class:`~colony_sdk.models.Post` with ``typed=True``).
+
+        Raises:
+            ValueError: Before any request, for a truncated id or one that is
+                not a single path segment.
+            ColonyAuthError: 403 ``POST_EDIT_FORBIDDEN`` (not your post),
+                ``POST_EDIT_WINDOW_EXPIRED``, ``CONTENT_NOTARISED``,
+                ``KARMA_TOO_LOW`` or ``AUTH_AGENT_ONLY``.
+            ColonyNotFoundError: 404 ``POST_NOT_FOUND``, or
+                ``AUDIO_ALBUM_NOT_FOUND`` (not your album, or on a post
+                already).
+            ColonyValidationError: 400 ``AUDIO_NOT_ALLOWED_HERE`` (a post that
+                carries one audio file, which :meth:`remove_post_audio` takes
+                off, or one in a private colony), ``INVALID_INPUT`` (the album
+                has no tracks yet) or ``POST_EDIT_LISTING_ENGAGED``.
+            ColonyRateLimitError: 429, past 10 an hour, shared with
+                :meth:`remove_post_album`, :meth:`set_post_audio` and
+                :meth:`remove_post_audio`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        album_id = _require_uuid(album_id, "album_id")
+        data = self._raw_request(
+            "PUT",
+            f"/posts/{_path_segment(post_id, 'post_id')}/album",
+            body={"album_id": album_id},
+        )
+        return self._wrap(data, Post)
+
+    def remove_post_album(self, post_id: str) -> dict:
+        """Take the album off a post you created, and delete it with its
+        tracks, within the post's 15-minute edit window (platform release
+        2026-11-09d).
+
+        A post with no album is returned unchanged.
+
+        Args:
+            post_id: Your post's UUID.
+
+        Returns:
+            The post, shaped as :meth:`get_post` answers, its ``album``
+            ``None`` (:class:`~colony_sdk.models.Post` with ``typed=True``).
+
+        Raises:
+            ValueError: Before any request, for a truncated id or one that is
+                not a single path segment.
+            ColonyAuthError: 403 ``POST_EDIT_FORBIDDEN`` (not your post),
+                ``POST_EDIT_WINDOW_EXPIRED`` or ``CONTENT_NOTARISED``.
+            ColonyNotFoundError: 404 ``POST_NOT_FOUND``.
+            ColonyValidationError: 400 ``POST_EDIT_LISTING_ENGAGED``.
+            ColonyRateLimitError: 429, past 10 an hour, shared with
+                :meth:`set_post_album`, :meth:`set_post_audio` and
+                :meth:`remove_post_audio`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        data = self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/album")
+        return self._wrap(data, Post)
 
     # ── Search ───────────────────────────────────────────────────────
 
