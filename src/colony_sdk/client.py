@@ -2431,8 +2431,10 @@ def _album_track_ids(audio_ids: object) -> list[str]:
       against the album edit limit.
 
     The track cap (30) is the server's to say: past it the answer is 400
-    ``AUDIO_ALBUM_FULL``, with the cap in ``detail.max_tracks``. An empty list
-    is allowed: it takes every track off the album.
+    ``AUDIO_ALBUM_FULL``, with the cap in ``detail.max_tracks``. So is an
+    empty list, which empties a draft but is refused for an album on a post
+    (400 ``INVALID_INPUT``): the list does not say which kind of album it is
+    for, so it is sent as it is.
 
     Raises:
         TypeError: ``audio_ids`` is not a list or tuple.
@@ -7574,7 +7576,9 @@ class ColonyClient:
         Args:
             album_id: Your album's UUID.
             audio_ids: Upload ids in playing order, each once, at most 30.
-                ``[]`` takes every track off.
+                ``[]`` empties a draft. An album on a post keeps at least one
+                track: :meth:`remove_post_album` takes it off the post and
+                deletes it.
 
         Returns:
             The album, shaped as :meth:`get_album` answers, with its new
@@ -7593,9 +7597,12 @@ class ColonyClient:
                 ``AUDIO_NOT_FOUND`` (an id that is not your upload, is
                 attached to something else, or expired).
             ColonyValidationError: 400 ``AUDIO_ALBUM_FULL`` (more than 30;
-                the cap is in the response's ``detail.max_tracks``), or
-                ``AUDIO_NOT_ALLOWED_HERE`` (on an album on a post, a track a
-                moderator removed left out: it stays in its place).
+                the cap is in the response's ``detail.max_tracks``; a platform
+                older than 2026-11-10a answers a bare 422 instead),
+                ``INVALID_INPUT`` (``[]`` for an album on a post, from
+                platform release 2026-11-10a; use :meth:`remove_post_album`),
+                or ``AUDIO_NOT_ALLOWED_HERE`` (on an album on a post, a track
+                a moderator removed left out: it stays in its place).
             ColonyRateLimitError: 429, past 60 an hour, shared with
                 :meth:`rename_album` and :meth:`delete_album`.
         """

@@ -379,10 +379,25 @@ class TestSetAlbumTracksSync:
         assert _last_body(mock_urlopen) == {"audio_ids": [TRACK_1, TRACK_2]}
 
     @patch("colony_sdk.client.urlopen")
-    def test_an_empty_list_takes_every_track_off(self, mock_urlopen: MagicMock) -> None:
+    def test_an_empty_list_empties_a_draft(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response(DRAFT)
         _authed_client().set_album_tracks(ALBUM_ID, [])
         assert _last_body(mock_urlopen) == {"audio_ids": []}
+
+    @patch("colony_sdk.client.urlopen")
+    def test_an_album_on_a_post_keeps_at_least_one_track(self, mock_urlopen: MagicMock) -> None:
+        """Platform release 2026-11-10a. The list does not say which album is
+        on a post, so ``[]`` is sent and the server's refusal surfaces."""
+        mock_urlopen.side_effect = _refusal(400, "INVALID_INPUT")
+        with pytest.raises(ColonyValidationError) as exc:
+            _authed_client().set_album_tracks(ALBUM_ID, [])
+        assert _last_body(mock_urlopen) == {"audio_ids": []}
+        assert exc.value.status == 400 and exc.value.code == "INVALID_INPUT"
+
+    @pytest.mark.parametrize("cls", [ColonyClient, AsyncColonyClient])
+    def test_the_docstring_points_an_album_on_a_post_to_remove_post_album(self, cls: type) -> None:
+        doc = cls.set_album_tracks.__doc__ or ""
+        assert "remove_post_album" in doc and "INVALID_INPUT" in doc
 
     @patch("colony_sdk.client.urlopen")
     def test_thirty_tracks_are_sent(self, mock_urlopen: MagicMock) -> None:
@@ -917,6 +932,28 @@ class TestMock:
         mock = MockColonyClient(responses={"get_album": ON_A_POST, "set_post_album": WITH_ALBUM})
         assert mock.get_album(ALBUM_ID)["editable"] is False
         assert mock.set_post_album(POST_ID, ALBUM_ID)["album"]["track_count"] == 2
+
+    def test_an_empty_list_passes_through_as_on_the_client(self) -> None:
+        """Whether the album is on a post is server state; the mock keeps none."""
+        mock = MockColonyClient()
+        mock.set_album_tracks(ALBUM_ID, [])
+        assert mock.calls == [("set_album_tracks", {"album_id": ALBUM_ID, "audio_ids": []})]
+
+    def test_a_callable_response_simulates_the_refusal_on_a_post(self) -> None:
+        """How a caller's test gets the server's 400 for ``[]`` on an album on a post."""
+
+        def on_a_post(album_id: str, audio_ids: list[str]) -> dict:
+            if not audio_ids:
+                raise ColonyValidationError(
+                    "An album on a post keeps at least one track", status=400, code="INVALID_INPUT"
+                )
+            return ON_A_POST
+
+        mock = MockColonyClient(responses={"set_album_tracks": on_a_post})
+        assert mock.set_album_tracks(ALBUM_ID, [TRACK_1])["post_id"] == POST_ID
+        with pytest.raises(ColonyValidationError) as exc:
+            mock.set_album_tracks(ALBUM_ID, [])
+        assert exc.value.code == "INVALID_INPUT"
 
 
 # ---------------------------------------------------------------------------

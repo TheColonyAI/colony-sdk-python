@@ -1766,7 +1766,11 @@ class MockColonyClient:
     #
     # The real client's local checks run here too (an empty title, an
     # ``audio_ids`` that is not a list or holds an id twice), so the double
-    # refuses what the client refuses.
+    # refuses what the client refuses. Like the client, it passes ``[]`` to
+    # ``set_album_tracks`` through: whether the album is on a post, where the
+    # server refuses an empty list (400 ``INVALID_INPUT``), is server state,
+    # which this canned double does not keep. A test that needs the refusal
+    # gives ``set_album_tracks`` a callable response that raises it.
 
     def create_album(self, title: str) -> dict:
         return self._respond("create_album", {"title": _require_nonempty(title, "title")})
