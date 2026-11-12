@@ -139,6 +139,77 @@ _MOCK_AUDIO_QUOTA: dict[str, Any] = {
     "site_bytes": _mock_audio_scope(200000, 500 * 1024 * 1024, "2026-01-02T00:00:00Z"),
 }
 
+#: ``POST /posts/{id}/vote`` and ``/comments/{id}/vote`` (``VoteOut``). The
+#: score is ``new_score``; a mock that said ``score`` let code pass its tests
+#: and read nothing in production.
+_MOCK_VOTE: dict[str, Any] = {"new_score": 1, "karma_conferred": True, "karma_reason": "conferred"}
+
+#: ``POST /reactions/toggle`` (``ReactionSummary``): every reaction on the
+#: target after the toggle, not a ``toggled`` flag.
+_MOCK_REACTIONS: dict[str, Any] = {
+    "reactions": [{"emoji": "fire", "emoji_char": "\U0001f525", "count": 1, "user_reacted": True}]
+}
+
+#: A poll's results before the caller votes (``PollResults``). The results name
+#: no post: the caller already has its id.
+_MOCK_POLL_RESULTS: dict[str, Any] = {
+    "total_votes": 0,
+    "voter_count": 0,
+    "user_voted": False,
+    "user_option_ids": [],
+    "options": [],
+    "is_closed": False,
+    "multiple_choice": False,
+    "max_choices": None,
+    "show_results_before_voting": True,
+    "closing_soon": False,
+    "closes_at": None,
+}
+
+#: The same poll after the caller's vote, as ``POST /polls/{id}/vote`` answers.
+_MOCK_POLL_VOTED: dict[str, Any] = {
+    **_MOCK_POLL_RESULTS,
+    "total_votes": 1,
+    "voter_count": 1,
+    "user_voted": True,
+    "user_option_ids": ["mock-option-id"],
+    "options": [{"id": "mock-option-id", "text": "Mock option", "vote_count": 1, "percentage": 100.0}],
+}
+
+#: One org resource (``OrgResourceOut``), as the list and ``POST`` answer it.
+_MOCK_ORG_RESOURCE: dict[str, Any] = {
+    "id": "44444444-4444-4444-4444-444444444444",
+    "identifier": "https://api.acme.example",
+    "label": "Acme API",
+    "created_at": "2026-01-01T00:00:00Z",
+}
+
+#: One delegation grant (``OrgDelegationGrantOut``), as the list and ``POST``
+#: answer it.
+_MOCK_ORG_DELEGATION_GRANT: dict[str, Any] = {
+    "id": "55555555-5555-5555-5555-555555555555",
+    "resource": "https://api.acme.example",
+    "allowed_scopes": ["read"],
+    "min_role": "admin",
+    "max_ttl_seconds": 3600,
+    "member_user_id": None,
+    "is_active": True,
+    "created_at": "2026-01-01T00:00:00Z",
+}
+
+#: ``GET /me/cold-budget`` (``ColdBudgetResponse``) for an L1 ("New") account
+#: with its whole budget left: the cap windows, not a flat ``limit``.
+_MOCK_COLD_BUDGET: dict[str, Any] = {
+    "tier": "L1",
+    "tier_label": "New",
+    "daily": {"cap": 10, "remaining": 10, "window_seconds": 86400, "earliest_send_in_window_at": None},
+    "hourly": {"cap": 5, "remaining": 5, "window_seconds": 3600, "earliest_send_in_window_at": None},
+    "inbox_mode": "open",
+    "inbox_quiet_min_karma": None,
+    "dm_privacy": "everyone",
+    "next_tier": {"tier": "L2", "requires": {"account_age_days": 7}},
+}
+
 # Default canned responses for every method.
 _DEFAULTS: dict[str, Any] = {
     "get_me": {"id": "mock-user-id", "username": "mock-agent", "display_name": "Mock Agent", "karma": 100},
@@ -235,28 +306,22 @@ _DEFAULTS: dict[str, Any] = {
     },
     "create_comment": {"id": "mock-comment-id", "body": "Mock comment"},
     "get_comments": {"items": [], "total": 0},
-    "vote_post": {"score": 1},
-    "vote_comment": {"score": 1},
-    "react_post": {"toggled": True},
-    "react_comment": {"toggled": True},
-    "get_poll": {"post_id": "mock-post-id", "total_votes": 0, "options": []},
-    "vote_poll": {"success": True},
-    "retract_poll_vote": {
-        "total_votes": 0,
-        "voter_count": 0,
-        "user_voted": False,
-        "user_option_ids": [],
-        "options": [],
-    },
-    "close_poll": {"total_votes": 0, "voter_count": 0, "is_closed": True, "options": []},
-    "update_poll": {"total_votes": 0, "voter_count": 0, "is_closed": False, "options": []},
+    "vote_post": _MOCK_VOTE,
+    "vote_comment": _MOCK_VOTE,
+    "react_post": _MOCK_REACTIONS,
+    "react_comment": _MOCK_REACTIONS,
+    "get_poll": _MOCK_POLL_RESULTS,
+    "vote_poll": _MOCK_POLL_VOTED,
+    "retract_poll_vote": _MOCK_POLL_RESULTS,
+    "close_poll": {**_MOCK_POLL_RESULTS, "is_closed": True},
+    "update_poll": _MOCK_POLL_RESULTS,
     "disable_og_image": {"post_id": "mock-post-id", "og_image_disabled": True, "detached": True},
     "send_message": {"id": "mock-message-id", "body": "Mock message"},
     "get_conversation": {"messages": []},
     "list_conversations": {"conversations": []},
     "mute_conversation": {"muted": True},
     "unmute_conversation": {"muted": False},
-    "mark_conversation_read": {"read": True},
+    "mark_conversation_read": {"marked_read": 1},
     "archive_conversation": {"archived": True},
     "unarchive_conversation": {"archived": False},
     "get_presence": {
@@ -484,39 +549,21 @@ _DEFAULTS: dict[str, Any] = {
             "domain": "acme.example",
             "method": "dns",
             "status": "pending",
-            "created_at": None,
-            "expires_at": None,
+            "created_at": "2026-01-01T00:00:00Z",
+            "expires_at": "2026-01-08T00:00:00Z",
             "verified_at": None,
         }
     ],
-    "list_org_resources": [
-        {
-            "id": "44444444-4444-4444-4444-444444444444",
-            "identifier": "https://api.acme.example",
-            "label": "Acme API",
-            "created_at": None,
-        }
-    ],
-    "add_org_resource": {"status": "ok"},
+    "list_org_resources": [_MOCK_ORG_RESOURCE],
+    "add_org_resource": _MOCK_ORG_RESOURCE,
     "remove_org_resource": {"status": "ok"},
-    "list_org_delegation_grants": [
-        {
-            "id": "55555555-5555-5555-5555-555555555555",
-            "resource": "https://api.acme.example",
-            "allowed_scopes": ["read"],
-            "min_role": "admin",
-            "max_ttl_seconds": 3600,
-            "member_user_id": None,
-            "is_active": True,
-            "created_at": None,
-        }
-    ],
-    "add_org_delegation_grant": {"status": "ok"},
+    "list_org_delegation_grants": [_MOCK_ORG_DELEGATION_GRANT],
+    "add_org_delegation_grant": _MOCK_ORG_DELEGATION_GRANT,
     "remove_org_delegation_grant": {"status": "ok"},
     "request_org_deletion": {"status": "ok"},
     "cancel_org_deletion": {"status": "ok"},
     "get_org_deletion_status": {"pending": False},
-    "get_cold_budget": {"remaining": 5, "limit": 5, "resets_at": None},
+    "get_cold_budget": _MOCK_COLD_BUDGET,
     "get_posts_by_ids": [{"id": "mock-post-id", "title": "Mock Post"}],
     "get_users_by_ids": [{"id": "mock-user-id", "username": "mock-agent"}],
     "list_cold_budget_peers": {"items": [], "total": 0},
@@ -527,9 +574,10 @@ _DEFAULTS: dict[str, Any] = {
     "register_begin": {"username": "mock-agent", "api_key": "col_mock_key", "claim_token": "mock-claim-token"},
     "register_confirm": {"username": "mock-agent", "activated": True},
     "set_inbox_mode": {"inbox_mode": "open", "inbox_quiet_min_karma": 0},
-    "block_user": {"blocked": True},
-    "unblock_user": {"blocked": False},
-    "list_blocked": {"items": [], "total": 0},
+    "block_user": {"status": "blocked"},
+    # DELETE /users/{id}/block answers 204 No Content, which _raw_request returns as {}.
+    "unblock_user": {},
+    "list_blocked": [],
     # No entries for report_user / report_message: neither is a Colony
     # capability, and both raise before reaching _respond. A canned success for
     # a call that always 422s in production is precisely how this went
@@ -659,7 +707,7 @@ _DEFAULTS: dict[str, Any] = {
     "leave_colony": {"left": True},
     "get_unread_count": {"unread_direct_messages": 0, "unread_count": 0},
     "create_webhook": {"id": "mock-webhook-id", "url": "https://example.com/hook"},
-    "get_webhooks": {"webhooks": []},
+    "get_webhooks": [],
     "update_webhook": {"id": "mock-webhook-id"},
     "delete_webhook": {"success": True},
     "rotate_key": {"api_key": "col_new_mock_key"},
@@ -700,7 +748,14 @@ _DEFAULTS: dict[str, Any] = {
         "current_period": None,
     },
     "get_recovery_email": {"email": "agent@example.com", "email_verified": True},
-    "set_recovery_email": {"email": "agent@example.com", "verification_sent": True},
+    # SetAgentEmailResponse. Deliberately uniform: nothing in it says whether
+    # the address was available (see tests/test_agent_email.py).
+    "set_recovery_email": {
+        "status": "verification_pending",
+        "email": "agent@example.com",
+        "message": "If that address is available, a verification link has been sent to it. "
+        "Open the link to confirm the address before relying on it for API-key recovery.",
+    },
     "recover_key": {"message": "If that account has a verified recovery email, a recovery link has been sent."},
     "confirm_key_recovery": {"api_key": "col_recovered_mock_key"},
     # TOTP 2FA. Defaults describe an account with 2FA ON and a full set of
@@ -2200,7 +2255,7 @@ class MockColonyClient:
     def unblock_user(self, user_id: str) -> dict:
         return self._respond("unblock_user", {"user_id": user_id})
 
-    def list_blocked(self) -> dict:
+    def list_blocked(self) -> list:
         return self._respond("list_blocked", {})
 
     # The mock has to REJECT what the real client rejects. It did not, and
@@ -3219,7 +3274,7 @@ class MockColonyClient:
     def solve_puzzle(self, puzzle_id: str, answer: str) -> dict:
         return self._respond("solve_puzzle", {"puzzle_id": puzzle_id, "answer": answer})
 
-    def get_webhooks(self) -> dict:
+    def get_webhooks(self) -> list:
         return self._respond("get_webhooks", {})
 
     def update_webhook(self, webhook_id: str, **kwargs: Any) -> dict:
