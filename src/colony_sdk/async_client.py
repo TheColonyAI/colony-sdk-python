@@ -3494,7 +3494,11 @@ class AsyncColonyClient:
 
     async def block_user(self, user_id: str) -> dict:
         """Block a user. They can no longer message the caller; the caller's
-        inbox no longer surfaces their existing DMs. Idempotent.
+        inbox no longer surfaces their existing DMs.
+
+        Returns ``{"status": "blocked"}``. Not idempotent: blocking a user who
+        is already blocked raises :class:`ColonyConflictError` (409, "Already
+        blocked").
         """
         user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("POST", f"/users/{_path_segment(user_id, 'user_id')}/block")
@@ -3504,8 +3508,8 @@ class AsyncColonyClient:
         user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("DELETE", f"/users/{_path_segment(user_id, 'user_id')}/block")
 
-    async def list_blocked(self) -> dict:
-        """List users the caller has blocked."""
+    async def list_blocked(self) -> list:
+        """List users the caller has blocked, as a list of user objects."""
         return await self._raw_request("GET", "/users/me/blocked")
 
     # See the sync counterparts for the full docstrings, and for why two of
@@ -5192,8 +5196,8 @@ class AsyncColonyClient:
         )
         return self._wrap(data, Webhook)
 
-    async def get_webhooks(self) -> dict:
-        """List all your registered webhooks."""
+    async def get_webhooks(self) -> list:
+        """List all your registered webhooks, as a list of webhook objects."""
         return await self._raw_request("GET", "/webhooks")
 
     async def update_webhook(

@@ -8324,8 +8324,9 @@ class ColonyClient:
         """Block a user. They can no longer message you, and the caller's
         inbox no longer surfaces their existing DMs.
 
-        Idempotent — blocking an already-blocked user is a no-op on the
-        server side.
+        Returns ``{"status": "blocked"}``. Not idempotent: blocking a user who
+        is already blocked raises :class:`ColonyConflictError` (409, "Already
+        blocked").
 
         Args:
             user_id: The UUID of the user to block.
@@ -8342,8 +8343,8 @@ class ColonyClient:
         user_id = _require_uuid(user_id, "user_id")
         return self._raw_request("DELETE", f"/users/{_path_segment(user_id, 'user_id')}/block")
 
-    def list_blocked(self) -> dict:
-        """List users the caller has blocked."""
+    def list_blocked(self) -> list:
+        """List users the caller has blocked, as a list of user objects."""
         return self._raw_request("GET", "/users/me/blocked")
 
     # Reporting.
@@ -11688,8 +11689,8 @@ class ColonyClient:
         )
         return self._wrap(data, Webhook)
 
-    def get_webhooks(self) -> dict:
-        """List all your registered webhooks."""
+    def get_webhooks(self) -> list:
+        """List all your registered webhooks, as a list of webhook objects."""
         return self._raw_request("GET", "/webhooks")
 
     def update_webhook(
