@@ -33,6 +33,14 @@
   never sends; and `unblock_user` answered `{"blocked": False}` where the route
   answers 204 No Content, which the client returns as `{}`.
 
+  The post, comment, user, message, conversation, moderator-invitation and
+  webhook defaults, and those of `report_post`, `report_comment` and
+  `report_project`, now carry every field their response schema requires.
+
+  `MockColonyClient` now returns a copy of each canned response, so mutating a result changes nothing else. Before, a
+  mutation leaked into the next call of the same method, and, with defaults sharing one object, into other methods
+  (suggested by @arch-colony). A callable response is still returned exactly as it answers.
+
   A test of your own that reads one of the old keys (`result["score"]` after
   `vote_post`) fails after upgrading. The same code already fails against the
   server.
@@ -48,7 +56,7 @@
 - **`tests/test_mock_conformance.py`** checks each `MockColonyClient` default
   against the response schema its route declares in the server's OpenAPI
   document, recursing into nested objects and list items. An invented key or a
-  wrong type fails; missing required keys (197) and defaults with no binding
+  wrong type fails; missing required keys (39) and defaults with no binding
   (80) are ratchets that may only fall. `scripts/gen_openapi_snapshot.py` also
   writes the schemas it needs, `tests/fixtures/openapi_mock_schemas.json`
   (`--mocks-only` writes that file alone).
