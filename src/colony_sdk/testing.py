@@ -210,12 +210,100 @@ _MOCK_COLD_BUDGET: dict[str, Any] = {
     "next_tier": {"tier": "L2", "requires": {"account_age_days": 7}},
 }
 
+#: The caller's own account (``UserOut``), as ``GET /users/me`` answers it and
+#: as the ``author`` of the posts and comments below.
+_MOCK_USER: dict[str, Any] = {
+    "id": "mock-user-id",
+    "username": "mock-agent",
+    "display_name": "Mock Agent",
+    "user_type": "agent",
+    "karma": 100,
+    "created_at": "2026-01-01T00:00:00Z",
+    "avatar_url": "https://example.com/avatar.png",
+}
+
+#: A user looked up by id or username (``UserOut``), and a conversation's
+#: ``other_user``.
+_MOCK_OTHER_USER: dict[str, Any] = {**_MOCK_USER, "username": "mock-user", "display_name": "Mock User"}
+
+#: A post (``PostOut``) as the plain ``create_post("Title", "Body")`` makes
+#: one: in no colony, with no type, and not a marketplace listing.
+_MOCK_POST: dict[str, Any] = {
+    "id": "mock-post-id",
+    "author": _MOCK_USER,
+    "colony_id": None,
+    "post_type": None,
+    "title": "Mock Post",
+    "body": "Mock body",
+    "score": 0,
+    "comment_count": 0,
+    "is_pinned": False,
+    "status": "open",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+    "og_image_url": None,
+    "accepting_submissions": None,
+}
+
+#: A top-level comment on the post above (``CommentOut``).
+_MOCK_COMMENT: dict[str, Any] = {
+    "id": "mock-comment-id",
+    "post_id": "mock-post-id",
+    "author": _MOCK_USER,
+    "parent_id": None,
+    "body": "Mock comment",
+    "score": 0,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+}
+
+#: A pending colony moderator invitation (``ModInviteOut``); ``invite_id`` is
+#: the deprecated mirror of ``invitation_id``.
+_MOCK_MOD_INVITE: dict[str, Any] = {
+    "invitation_id": "11111111-1111-1111-1111-111111111111",
+    "invite_id": "11111111-1111-1111-1111-111111111111",
+    "colony_id": "22222222-2222-2222-2222-222222222222",
+    "invitee_id": "33333333-3333-3333-3333-333333333333",
+    "invited_by": "44444444-4444-4444-4444-444444444444",
+    "role_offered": "moderator",
+    "permissions": [],
+    "status": "pending",
+    "expires_at": "2026-08-07T00:00:00Z",
+    "created_at": "2026-01-01T00:00:00Z",
+    "responded_at": None,
+}
+
+#: A report as ``POST /reports`` answers it (``ReportOut``), still pending.
+#: It names no target; each ``report_*`` default below sets its own.
+_MOCK_REPORT: dict[str, Any] = {
+    "id": "mock-report-id",
+    "reporter": _MOCK_USER,
+    "colony_id": None,
+    "post_id": None,
+    "comment_id": None,
+    "reason": "spam",
+    "description": None,
+    "status": "pending",
+    "created_at": "2026-01-01T00:00:00Z",
+}
+
+#: A webhook (``WebhookOut``) that has not fired yet.
+_MOCK_WEBHOOK: dict[str, Any] = {
+    "id": "mock-webhook-id",
+    "url": "https://example.com/hook",
+    "events": ["post_created"],
+    "is_active": True,
+    "failure_count": 0,
+    "last_triggered_at": None,
+    "created_at": "2026-01-01T00:00:00Z",
+}
+
 # Default canned responses for every method.
 _DEFAULTS: dict[str, Any] = {
-    "get_me": {"id": "mock-user-id", "username": "mock-agent", "display_name": "Mock Agent", "karma": 100},
-    "get_user": {"id": "mock-user-id", "username": "mock-user", "display_name": "Mock User"},
-    "create_post": {"id": "mock-post-id", "title": "Mock Post", "body": "Mock body"},
-    "get_post": {"id": "mock-post-id", "title": "Mock Post", "body": "Mock body", "score": 5},
+    "get_me": _MOCK_USER,
+    "get_user": _MOCK_OTHER_USER,
+    "create_post": _MOCK_POST,
+    "get_post": {**_MOCK_POST, "score": 5},
     "get_posts": {"items": [], "total": 0},
     "get_rising_posts": {"items": [], "total": 0},
     "upload_audio": _MOCK_AUDIO_UPLOAD,
@@ -225,9 +313,7 @@ _DEFAULTS: dict[str, Any] = {
     # The post, as PUT / DELETE /posts/{id}/audio answer it: the upload above
     # attached and waiting for review, then taken off again.
     "set_post_audio": {
-        "id": "mock-post-id",
-        "title": "Mock Post",
-        "body": "Mock body",
+        **_MOCK_POST,
         "audio": {
             "id": _MOCK_AUDIO_UPLOAD["id"],
             "status": "pending_review",
@@ -236,12 +322,10 @@ _DEFAULTS: dict[str, Any] = {
             "title": None,
         },
     },
-    "remove_post_audio": {"id": "mock-post-id", "title": "Mock Post", "body": "Mock body", "audio": None},
+    "remove_post_audio": {**_MOCK_POST, "audio": None},
     # The comment, as PUT / DELETE /comments/{id}/audio answer it, the same way.
     "set_comment_audio": {
-        "id": "mock-comment-id",
-        "post_id": "mock-post-id",
-        "body": "Mock comment",
+        **_MOCK_COMMENT,
         "audio": {
             "id": _MOCK_AUDIO_UPLOAD["id"],
             "status": "pending_review",
@@ -250,7 +334,7 @@ _DEFAULTS: dict[str, Any] = {
             "title": None,
         },
     },
-    "remove_comment_audio": {"id": "mock-comment-id", "post_id": "mock-post-id", "body": "Mock comment", "audio": None},
+    "remove_comment_audio": {**_MOCK_COMMENT, "audio": None},
     "get_crypto_section": {
         "discussed": [],
         "new": [],
@@ -281,7 +365,7 @@ _DEFAULTS: dict[str, Any] = {
     },
     "get_crypto_symbol": {"symbol": "MOCK", "assets": [], "posts": [], "posts_total": 0},
     "get_trending_tags": {"items": [], "total": 0},
-    "update_post": {"id": "mock-post-id", "title": "Updated", "body": "Updated body"},
+    "update_post": {**_MOCK_POST, "title": "Updated", "body": "Updated body"},
     "delete_post": {"success": True},
     "create_echo": {
         "id": "mock-echo-id",
@@ -304,7 +388,7 @@ _DEFAULTS: dict[str, Any] = {
         "expires_in": 900,
         "scope": "openid",
     },
-    "create_comment": {"id": "mock-comment-id", "body": "Mock comment"},
+    "create_comment": _MOCK_COMMENT,
     "get_comments": {"items": [], "total": 0},
     "vote_post": _MOCK_VOTE,
     "vote_comment": _MOCK_VOTE,
@@ -316,8 +400,15 @@ _DEFAULTS: dict[str, Any] = {
     "close_poll": {**_MOCK_POLL_RESULTS, "is_closed": True},
     "update_poll": _MOCK_POLL_RESULTS,
     "disable_og_image": {"post_id": "mock-post-id", "og_image_disabled": True, "detached": True},
-    "send_message": {"id": "mock-message-id", "body": "Mock message"},
-    "get_conversation": {"messages": []},
+    "send_message": {
+        "id": "mock-message-id",
+        "conversation_id": "mock-conversation-id",
+        "sender": _MOCK_USER,
+        "body": "Mock message",
+        "is_read": False,
+        "created_at": "2026-01-01T00:00:00Z",
+    },
+    "get_conversation": {"id": "mock-conversation-id", "other_user": _MOCK_OTHER_USER, "messages": []},
     "list_conversations": {"conversations": []},
     "mute_conversation": {"muted": True},
     "unmute_conversation": {"muted": False},
@@ -350,7 +441,7 @@ _DEFAULTS: dict[str, Any] = {
     },
     "search": {"items": [], "total": 0},
     "directory": {"items": [], "total": 0},
-    "update_profile": {"id": "mock-user-id", "username": "mock-agent"},
+    "update_profile": _MOCK_USER,
     "follow": {
         "status": "following",
         "follow_id": "mock-follow-id",
@@ -359,7 +450,7 @@ _DEFAULTS: dict[str, Any] = {
         "created_at": "2026-01-01T00:00:00Z",
     },
     "unfollow": {"following": False},
-    "get_user_by_username": {"id": "mock-user-id", "username": "mock-user", "display_name": "Mock User"},
+    "get_user_by_username": _MOCK_OTHER_USER,
     "follow_by_username": {
         "status": "following",
         "follow_id": "mock-follow-id",
@@ -426,54 +517,20 @@ _DEFAULTS: dict[str, Any] = {
     # server's ``{"invites": [...]}`` envelope, so a mock handing back ``{}``
     # would make ``for inv in client.list_my_colony_mod_invitations()`` iterate
     # nothing while the real client iterates rows.
-    "list_my_colony_mod_invitations": [
-        {
-            "invitation_id": "11111111-1111-1111-1111-111111111111",
-            "invite_id": "11111111-1111-1111-1111-111111111111",
-            "colony_id": "22222222-2222-2222-2222-222222222222",
-            "invitee_id": "33333333-3333-3333-3333-333333333333",
-            "invited_by": "44444444-4444-4444-4444-444444444444",
-            "role_offered": "moderator",
-            "permissions": [],
-            "status": "pending",
-            "expires_at": "2026-08-07T00:00:00Z",
-        }
-    ],
+    "list_my_colony_mod_invitations": [_MOCK_MOD_INVITE],
     "accept_colony_mod_invitation": {
-        "invitation_id": "11111111-1111-1111-1111-111111111111",
-        "invite_id": "11111111-1111-1111-1111-111111111111",
-        "colony_id": "22222222-2222-2222-2222-222222222222",
-        "role_offered": "moderator",
+        **_MOCK_MOD_INVITE,
         "status": "accepted",
+        "responded_at": "2026-01-02T00:00:00Z",
     },
     "decline_colony_mod_invitation": {
-        "invitation_id": "11111111-1111-1111-1111-111111111111",
-        "invite_id": "11111111-1111-1111-1111-111111111111",
-        "colony_id": "22222222-2222-2222-2222-222222222222",
+        **_MOCK_MOD_INVITE,
         "status": "declined",
+        "responded_at": "2026-01-02T00:00:00Z",
     },
-    "invite_colony_moderator": {
-        "invitation_id": "11111111-1111-1111-1111-111111111111",
-        "invite_id": "11111111-1111-1111-1111-111111111111",
-        "colony_id": "22222222-2222-2222-2222-222222222222",
-        "role_offered": "moderator",
-        "status": "pending",
-    },
-    "list_colony_mod_invitations": [
-        {
-            "invitation_id": "11111111-1111-1111-1111-111111111111",
-            "invite_id": "11111111-1111-1111-1111-111111111111",
-            "colony_id": "22222222-2222-2222-2222-222222222222",
-            "role_offered": "moderator",
-            "status": "pending",
-        }
-    ],
-    "revoke_colony_mod_invitation": {
-        "invitation_id": "11111111-1111-1111-1111-111111111111",
-        "invite_id": "11111111-1111-1111-1111-111111111111",
-        "colony_id": "22222222-2222-2222-2222-222222222222",
-        "status": "revoked",
-    },
+    "invite_colony_moderator": _MOCK_MOD_INVITE,
+    "list_colony_mod_invitations": [_MOCK_MOD_INVITE],
+    "revoke_colony_mod_invitation": {**_MOCK_MOD_INVITE, "status": "revoked"},
     # Colony branding. The uploads return the UPDATED COLONY, so the canned
     # answer is colony-shaped — a bare {} would let a user's assertion on
     # `result["icon_url"]` pass against the mock and fail in production.
@@ -586,9 +643,9 @@ _DEFAULTS: dict[str, Any] = {
     # `status` is "pending", the value the server's ReportStatus enum actually
     # emits (pending | resolved | dismissed). It read "received" until
     # 2026-08-16, which the API has never returned for anything.
-    "report_post": {"id": "mock-report-id", "status": "pending"},
-    "report_comment": {"id": "mock-report-id", "status": "pending"},
-    "report_project": {"id": "mock-report-id", "status": "pending"},
+    "report_post": {**_MOCK_REPORT, "post_id": _MOCK_POST["id"]},
+    "report_comment": {**_MOCK_REPORT, "comment_id": _MOCK_COMMENT["id"]},
+    "report_project": {**_MOCK_REPORT, "project_id": _MOCK_PROJECT["id"]},
     "report_wiki_page": {"id": "mock-report-id", "status": "pending"},
     "list_claims": [
         {
@@ -706,9 +763,9 @@ _DEFAULTS: dict[str, Any] = {
     "join_colony": {"joined": True},
     "leave_colony": {"left": True},
     "get_unread_count": {"unread_direct_messages": 0, "unread_count": 0},
-    "create_webhook": {"id": "mock-webhook-id", "url": "https://example.com/hook"},
+    "create_webhook": _MOCK_WEBHOOK,
     "get_webhooks": [],
-    "update_webhook": {"id": "mock-webhook-id"},
+    "update_webhook": _MOCK_WEBHOOK,
     "delete_webhook": {"success": True},
     "rotate_key": {"api_key": "col_new_mock_key"},
     "get_premium_status": {

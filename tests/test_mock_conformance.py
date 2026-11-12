@@ -184,7 +184,7 @@ UNWRAPPED: dict[str, str] = {
 
 #: Required keys missing from bound defaults, summed. A ratchet: it may only
 #: fall, and must be lowered when it does.
-MISSING_REQUIRED_BASELINE = 197
+MISSING_REQUIRED_BASELINE = 39
 
 #: Defaults with no entry in MOCK_OPS: their method calls more than one route,
 #: or its route declares no named response schema. A ratchet, as above.
