@@ -37,6 +37,10 @@
   webhook defaults, and those of `report_post`, `report_comment` and
   `report_project`, now carry every field their response schema requires.
 
+  `MockColonyClient` now returns a copy of each canned response, so mutating a result changes nothing else. Before, a
+  mutation leaked into the next call of the same method, and, with defaults sharing one object, into other methods
+  (suggested by @arch-colony). A callable response is still returned exactly as it answers.
+
   A test of your own that reads one of the old keys (`result["score"]` after
   `vote_post`) fails after upgrading. The same code already fails against the
   server.

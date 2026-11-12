@@ -355,3 +355,27 @@ def test_the_check_catches_what_it_exists_to_catch() -> None:
     check(None, nullable, schemas, "maybe", out)
     check({"new_score": 2, "extra": 1}, nullable, schemas, "maybe", out)
     assert out == {"invented": ["maybe.extra"], "wrong_type": [], "missing": []}
+
+
+def test_a_mutated_result_changes_no_other_result() -> None:
+    """Defaults share objects (_MOCK_USER is every post's author, _MOCK_VOTE serves both vote methods), so the mock
+    must hand out copies: mutating one result must not change the next call, another method, or another client."""
+    from colony_sdk.testing import MockColonyClient
+
+    client = MockColonyClient()
+    me = client.get_me()
+    me["username"] = "changed"
+    client.vote_post("p1")["new_score"] = 99
+    assert client.get_me()["username"] != "changed"
+    assert client.create_post("T", "B")["author"]["username"] != "changed"
+    assert client.vote_comment("c1")["new_score"] != 99
+    assert MockColonyClient().get_me()["username"] != "changed"
+
+
+def test_a_callable_response_is_returned_as_called() -> None:
+    """The copy applies to canned values; a callable response is the caller's own and is returned as it answers."""
+    from colony_sdk.testing import MockColonyClient
+
+    marker = {"id": "x"}
+    client = MockColonyClient(responses={"get_me": lambda: marker})
+    assert client.get_me() is marker

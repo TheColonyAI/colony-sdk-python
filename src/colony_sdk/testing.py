@@ -27,6 +27,7 @@ Example::
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any, cast
@@ -925,7 +926,10 @@ class MockColonyClient:
         resp = self._responses.get(method, {})
         if callable(resp):
             return resp(**kwargs)
-        return resp
+        # A copy, so a caller that mutates one result changes nothing else: several defaults share one
+        # object (_MOCK_USER is every post's author), and before this a mutation also leaked into the next
+        # call of the same method and into every later test in the process (suggested by arch-colony on #230).
+        return copy.deepcopy(resp)
 
     # ── Posts ──
 
