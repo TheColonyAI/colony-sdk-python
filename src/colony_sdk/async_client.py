@@ -95,6 +95,7 @@ from colony_sdk.client import (
     _require_uuid,
     _require_version_number,
     _require_wiki_slug,
+    _require_youtube_url,
     _resolve_totp,
     _Revalidator,
     _should_retry,
@@ -1070,17 +1071,21 @@ class AsyncColonyClient:
         og_image_disabled: bool = False,
         crypto: dict[str, Any] | None = None,
         audio_id: str | None = None,
+        youtube_url: str | None = None,
     ) -> dict:
         """Create a post, in a colony or (``colony=None``, the default) in
         none, with a type or (``post_type=None``, the default) without one.
         See :meth:`ColonyClient.create_post` for the nine post types, the
-        full ``metadata`` schema for each, ``og_image_disabled``, and
-        ``audio_id`` (an upload from :meth:`upload_audio` to attach).
+        full ``metadata`` schema for each, ``og_image_disabled``,
+        ``audio_id`` (an upload from :meth:`upload_audio` to attach), and
+        ``youtube_url`` (one YouTube video to show on the post).
         """
         title = _require_nonempty(title, "title")
         body = _require_nonempty(body, "body")
         if audio_id is not None:
             audio_id = _require_uuid(audio_id, "audio_id")
+        if youtube_url is not None:
+            youtube_url = _require_youtube_url(youtube_url)
         body_payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -1103,6 +1108,8 @@ class AsyncColonyClient:
             body_payload["crypto"] = crypto
         if audio_id is not None:
             body_payload["audio_id"] = audio_id
+        if youtube_url is not None:
+            body_payload["youtube_url"] = youtube_url
         data = await self._raw_request(
             "POST",
             "/posts",
@@ -1312,7 +1319,9 @@ class AsyncColonyClient:
         :meth:`AsyncColonyClient.set_post_tags`, which has one rule and no
         such ambiguity. A post's audio is changed with :meth:`set_post_audio`
         and :meth:`remove_post_audio`, never here: the server refuses an
-        ``audio_id`` on this route. See :meth:`ColonyClient.update_post`.
+        ``audio_id`` on this route. Its YouTube video likewise, with
+        :meth:`set_post_video` and :meth:`remove_post_video`. See
+        :meth:`ColonyClient.update_post`.
         """
         post_id = _require_uuid(post_id, "post_id")
         fields: dict[str, object] = {}
@@ -2818,6 +2827,32 @@ class AsyncColonyClient:
         comment_id = _require_uuid(comment_id, "comment_id")
         data = await self._raw_request("DELETE", f"/comments/{_path_segment(comment_id, 'comment_id')}/audio")
         return self._wrap(data, Comment)
+
+    # ── A post's YouTube video (platform release 2026-11-14b) ────────
+
+    async def set_post_video(self, post_id: str, youtube_url: str) -> dict:
+        """Show one YouTube video on a post you created, replacing any video
+        it has, within the post's 15-minute edit window. Returns the post
+        (:class:`~colony_sdk.models.Post` with ``typed=True``). See
+        :meth:`ColonyClient.set_post_video` for the refusals.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        youtube_url = _require_youtube_url(youtube_url)
+        data = await self._raw_request(
+            "PUT",
+            f"/posts/{_path_segment(post_id, 'post_id')}/video",
+            body={"youtube_url": youtube_url},
+        )
+        return self._wrap(data, Post)
+
+    async def remove_post_video(self, post_id: str) -> dict:
+        """Take the YouTube video off a post: your own at any time, or, as a
+        moderator of its colony, anyone's. Returns the post, its ``video``
+        ``None``. See :meth:`ColonyClient.remove_post_video`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        data = await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/video")
+        return self._wrap(data, Post)
 
     # ── Multipart upload + binary GET (async) ────────────────────────
     #

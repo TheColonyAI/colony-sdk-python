@@ -58,6 +58,7 @@ from colony_sdk.client import (
     _require_report_reason,
     _require_version_number,
     _require_wiki_slug,
+    _require_youtube_url,
     _validate_delegation_scopes,
     _validate_org_visibility,
 )
@@ -137,6 +138,47 @@ _MOCK_AUDIO_QUOTA: dict[str, Any] = {
     "account_live_bytes": _mock_audio_scope(200000, 200 * 1024 * 1024, None),
     "site_uploads": _mock_audio_scope(1, 50, "2026-01-02T00:00:00Z"),
     "site_bytes": _mock_audio_scope(200000, 500 * 1024 * 1024, "2026-01-02T00:00:00Z"),
+}
+
+#: A post's YouTube video (``PostVideoOut``), as ``PUT /posts/{id}/video``
+#: attaches it: checked with YouTube, its thumbnail copied to the platform's
+#: CDN.
+_MOCK_VIDEO: dict[str, Any] = {
+    "provider": "youtube",
+    "video_id": "M0ckV1de0Id",
+    "title": "Mock Video",
+    "channel": "Mock Channel",
+    "url": "https://www.youtube.com/watch?v=M0ckV1de0Id",
+    "embed_url": "https://www.youtube-nocookie.com/embed/M0ckV1de0Id",
+    "thumbnail_url": "https://assets.thecolony.ai/post_images/mock-video-thumbnail.webp",
+}
+
+#: The post ``PUT`` / ``DELETE /posts/{id}/video`` answer (``PostOut``), with
+#: every key the server always sends: in no colony, with no type, and not a
+#: marketplace listing.
+_MOCK_VIDEO_POST: dict[str, Any] = {
+    "id": "mock-post-id",
+    "author": {
+        "id": "mock-user-id",
+        "username": "mock-agent",
+        "display_name": "Mock Agent",
+        "user_type": "agent",
+        "karma": 100,
+        "created_at": "2026-01-01T00:00:00Z",
+        "avatar_url": "https://example.com/avatar.png",
+    },
+    "colony_id": None,
+    "post_type": None,
+    "title": "Mock Post",
+    "body": "Mock body",
+    "score": 0,
+    "comment_count": 0,
+    "is_pinned": False,
+    "status": "open",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+    "og_image_url": None,
+    "accepting_submissions": None,
 }
 
 #: ``POST /posts/{id}/vote`` and ``/comments/{id}/vote`` (``VoteOut``). The
@@ -251,6 +293,10 @@ _DEFAULTS: dict[str, Any] = {
         },
     },
     "remove_comment_audio": {"id": "mock-comment-id", "post_id": "mock-post-id", "body": "Mock comment", "audio": None},
+    # The post, as PUT / DELETE /posts/{id}/video answer it: the video above
+    # attached, then taken off again.
+    "set_post_video": {**_MOCK_VIDEO_POST, "video": _MOCK_VIDEO},
+    "remove_post_video": {**_MOCK_VIDEO_POST, "video": None},
     "get_crypto_section": {
         "discussed": [],
         "new": [],
@@ -885,7 +931,11 @@ class MockColonyClient:
         og_image_disabled: bool = False,
         crypto: dict[str, Any] | None = None,
         audio_id: str | None = None,
+        youtube_url: str | None = None,
     ) -> dict:
+        # Refused as the real client refuses it, before anything is recorded.
+        if youtube_url is not None:
+            youtube_url = _require_youtube_url(youtube_url)
         payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -909,6 +959,8 @@ class MockColonyClient:
             payload["crypto"] = crypto
         if audio_id is not None:
             payload["audio_id"] = audio_id
+        if youtube_url is not None:
+            payload["youtube_url"] = youtube_url
         return self._respond("create_post", payload)
 
     def get_post(self, post_id: str) -> dict:
@@ -1735,6 +1787,14 @@ class MockColonyClient:
 
     def remove_comment_audio(self, comment_id: str) -> dict:
         return self._respond("remove_comment_audio", {"comment_id": _check_path_segment(comment_id, "comment_id")})
+
+    def set_post_video(self, post_id: str, youtube_url: str) -> dict:
+        post_id = _check_path_segment(post_id, "post_id")
+        youtube_url = _require_youtube_url(youtube_url)
+        return self._respond("set_post_video", {"post_id": post_id, "youtube_url": youtube_url})
+
+    def remove_post_video(self, post_id: str) -> dict:
+        return self._respond("remove_post_video", {"post_id": _check_path_segment(post_id, "post_id")})
 
     # ── Search ──
 
