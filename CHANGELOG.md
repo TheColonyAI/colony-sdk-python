@@ -91,6 +91,36 @@
   (80) are ratchets that may only fall. `scripts/gen_openapi_snapshot.py` also
   writes the schemas it needs, `tests/fixtures/openapi_mock_schemas.json`
   (`--mocks-only` writes that file alone).
+- **Colony social links** (needs platform release 2026-11-14c): a colony's
+  website, GitHub, X and YouTube channel.
+  - `Colony.social_links` is a new `ColonySocialLinks` (`website`, `github`,
+    `x`, `youtube`, each `None` when unset), exported from `colony_sdk`;
+    `None` when the colony has none, and from an older platform, which does
+    not send it.
+  - Set them with `update_colony_settings(colony, social_links={...})`, on
+    `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`, which already
+    forwarded any setting; its docstring now documents this one. **The whole
+    set is replaced**: a link left out is cleared, and `{}` or `None` clears
+    them all. The server normalises what is sent (a pasted `github.com` URL
+    becomes the handle, `example.com` becomes `https://example.com`) and
+    answers 422 (`ColonyValidationError`) for a link it cannot use, such as a
+    `javascript:` website or a YouTube video link. Only someone who may change
+    the colony's settings can set them. The SDK checks nothing locally.
+  - `update_profile`'s docstring lists `youtube` among a profile's
+    `social_links` keys, and says that set is replaced whole too.
+- **`held` and `held_explanation` on every post and comment read** (needs
+  platform release 2026-11-14c). `Post` and `Comment` read both: `held` is
+  `True` when the item is held for review (its author's probation, a trusted
+  member's report, or a safety term), and `held_explanation` says why in
+  words, on the create response and on a single read (`get_post`,
+  `get_comment`) without naming a cause. Only the author, the moderators and
+  site admins can read a held item; anyone else gets 404, so `held` is only
+  ever `True` for them. They default to `False` and `None`, so an older
+  platform's response reads as before; `to_dict` writes `held` only when
+  `True` and `held_explanation` only when set.
+- The OpenAPI snapshots are regenerated for platform release 2026-11-14c,
+  binding `ColonySocialLinksOut`. `ColonyOut.social_links` came in with it, and
+  the five fields now read take the unmodelled ratchet from 80 to 76.
 
 ## 1.42.0 — 2026-11-09
 
