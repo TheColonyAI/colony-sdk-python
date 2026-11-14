@@ -2892,9 +2892,12 @@ class AsyncColonyClient:
         """Set an album's whole track list, in playing order. A track left
         out is taken off and deleted. ``audio_ids`` that is not a list, or
         holds a truncated id or the same id twice, is refused before the
-        request. ``[]`` empties a draft; an album on a post keeps at least one
-        track (400 ``INVALID_INPUT``), and :meth:`remove_post_album` takes it
-        off the post. See :meth:`ColonyClient.set_album_tracks`.
+        request. ``[]`` empties a draft; since platform release 2026-11-10a an
+        album on a post keeps at least one track (400 ``INVALID_INPUT``), and
+        :meth:`remove_post_album` takes it off the post (before that release,
+        ``[]`` emptied an album on a post too). More than 30 ids is 400
+        ``AUDIO_ALBUM_FULL`` since 2026-11-10a, and more than 120 a bare 422 (as
+        more than 30 was before it). See :meth:`ColonyClient.set_album_tracks`.
         """
         album_id = _require_uuid(album_id, "album_id")
         ids = _album_track_ids(audio_ids)

@@ -423,8 +423,21 @@ class TestSetAlbumTracksSync:
             ([TRACK_1, TRACK_2[:8]], ValueError, r"audio_ids\[1\]"),
             ([TRACK_1, TRACK_2, TRACK_1], ValueError, r"audio_ids\[2\] is audio_ids\[0\] again"),
             ([TRACK_1, TRACK_1.upper()], ValueError, "again"),
+            # The upload itself where its id belongs: named, with what to pass.
+            ([{"id": TRACK_1}], ValueError, r"audio_ids\[0\] must be a UUID string, got dict.*'id' field"),
+            # One id twice, once with white space around it: still the same track.
+            ([TRACK_1, f" {TRACK_1}\n"], ValueError, r"audio_ids\[1\] is audio_ids\[0\] again"),
         ],
-        ids=["a-single-id", "a-set", "none", "truncated", "twice", "twice-in-another-case"],
+        ids=[
+            "a-single-id",
+            "a-set",
+            "none",
+            "truncated",
+            "twice",
+            "twice-in-another-case",
+            "the-upload-not-its-id",
+            "twice-with-white-space",
+        ],
     )
     @patch("colony_sdk.client.urlopen")
     def test_refused_before_the_request(
@@ -908,15 +921,29 @@ class TestMock:
             mock.set_album_tracks(ALBUM_ID, TRACK_1)  # type: ignore[arg-type]
         with pytest.raises(ValueError):
             mock.set_album_tracks(ALBUM_ID, [TRACK_1, TRACK_1])
-        for bad in ("../users/me", "..", "a/b"):
+        for bad in ("../users/me", "..", "a/b", ALBUM_ID[:8]):
             with pytest.raises(ValueError):
                 mock.get_album(bad)
+            with pytest.raises(ValueError):
+                mock.rename_album(bad, "Title")
+            with pytest.raises(ValueError):
+                mock.set_album_tracks(bad, [TRACK_1])
             with pytest.raises(ValueError):
                 mock.delete_album(bad)
             with pytest.raises(ValueError):
                 mock.set_post_album(bad, ALBUM_ID)
             with pytest.raises(ValueError):
                 mock.remove_post_album(bad)
+        # A truncated id, as the real client refuses it (the path checks above
+        # cover the rest of the album and post ids).
+        with pytest.raises(ValueError, match="post_id"):
+            mock.set_post_album(POST_ID[:8], ALBUM_ID)
+        with pytest.raises(ValueError, match="post_id"):
+            mock.remove_post_album(POST_ID[:8])
+        with pytest.raises(ValueError, match="album_id"):
+            mock.set_post_album(POST_ID, ALBUM_ID[:8])
+        with pytest.raises(ValueError, match="album_id"):
+            mock.create_post("T", "B", album_id=ALBUM_ID[:8])
         with pytest.raises(ValueError, match="not both"):
             mock.create_post("T", "B", audio_id=TRACK_1, album_id=ALBUM_ID)
         assert mock.calls == []

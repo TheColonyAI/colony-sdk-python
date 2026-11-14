@@ -2431,7 +2431,8 @@ def _album_track_ids(audio_ids: object) -> list[str]:
       against the album edit limit.
 
     The track cap (30) is the server's to say: past it the answer is 400
-    ``AUDIO_ALBUM_FULL``, with the cap in ``detail.max_tracks``. So is an
+    ``AUDIO_ALBUM_FULL``, with the cap in ``detail.max_tracks``, up to 120
+    ids, past which the request model answers a bare 422. So is an
     empty list, which empties a draft but is refused for an album on a post
     (400 ``INVALID_INPUT``): the list does not say which kind of album it is
     for, so it is sent as it is.
@@ -2454,6 +2455,8 @@ def _album_track_ids(audio_ids: object) -> list[str]:
                 f"audio_ids[{i}] is audio_ids[{first}] again ({audio_id}): each track appears once in an album."
             )
     return ids
+
+
 def _require_youtube_url(youtube_url: str) -> str:
     """Refuse a ``youtube_url`` that is not a string, or is blank, before any request.
 
@@ -7626,9 +7629,10 @@ class ColonyClient:
         Args:
             album_id: Your album's UUID.
             audio_ids: Upload ids in playing order, each once, at most 30.
-                ``[]`` empties a draft. An album on a post keeps at least one
-                track: :meth:`remove_post_album` takes it off the post and
-                deletes it.
+                ``[]`` empties a draft. Since platform release 2026-11-10a an
+                album on a post keeps at least one track:
+                :meth:`remove_post_album` takes it off the post and deletes it
+                (before that release, ``[]`` emptied an album on a post too).
 
         Returns:
             The album, shaped as :meth:`get_album` answers, with its new
@@ -7646,9 +7650,10 @@ class ColonyClient:
             ColonyNotFoundError: 404 ``AUDIO_ALBUM_NOT_FOUND``, or
                 ``AUDIO_NOT_FOUND`` (an id that is not your upload, is
                 attached to something else, or expired).
-            ColonyValidationError: 400 ``AUDIO_ALBUM_FULL`` (more than 30;
-                the cap is in the response's ``detail.max_tracks``; a platform
-                older than 2026-11-10a answers a bare 422 instead),
+            ColonyValidationError: 400 ``AUDIO_ALBUM_FULL`` (31 to 120 ids;
+                the cap is in the response's ``detail.max_tracks``), or a bare
+                422 for more than 120, the request model's own bound (and for
+                more than 30 from a platform older than 2026-11-10a),
                 ``INVALID_INPUT`` (``[]`` for an album on a post, from
                 platform release 2026-11-10a; use :meth:`remove_post_album`),
                 or ``AUDIO_NOT_ALLOWED_HERE`` (on an album on a post, a track
@@ -12161,7 +12166,9 @@ class ColonyClient:
                 ``post_audio_available`` (a review cleared your audio and it
                 now plays on your post, or on your comment, which the
                 payload's ``comment_id`` then names; ``post_id`` is that
-                comment's post). Every event, with its payload, is listed at
+                comment's post; once for each track of the album on your
+                post, which ``album_id`` then names). Every event, with its
+                payload, is listed at
                 ``GET /api/v1/webhooks/events``.
             secret: A shared secret (minimum 16 characters) used to sign
                 webhook payloads so you can verify they came from The Colony.

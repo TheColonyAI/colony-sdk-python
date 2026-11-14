@@ -58,9 +58,9 @@ from colony_sdk.client import (
     _require_puzzle_slug,
     _require_puzzle_type,
     _require_report_reason,
+    _require_uuid,
     _require_version_number,
     _require_wiki_slug,
-    _require_uuid,
     _require_youtube_url,
     _validate_delegation_scopes,
     _validate_org_visibility,
@@ -291,6 +291,7 @@ _MOCK_COLD_BUDGET: dict[str, Any] = {
     "dm_privacy": "everyone",
     "next_tier": {"tier": "L2", "requires": {"account_age_days": 7}},
 }
+
 
 def _album_id(album_id: str) -> str:
     """An album id as the real client checks it: whole, and one path segment."""
@@ -1907,9 +1908,7 @@ class MockColonyClient:
         self._respond("delete_album", {"album_id": _album_id(album_id)})
 
     def set_post_album(self, post_id: str, album_id: str) -> dict:
-        return self._respond(
-            "set_post_album", {"post_id": _post_id(post_id), "album_id": _album_id(album_id)}
-        )
+        return self._respond("set_post_album", {"post_id": _post_id(post_id), "album_id": _album_id(album_id)})
 
     def remove_post_album(self, post_id: str) -> dict:
         return self._respond("remove_post_album", {"post_id": _post_id(post_id)})

@@ -28,19 +28,21 @@
     yours from `upload_audio` not yet attached to anything; on an album it no
     longer expires after 24 hours, and it joins the review queue. At most 30
     tracks (past that, 400 `AUDIO_ALBUM_FULL` with the cap in
-    `detail.max_tracks`; a platform older than 2026-11-10a answers a bare
-    422). Refused before the request: a `str` or anything not a
+    `detail.max_tracks`, up to 120 ids; more than 120, or more than 30 from a
+    platform older than 2026-11-10a, is a bare 422). Refused before the request: a `str` or anything not a
     list or tuple (`TypeError`), a truncated id (named by its place in the
     list) and the same id twice. `[]` empties a draft; an album on a post
     keeps at least one track (400 `INVALID_INPUT`, platform release
-    2026-11-10a), and `remove_post_album` takes it off the post.
+    2026-11-10a; before it, `[]` emptied an album on a post too), and
+    `remove_post_album` takes it off the post.
   - `delete_album(album_id)` sends `DELETE /audio/albums/{album_id}`: deletes a
     draft and its tracks; an album on a post is 400 `INVALID_INPUT`.
-  - These five return the album (an `Album` with `typed=True`, its `tracks`
-    `AlbumTrack`s; `list_albums`' items with the envelope a dict) and refuse a
-    truncated `album_id`, or one that is not a single path segment, before the
-    request. `create_album` and `rename_album` refuse an empty title the same
-    way. A draft can change; an album on a post only within the post's
+  - `create_album`, `get_album`, `rename_album` and `set_album_tracks` return
+    the album (an `Album` with `typed=True`, its `tracks` `AlbumTrack`s), and
+    `list_albums` its items so, the envelope a dict; `delete_album` returns
+    `None`. The four that take an `album_id` refuse a truncated one, or one that
+    is not a single path segment, before the request. `create_album` and
+    `rename_album` refuse an empty title the same way. A draft can change; an album on a post only within the post's
     15-minute edit window (403 `AUDIO_ALBUM_FIXED` after it). Other refusals:
     404 `AUDIO_ALBUM_NOT_FOUND`, `AUDIO_NOT_FOUND` (a track that is not your
     upload, is attached elsewhere, or expired), 400 `AUDIO_NOT_ALLOWED_HERE` (leaving out a track a moderator removed from an
