@@ -1018,7 +1018,7 @@ class TestComments:
 class TestVoting:
     @patch("colony_sdk.client.urlopen")
     def test_vote_post_upvote(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"score": 5})
+        mock_urlopen.return_value = _mock_response({"new_score": 5})
         client = _authed_client()
 
         client.vote_post("p1")
@@ -1030,7 +1030,7 @@ class TestVoting:
 
     @patch("colony_sdk.client.urlopen")
     def test_vote_post_downvote(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"score": 3})
+        mock_urlopen.return_value = _mock_response({"new_score": 3})
         client = _authed_client()
 
         client.vote_post("p1", value=-1)
@@ -1039,7 +1039,7 @@ class TestVoting:
 
     @patch("colony_sdk.client.urlopen")
     def test_vote_comment(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"score": 2})
+        mock_urlopen.return_value = _mock_response({"new_score": 2})
         client = _authed_client()
 
         client.vote_comment("c1", value=1)
@@ -1080,7 +1080,7 @@ class TestVoting:
 class TestReactions:
     @patch("colony_sdk.client.urlopen")
     def test_react_post(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"toggled": True})
+        mock_urlopen.return_value = _mock_response({"reactions": []})
         client = _authed_client()
 
         client.react_post("p1", "fire")
@@ -1092,7 +1092,7 @@ class TestReactions:
 
     @patch("colony_sdk.client.urlopen")
     def test_react_comment(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"toggled": True})
+        mock_urlopen.return_value = _mock_response({"reactions": []})
         client = _authed_client()
 
         client.react_comment("c1", "thumbs_up")
@@ -1861,7 +1861,7 @@ class TestFollowing:
 class TestSafety:
     @patch("colony_sdk.client.urlopen")
     def test_block_user(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"blocked": True})
+        mock_urlopen.return_value = _mock_response({"status": "blocked"})
         client = _authed_client()
 
         client.block_user("u1")
@@ -1872,7 +1872,7 @@ class TestSafety:
 
     @patch("colony_sdk.client.urlopen")
     def test_unblock_user(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"blocked": False})
+        mock_urlopen.return_value = _mock_response({})
         client = _authed_client()
 
         client.unblock_user("u1")
@@ -2200,7 +2200,7 @@ class TestWebhooks:
 
     @patch("colony_sdk.client.urlopen")
     def test_get_webhooks(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"webhooks": []})
+        mock_urlopen.return_value = _mock_response([])
         client = _authed_client()
 
         client.get_webhooks()
@@ -4804,14 +4804,14 @@ class TestMuteConversation:
 
     @patch("colony_sdk.client.urlopen")
     def test_mark_conversation_read_posts_to_read_subpath(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"read": True})
+        mock_urlopen.return_value = _mock_response({"marked_read": 1})
         client = _authed_client()
         result = client.mark_conversation_read("alice")
         req = _last_request(mock_urlopen)
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/messages/conversations/alice/read"
         assert req.data is None
-        assert result["read"] is True
+        assert result["marked_read"] == 1
 
     @patch("colony_sdk.client.urlopen")
     def test_archive_conversation_posts_to_archive_subpath(self, mock_urlopen: MagicMock) -> None:
@@ -5188,7 +5188,13 @@ class TestRecoveryEmail:
 
     @patch("colony_sdk.client.urlopen")
     def test_set_recovery_email(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _mock_response({"email": "agent@example.com", "verification_sent": True})
+        mock_urlopen.return_value = _mock_response(
+            {
+                "status": "verification_pending",
+                "email": "agent@example.com",
+                "message": "If that address is available, a verification link has been sent to it.",
+            }
+        )
         client = _authed_client()
 
         result = client.set_recovery_email("agent@example.com")
@@ -5197,7 +5203,7 @@ class TestRecoveryEmail:
         assert req.get_method() == "POST"
         assert req.full_url == f"{BASE}/auth/email"
         assert _last_body(mock_urlopen) == {"email": "agent@example.com"}
-        assert result["verification_sent"] is True
+        assert result["status"] == "verification_pending"
 
     @patch("colony_sdk.client.urlopen")
     def test_set_recovery_email_karma_too_low(self, mock_urlopen: MagicMock) -> None:

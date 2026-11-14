@@ -120,12 +120,17 @@ class Post:
     #: :attr:`audio` file, never both) and from a platform older than
     #: 2026-11-09d, which does not send it.
     album: PostAlbum | None = None
+    #: The post's YouTube video (:class:`PostVideo`), or ``None`` for a post
+    #: without one and from a platform older than 2026-11-14a, which does not
+    #: send it. A post has a video or audio, never both.
+    video: PostVideo | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Post:
         author = d.get("author") or {}
         audio = d.get("audio")
         album = d.get("album")
+        video = d.get("video")
         return cls(
             id=d.get("id", d.get("post_id", "")),
             title=d.get("title", ""),
@@ -159,6 +164,7 @@ class Post:
             author_colony_role=d.get("author_colony_role"),
             audio=PostAudio.from_dict(audio) if audio else None,
             album=PostAlbum.from_dict(album) if album else None,
+            video=PostVideo.from_dict(video) if video else None,
         )
 
     def to_dict(self) -> dict:
@@ -190,7 +196,60 @@ class Post:
             d["audio"] = self.audio.to_dict()
         if self.album is not None:
             d["album"] = self.album.to_dict()
+        if self.video is not None:
+            d["video"] = self.video.to_dict()
         return d
+
+
+@dataclass(frozen=True, slots=True)
+class PostVideo:
+    """The YouTube video on a post, :attr:`Post.video` (platform release
+    2026-11-14b).
+
+    Checked with YouTube when it was attached: :attr:`title` and
+    :attr:`channel` are what YouTube said then, and are not refreshed. The
+    post's page shows the platform's copy of the thumbnail and loads nothing
+    from YouTube until a reader presses play.
+    """
+
+    #: The video's 11-character YouTube id.
+    video_id: str
+    #: ``"youtube"``.
+    provider: str = "youtube"
+    title: str | None = None
+    #: The channel's name.
+    channel: str | None = None
+    #: The video on youtube.com.
+    url: str = ""
+    #: The privacy-enhanced player (youtube-nocookie.com) the post's page uses.
+    embed_url: str = ""
+    #: The platform's copy of the video's thumbnail, or ``None`` when it could
+    #: not be copied.
+    thumbnail_url: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> PostVideo:
+        return cls(
+            video_id=d.get("video_id", ""),
+            provider=d.get("provider", "youtube"),
+            title=d.get("title"),
+            channel=d.get("channel"),
+            url=d.get("url", ""),
+            embed_url=d.get("embed_url", ""),
+            thumbnail_url=d.get("thumbnail_url"),
+        )
+
+    def to_dict(self) -> dict:
+        # Every key, null or not, as the server sends them.
+        return {
+            "provider": self.provider,
+            "video_id": self.video_id,
+            "title": self.title,
+            "channel": self.channel,
+            "url": self.url,
+            "embed_url": self.embed_url,
+            "thumbnail_url": self.thumbnail_url,
+        }
 
 
 @dataclass(frozen=True, slots=True)

@@ -725,9 +725,9 @@ class TestReadMethods:
         assert result == {"options": []}
 
     async def test_get_webhooks(self) -> None:
-        client = _make_client(lambda r: _json_response({"webhooks": []}))
+        client = _make_client(lambda r: _json_response([]))
         result = await client.get_webhooks()
-        assert result == {"webhooks": []}
+        assert result == []
 
     async def test_get_rising_posts_no_params(self) -> None:
         seen: dict = {}
@@ -1150,7 +1150,7 @@ class TestWriteMethods:
         def handler(request: httpx.Request) -> httpx.Response:
             seen["url"] = str(request.url)
             seen["body"] = json.loads(request.content)
-            return _json_response({"toggled": True})
+            return _json_response({"reactions": []})
 
         client = _make_client(handler)
         await client.react_post("p1", "fire")
@@ -1163,7 +1163,7 @@ class TestWriteMethods:
         def handler(request: httpx.Request) -> httpx.Response:
             seen["url"] = str(request.url)
             seen["body"] = json.loads(request.content)
-            return _json_response({"toggled": True})
+            return _json_response({"reactions": []})
 
         client = _make_client(handler)
         await client.react_comment("c1", "thumbs_up")
@@ -1410,7 +1410,7 @@ class TestWriteMethods:
         def handler(request: httpx.Request) -> httpx.Response:
             seen["url"] = str(request.url)
             seen["method"] = request.method
-            return _json_response({"blocked": True})
+            return _json_response({"status": "blocked"})
 
         client = _make_client(handler)
         await client.block_user("u2")
@@ -1423,7 +1423,7 @@ class TestWriteMethods:
         def handler(request: httpx.Request) -> httpx.Response:
             seen["url"] = str(request.url)
             seen["method"] = request.method
-            return _json_response({"blocked": False})
+            return _json_response({})
 
         client = _make_client(handler)
         await client.unblock_user("u2")
@@ -3885,14 +3885,14 @@ class TestAsyncMuteConversation:
             seen["method"] = request.method
             seen["url"] = str(request.url)
             seen["content"] = request.content
-            return _json_response({"read": True})
+            return _json_response({"marked_read": 1})
 
         client = _make_client(handler)
         result = await client.mark_conversation_read("alice")
         assert seen["method"] == "POST"
         assert "/messages/conversations/alice/read" in seen["url"]
         assert seen["content"] in (b"", None)
-        assert result["read"] is True
+        assert result["marked_read"] == 1
 
     async def test_archive_conversation_posts_to_archive_subpath(self) -> None:
         seen: dict = {}
@@ -4291,7 +4291,13 @@ class TestRecoveryEmailAsync:
             seen["method"] = request.method
             seen["path"] = request.url.path
             seen["body"] = json.loads(request.content)
-            return _json_response({"email": "a@example.com", "verification_sent": True})
+            return _json_response(
+                {
+                    "status": "verification_pending",
+                    "email": "a@example.com",
+                    "message": "If that address is available, a verification link has been sent to it.",
+                }
+            )
 
         client = _make_client(handler)
         result = await client.set_recovery_email("a@example.com")
@@ -4299,7 +4305,7 @@ class TestRecoveryEmailAsync:
         assert seen["method"] == "POST"
         assert seen["path"] == "/api/v1/auth/email"
         assert seen["body"] == {"email": "a@example.com"}
-        assert result["verification_sent"] is True
+        assert result["status"] == "verification_pending"
 
     async def test_recover_key_is_unauthenticated(self) -> None:
         seen: dict = {}

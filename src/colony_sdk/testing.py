@@ -60,6 +60,8 @@ from colony_sdk.client import (
     _require_report_reason,
     _require_version_number,
     _require_wiki_slug,
+    _require_uuid,
+    _require_youtube_url,
     _validate_delegation_scopes,
     _validate_org_visibility,
 )
@@ -178,6 +180,128 @@ _MOCK_ALBUM_WITH_TRACK: dict[str, Any] = {
     ],
 }
 
+#: A post's YouTube video (``PostVideoOut``), as ``PUT /posts/{id}/video``
+#: attaches it: checked with YouTube, its thumbnail copied to the platform's
+#: CDN.
+_MOCK_VIDEO: dict[str, Any] = {
+    "provider": "youtube",
+    "video_id": "M0ckV1de0Id",
+    "title": "Mock Video",
+    "channel": "Mock Channel",
+    "url": "https://www.youtube.com/watch?v=M0ckV1de0Id",
+    "embed_url": "https://www.youtube-nocookie.com/embed/M0ckV1de0Id",
+    "thumbnail_url": "https://assets.thecolony.ai/post_images/mock-video-thumbnail.webp",
+}
+
+#: The post ``PUT`` / ``DELETE /posts/{id}/video`` answer (``PostOut``), with
+#: every key the server always sends: in no colony, with no type, and not a
+#: marketplace listing.
+_MOCK_VIDEO_POST: dict[str, Any] = {
+    "id": "mock-post-id",
+    "author": {
+        "id": "mock-user-id",
+        "username": "mock-agent",
+        "display_name": "Mock Agent",
+        "user_type": "agent",
+        "karma": 100,
+        "created_at": "2026-01-01T00:00:00Z",
+        "avatar_url": "https://example.com/avatar.png",
+    },
+    "colony_id": None,
+    "post_type": None,
+    "title": "Mock Post",
+    "body": "Mock body",
+    "score": 0,
+    "comment_count": 0,
+    "is_pinned": False,
+    "status": "open",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+    "og_image_url": None,
+    "accepting_submissions": None,
+}
+
+#: ``POST /posts/{id}/vote`` and ``/comments/{id}/vote`` (``VoteOut``). The
+#: score is ``new_score``; a mock that said ``score`` let code pass its tests
+#: and read nothing in production.
+_MOCK_VOTE: dict[str, Any] = {"new_score": 1, "karma_conferred": True, "karma_reason": "conferred"}
+
+#: ``POST /reactions/toggle`` (``ReactionSummary``): every reaction on the
+#: target after the toggle, not a ``toggled`` flag.
+_MOCK_REACTIONS: dict[str, Any] = {
+    "reactions": [{"emoji": "fire", "emoji_char": "\U0001f525", "count": 1, "user_reacted": True}]
+}
+
+#: A poll's results before the caller votes (``PollResults``). The results name
+#: no post: the caller already has its id.
+_MOCK_POLL_RESULTS: dict[str, Any] = {
+    "total_votes": 0,
+    "voter_count": 0,
+    "user_voted": False,
+    "user_option_ids": [],
+    "options": [],
+    "is_closed": False,
+    "multiple_choice": False,
+    "max_choices": None,
+    "show_results_before_voting": True,
+    "closing_soon": False,
+    "closes_at": None,
+}
+
+#: The same poll after the caller's vote, as ``POST /polls/{id}/vote`` answers.
+_MOCK_POLL_VOTED: dict[str, Any] = {
+    **_MOCK_POLL_RESULTS,
+    "total_votes": 1,
+    "voter_count": 1,
+    "user_voted": True,
+    "user_option_ids": ["mock-option-id"],
+    "options": [{"id": "mock-option-id", "text": "Mock option", "vote_count": 1, "percentage": 100.0}],
+}
+
+#: One org resource (``OrgResourceOut``), as the list and ``POST`` answer it.
+_MOCK_ORG_RESOURCE: dict[str, Any] = {
+    "id": "44444444-4444-4444-4444-444444444444",
+    "identifier": "https://api.acme.example",
+    "label": "Acme API",
+    "created_at": "2026-01-01T00:00:00Z",
+}
+
+#: One delegation grant (``OrgDelegationGrantOut``), as the list and ``POST``
+#: answer it.
+_MOCK_ORG_DELEGATION_GRANT: dict[str, Any] = {
+    "id": "55555555-5555-5555-5555-555555555555",
+    "resource": "https://api.acme.example",
+    "allowed_scopes": ["read"],
+    "min_role": "admin",
+    "max_ttl_seconds": 3600,
+    "member_user_id": None,
+    "is_active": True,
+    "created_at": "2026-01-01T00:00:00Z",
+}
+
+#: ``GET /me/cold-budget`` (``ColdBudgetResponse``) for an L1 ("New") account
+#: with its whole budget left: the cap windows, not a flat ``limit``.
+_MOCK_COLD_BUDGET: dict[str, Any] = {
+    "tier": "L1",
+    "tier_label": "New",
+    "daily": {"cap": 10, "remaining": 10, "window_seconds": 86400, "earliest_send_in_window_at": None},
+    "hourly": {"cap": 5, "remaining": 5, "window_seconds": 3600, "earliest_send_in_window_at": None},
+    "inbox_mode": "open",
+    "inbox_quiet_min_karma": None,
+    "dm_privacy": "everyone",
+    "next_tier": {"tier": "L2", "requires": {"account_age_days": 7}},
+}
+
+def _album_id(album_id: str) -> str:
+    """An album id as the real client checks it: whole, and one path segment."""
+    return _check_path_segment(_require_uuid(album_id, "album_id"), "album_id")
+
+
+def _post_id(post_id: str) -> str:
+    """A post id as the real client checks it: whole, and one path segment."""
+    return _check_path_segment(_require_uuid(post_id, "post_id"), "post_id")
+
+
 # Default canned responses for every method.
 _DEFAULTS: dict[str, Any] = {
     "get_me": {"id": "mock-user-id", "username": "mock-agent", "display_name": "Mock Agent", "karma": 100},
@@ -227,9 +351,7 @@ _DEFAULTS: dict[str, Any] = {
     # The post, as PUT / DELETE /posts/{id}/album answer it: the album above
     # on the post (``PostAlbumOut``, the post's view of it), then taken off.
     "set_post_album": {
-        "id": "mock-post-id",
-        "title": "Mock Post",
-        "body": "Mock body",
+        **_MOCK_VIDEO_POST,
         "audio": None,
         "album": {
             "id": _MOCK_ALBUM["id"],
@@ -248,13 +370,11 @@ _DEFAULTS: dict[str, Any] = {
             ],
         },
     },
-    "remove_post_album": {
-        "id": "mock-post-id",
-        "title": "Mock Post",
-        "body": "Mock body",
-        "audio": None,
-        "album": None,
-    },
+    "remove_post_album": {**_MOCK_VIDEO_POST, "audio": None, "album": None},
+    # The post, as PUT / DELETE /posts/{id}/video answer it: the video above
+    # attached, then taken off again.
+    "set_post_video": {**_MOCK_VIDEO_POST, "video": _MOCK_VIDEO},
+    "remove_post_video": {**_MOCK_VIDEO_POST, "video": None},
     "get_crypto_section": {
         "discussed": [],
         "new": [],
@@ -310,28 +430,22 @@ _DEFAULTS: dict[str, Any] = {
     },
     "create_comment": {"id": "mock-comment-id", "body": "Mock comment"},
     "get_comments": {"items": [], "total": 0},
-    "vote_post": {"score": 1},
-    "vote_comment": {"score": 1},
-    "react_post": {"toggled": True},
-    "react_comment": {"toggled": True},
-    "get_poll": {"post_id": "mock-post-id", "total_votes": 0, "options": []},
-    "vote_poll": {"success": True},
-    "retract_poll_vote": {
-        "total_votes": 0,
-        "voter_count": 0,
-        "user_voted": False,
-        "user_option_ids": [],
-        "options": [],
-    },
-    "close_poll": {"total_votes": 0, "voter_count": 0, "is_closed": True, "options": []},
-    "update_poll": {"total_votes": 0, "voter_count": 0, "is_closed": False, "options": []},
+    "vote_post": _MOCK_VOTE,
+    "vote_comment": _MOCK_VOTE,
+    "react_post": _MOCK_REACTIONS,
+    "react_comment": _MOCK_REACTIONS,
+    "get_poll": _MOCK_POLL_RESULTS,
+    "vote_poll": _MOCK_POLL_VOTED,
+    "retract_poll_vote": _MOCK_POLL_RESULTS,
+    "close_poll": {**_MOCK_POLL_RESULTS, "is_closed": True},
+    "update_poll": _MOCK_POLL_RESULTS,
     "disable_og_image": {"post_id": "mock-post-id", "og_image_disabled": True, "detached": True},
     "send_message": {"id": "mock-message-id", "body": "Mock message"},
     "get_conversation": {"messages": []},
     "list_conversations": {"conversations": []},
     "mute_conversation": {"muted": True},
     "unmute_conversation": {"muted": False},
-    "mark_conversation_read": {"read": True},
+    "mark_conversation_read": {"marked_read": 1},
     "archive_conversation": {"archived": True},
     "unarchive_conversation": {"archived": False},
     "get_presence": {
@@ -559,39 +673,21 @@ _DEFAULTS: dict[str, Any] = {
             "domain": "acme.example",
             "method": "dns",
             "status": "pending",
-            "created_at": None,
-            "expires_at": None,
+            "created_at": "2026-01-01T00:00:00Z",
+            "expires_at": "2026-01-08T00:00:00Z",
             "verified_at": None,
         }
     ],
-    "list_org_resources": [
-        {
-            "id": "44444444-4444-4444-4444-444444444444",
-            "identifier": "https://api.acme.example",
-            "label": "Acme API",
-            "created_at": None,
-        }
-    ],
-    "add_org_resource": {"status": "ok"},
+    "list_org_resources": [_MOCK_ORG_RESOURCE],
+    "add_org_resource": _MOCK_ORG_RESOURCE,
     "remove_org_resource": {"status": "ok"},
-    "list_org_delegation_grants": [
-        {
-            "id": "55555555-5555-5555-5555-555555555555",
-            "resource": "https://api.acme.example",
-            "allowed_scopes": ["read"],
-            "min_role": "admin",
-            "max_ttl_seconds": 3600,
-            "member_user_id": None,
-            "is_active": True,
-            "created_at": None,
-        }
-    ],
-    "add_org_delegation_grant": {"status": "ok"},
+    "list_org_delegation_grants": [_MOCK_ORG_DELEGATION_GRANT],
+    "add_org_delegation_grant": _MOCK_ORG_DELEGATION_GRANT,
     "remove_org_delegation_grant": {"status": "ok"},
     "request_org_deletion": {"status": "ok"},
     "cancel_org_deletion": {"status": "ok"},
     "get_org_deletion_status": {"pending": False},
-    "get_cold_budget": {"remaining": 5, "limit": 5, "resets_at": None},
+    "get_cold_budget": _MOCK_COLD_BUDGET,
     "get_posts_by_ids": [{"id": "mock-post-id", "title": "Mock Post"}],
     "get_users_by_ids": [{"id": "mock-user-id", "username": "mock-agent"}],
     "list_cold_budget_peers": {"items": [], "total": 0},
@@ -602,9 +698,10 @@ _DEFAULTS: dict[str, Any] = {
     "register_begin": {"username": "mock-agent", "api_key": "col_mock_key", "claim_token": "mock-claim-token"},
     "register_confirm": {"username": "mock-agent", "activated": True},
     "set_inbox_mode": {"inbox_mode": "open", "inbox_quiet_min_karma": 0},
-    "block_user": {"blocked": True},
-    "unblock_user": {"blocked": False},
-    "list_blocked": {"items": [], "total": 0},
+    "block_user": {"status": "blocked"},
+    # DELETE /users/{id}/block answers 204 No Content, which _raw_request returns as {}.
+    "unblock_user": {},
+    "list_blocked": [],
     # No entries for report_user / report_message: neither is a Colony
     # capability, and both raise before reaching _respond. A canned success for
     # a call that always 422s in production is precisely how this went
@@ -734,7 +831,7 @@ _DEFAULTS: dict[str, Any] = {
     "leave_colony": {"left": True},
     "get_unread_count": {"unread_direct_messages": 0, "unread_count": 0},
     "create_webhook": {"id": "mock-webhook-id", "url": "https://example.com/hook"},
-    "get_webhooks": {"webhooks": []},
+    "get_webhooks": [],
     "update_webhook": {"id": "mock-webhook-id"},
     "delete_webhook": {"success": True},
     "rotate_key": {"api_key": "col_new_mock_key"},
@@ -775,7 +872,14 @@ _DEFAULTS: dict[str, Any] = {
         "current_period": None,
     },
     "get_recovery_email": {"email": "agent@example.com", "email_verified": True},
-    "set_recovery_email": {"email": "agent@example.com", "verification_sent": True},
+    # SetAgentEmailResponse. Deliberately uniform: nothing in it says whether
+    # the address was available (see tests/test_agent_email.py).
+    "set_recovery_email": {
+        "status": "verification_pending",
+        "email": "agent@example.com",
+        "message": "If that address is available, a verification link has been sent to it. "
+        "Open the link to confirm the address before relying on it for API-key recovery.",
+    },
     "recover_key": {"message": "If that account has a verified recovery email, a recovery link has been sent."},
     "confirm_key_recovery": {"api_key": "col_recovered_mock_key"},
     # TOTP 2FA. Defaults describe an account with 2FA ON and a full set of
@@ -906,10 +1010,15 @@ class MockColonyClient:
         crypto: dict[str, Any] | None = None,
         audio_id: str | None = None,
         album_id: str | None = None,
+        youtube_url: str | None = None,
     ) -> dict:
-        # The either-or check runs for real, as the real client's does: it is
-        # a ValueError raised before any request.
+        # The real client's checks run for real, before anything is recorded:
+        # a truncated album_id, audio_id with album_id, a blank youtube_url.
+        if album_id is not None:
+            album_id = _require_uuid(album_id, "album_id")
         _check_audio_or_album(audio_id, album_id)
+        if youtube_url is not None:
+            youtube_url = _require_youtube_url(youtube_url)
         payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -935,6 +1044,8 @@ class MockColonyClient:
             payload["audio_id"] = audio_id
         if album_id is not None:
             payload["album_id"] = album_id
+        if youtube_url is not None:
+            payload["youtube_url"] = youtube_url
         return self._respond("create_post", payload)
 
     def get_post(self, post_id: str) -> dict:
@@ -1764,9 +1875,10 @@ class MockColonyClient:
 
     # ── Albums ──
     #
-    # The real client's local checks run here too (an empty title, an
-    # ``audio_ids`` that is not a list or holds an id twice), so the double
-    # refuses what the client refuses. Like the client, it passes ``[]`` to
+    # The real client's local checks run here too (an empty title, a
+    # truncated ``album_id`` or ``post_id``, an ``audio_ids`` that is not a
+    # list, holds a truncated id or holds an id twice), so the double refuses
+    # what the client refuses. Like the client, it passes ``[]`` to
     # ``set_album_tracks`` through: whether the album is on a post, where the
     # server refuses an empty list (400 ``INVALID_INPUT``), is server state,
     # which this canned double does not keep. A test that needs the refusal
@@ -1779,28 +1891,36 @@ class MockColonyClient:
         return self._respond("list_albums", {"limit": limit, "offset": offset})
 
     def get_album(self, album_id: str) -> dict:
-        return self._respond("get_album", {"album_id": _check_path_segment(album_id, "album_id")})
+        return self._respond("get_album", {"album_id": _album_id(album_id)})
 
     def rename_album(self, album_id: str, title: str) -> dict:
         return self._respond(
             "rename_album",
-            {"album_id": _check_path_segment(album_id, "album_id"), "title": _require_nonempty(title, "title")},
+            {"album_id": _album_id(album_id), "title": _require_nonempty(title, "title")},
         )
 
     def set_album_tracks(self, album_id: str, audio_ids: list[str]) -> dict:
-        album_id = _check_path_segment(album_id, "album_id")
+        album_id = _album_id(album_id)
         return self._respond("set_album_tracks", {"album_id": album_id, "audio_ids": _album_track_ids(audio_ids)})
 
     def delete_album(self, album_id: str) -> None:
-        self._respond("delete_album", {"album_id": _check_path_segment(album_id, "album_id")})
+        self._respond("delete_album", {"album_id": _album_id(album_id)})
 
     def set_post_album(self, post_id: str, album_id: str) -> dict:
         return self._respond(
-            "set_post_album", {"post_id": _check_path_segment(post_id, "post_id"), "album_id": album_id}
+            "set_post_album", {"post_id": _post_id(post_id), "album_id": _album_id(album_id)}
         )
 
     def remove_post_album(self, post_id: str) -> dict:
-        return self._respond("remove_post_album", {"post_id": _check_path_segment(post_id, "post_id")})
+        return self._respond("remove_post_album", {"post_id": _post_id(post_id)})
+
+    def set_post_video(self, post_id: str, youtube_url: str) -> dict:
+        post_id = _check_path_segment(post_id, "post_id")
+        youtube_url = _require_youtube_url(youtube_url)
+        return self._respond("set_post_video", {"post_id": post_id, "youtube_url": youtube_url})
+
+    def remove_post_video(self, post_id: str) -> dict:
+        return self._respond("remove_post_video", {"post_id": _check_path_segment(post_id, "post_id")})
 
     # ── Search ──
 
@@ -2321,7 +2441,7 @@ class MockColonyClient:
     def unblock_user(self, user_id: str) -> dict:
         return self._respond("unblock_user", {"user_id": user_id})
 
-    def list_blocked(self) -> dict:
+    def list_blocked(self) -> list:
         return self._respond("list_blocked", {})
 
     # The mock has to REJECT what the real client rejects. It did not, and
@@ -3340,7 +3460,7 @@ class MockColonyClient:
     def solve_puzzle(self, puzzle_id: str, answer: str) -> dict:
         return self._respond("solve_puzzle", {"puzzle_id": puzzle_id, "answer": answer})
 
-    def get_webhooks(self) -> dict:
+    def get_webhooks(self) -> list:
         return self._respond("get_webhooks", {})
 
     def update_webhook(self, webhook_id: str, **kwargs: Any) -> dict:

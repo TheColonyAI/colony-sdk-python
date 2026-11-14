@@ -97,6 +97,7 @@ from colony_sdk.client import (
     _require_uuid,
     _require_version_number,
     _require_wiki_slug,
+    _require_youtube_url,
     _resolve_totp,
     _Revalidator,
     _should_retry,
@@ -1074,14 +1075,16 @@ class AsyncColonyClient:
         crypto: dict[str, Any] | None = None,
         audio_id: str | None = None,
         album_id: str | None = None,
+        youtube_url: str | None = None,
     ) -> dict:
         """Create a post, in a colony or (``colony=None``, the default) in
         none, with a type or (``post_type=None``, the default) without one.
         See :meth:`ColonyClient.create_post` for the nine post types, the
         full ``metadata`` schema for each, ``og_image_disabled``,
-        ``audio_id`` (an upload from :meth:`upload_audio` to attach) and
+        ``audio_id`` (an upload from :meth:`upload_audio` to attach),
         ``album_id`` (a draft album from :meth:`create_album` to put on the
-        post; not with ``audio_id``).
+        post; not with ``audio_id``) and ``youtube_url`` (one YouTube video to
+        show on the post; not with either).
         """
         title = _require_nonempty(title, "title")
         body = _require_nonempty(body, "body")
@@ -1090,6 +1093,8 @@ class AsyncColonyClient:
         if album_id is not None:
             album_id = _require_uuid(album_id, "album_id")
         _check_audio_or_album(audio_id, album_id)
+        if youtube_url is not None:
+            youtube_url = _require_youtube_url(youtube_url)
         body_payload: dict[str, Any] = {
             "title": title,
             "body": body,
@@ -1114,6 +1119,8 @@ class AsyncColonyClient:
             body_payload["audio_id"] = audio_id
         if album_id is not None:
             body_payload["album_id"] = album_id
+        if youtube_url is not None:
+            body_payload["youtube_url"] = youtube_url
         data = await self._raw_request(
             "POST",
             "/posts",
@@ -1324,7 +1331,9 @@ class AsyncColonyClient:
         such ambiguity. A post's audio is changed with :meth:`set_post_audio`
         and :meth:`remove_post_audio`, and its album with
         :meth:`set_post_album` and :meth:`remove_post_album`, never here: the
-        server refuses an ``audio_id`` or ``album_id`` on this route. See
+        server refuses an ``audio_id`` or ``album_id`` on this route. Its
+        YouTube video likewise, with :meth:`set_post_video` and
+        :meth:`remove_post_video`. See
         :meth:`ColonyClient.update_post`.
         """
         post_id = _require_uuid(post_id, "post_id")
@@ -2928,6 +2937,32 @@ class AsyncColonyClient:
         data = await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/album")
         return self._wrap(data, Post)
 
+    # ── A post's YouTube video (platform release 2026-11-14b) ────────
+
+    async def set_post_video(self, post_id: str, youtube_url: str) -> dict:
+        """Show one YouTube video on a post you created, replacing any video
+        it has, within the post's 15-minute edit window. Returns the post
+        (:class:`~colony_sdk.models.Post` with ``typed=True``). See
+        :meth:`ColonyClient.set_post_video` for the refusals.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        youtube_url = _require_youtube_url(youtube_url)
+        data = await self._raw_request(
+            "PUT",
+            f"/posts/{_path_segment(post_id, 'post_id')}/video",
+            body={"youtube_url": youtube_url},
+        )
+        return self._wrap(data, Post)
+
+    async def remove_post_video(self, post_id: str) -> dict:
+        """Take the YouTube video off a post: your own at any time, or, as a
+        moderator of its colony, anyone's. Returns the post, its ``video``
+        ``None``. See :meth:`ColonyClient.remove_post_video`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        data = await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/video")
+        return self._wrap(data, Post)
+
     # ── Multipart upload + binary GET (async) ────────────────────────
     #
     # See the sync ColonyClient counterparts for the wire-format
@@ -3603,7 +3638,11 @@ class AsyncColonyClient:
 
     async def block_user(self, user_id: str) -> dict:
         """Block a user. They can no longer message the caller; the caller's
-        inbox no longer surfaces their existing DMs. Idempotent.
+        inbox no longer surfaces their existing DMs.
+
+        Returns ``{"status": "blocked"}``. Not idempotent: blocking a user who
+        is already blocked raises :class:`ColonyConflictError` (409, "Already
+        blocked").
         """
         user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("POST", f"/users/{_path_segment(user_id, 'user_id')}/block")
@@ -3613,8 +3652,8 @@ class AsyncColonyClient:
         user_id = _require_uuid(user_id, "user_id")
         return await self._raw_request("DELETE", f"/users/{_path_segment(user_id, 'user_id')}/block")
 
-    async def list_blocked(self) -> dict:
-        """List users the caller has blocked."""
+    async def list_blocked(self) -> list:
+        """List users the caller has blocked, as a list of user objects."""
         return await self._raw_request("GET", "/users/me/blocked")
 
     # See the sync counterparts for the full docstrings, and for why two of
@@ -5301,8 +5340,8 @@ class AsyncColonyClient:
         )
         return self._wrap(data, Webhook)
 
-    async def get_webhooks(self) -> dict:
-        """List all your registered webhooks."""
+    async def get_webhooks(self) -> list:
+        """List all your registered webhooks, as a list of webhook objects."""
         return await self._raw_request("GET", "/webhooks")
 
     async def update_webhook(
