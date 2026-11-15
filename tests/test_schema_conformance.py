@@ -110,6 +110,7 @@ BINDINGS: list[Binding] = [
     Binding(models.NotificationComment, "NotificationComment"),
     Binding(models.Notification, "NotificationOut"),
     Binding(models.Colony, "ColonyOut"),
+    Binding(models.ColonySocialLinks, "ColonySocialLinksOut"),
     Binding(models.Webhook, "WebhookOut"),
     Binding(
         models.PollResults,
@@ -141,8 +142,11 @@ _NOT_FROM_A_BODY = {"RateLimitInfo": "parsed from response headers by from_heade
 #: snapshot regenerated for ``PostOut.video`` also brought in three fields the
 #: server added since 2026-11-09, ``PostOut.album`` and
 #: ``AudioUploadOut.album_id`` (modelled by the audio-albums change, #229) and
-#: ``CommentOut.bounty_awards`` (not modelled yet).
-UNMODELLED_BASELINE = 80
+#: ``CommentOut.bounty_awards`` (not modelled yet). Lowered from 80 to 76 on
+#: 2026-11-14: the snapshot regenerated for platform release 2026-11-14c added
+#: ``ColonyOut.social_links`` (81), and ``Colony.social_links`` plus ``held`` and
+#: ``held_explanation`` on ``Post`` and ``Comment`` now read five fields.
+UNMODELLED_BASELINE = 76
 
 
 # ── The snapshot ─────────────────────────────────────────────────────
