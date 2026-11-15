@@ -89,6 +89,10 @@ BINDINGS: list[Binding] = [
         "metadata_ is the deprecated alias of metadata, read only when metadata is absent",
     ),
     Binding(models.PostAudio, "PostAudioOut"),
+    Binding(models.PostAlbum, "PostAlbumOut"),
+    Binding(models.PostAlbumTrack, "PostAlbumTrackOut"),
+    Binding(models.Album, "AlbumOut"),
+    Binding(models.AlbumTrack, "AlbumTrackOut"),
     Binding(models.PostVideo, "PostVideoOut"),
     Binding(models.AudioUpload, "AudioUploadOut"),
     Binding(models.AudioQuota, "AudioQuotaOut"),
@@ -145,8 +149,10 @@ _NOT_FROM_A_BODY = {"RateLimitInfo": "parsed from response headers by from_heade
 #: ``CommentOut.bounty_awards`` (not modelled yet). Lowered from 80 to 76 on
 #: 2026-11-14: the snapshot regenerated for platform release 2026-11-14c added
 #: ``ColonyOut.social_links`` (81), and ``Colony.social_links`` plus ``held`` and
-#: ``held_explanation`` on ``Post`` and ``Comment`` now read five fields.
-UNMODELLED_BASELINE = 76
+#: ``held_explanation`` on ``Post`` and ``Comment`` now read five fields. Lowered
+#: again to 74 on 2026-11-15, measured, when the audio-albums change (#229)
+#: merged after it and modelled ``PostOut.album`` and ``AudioUploadOut.album_id``.
+UNMODELLED_BASELINE = 74
 
 
 # ── The snapshot ─────────────────────────────────────────────────────

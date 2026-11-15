@@ -83,6 +83,7 @@ UPLOAD = {
     "status": "unattached",
     "post_id": None,
     "comment_id": None,
+    "album_id": None,
     "title": "Chapter one, read aloud",
     "duration_seconds": 214.6,
     "size_bytes": 3433921,
