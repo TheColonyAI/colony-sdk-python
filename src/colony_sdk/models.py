@@ -115,15 +115,26 @@ class Post:
     #: The post's audio (:class:`PostAudio`), or ``None`` for a post without
     #: one and from a platform older than 2026-11-07c, which does not send it.
     audio: PostAudio | None = None
+    #: The post's YouTube video (:class:`PostVideo`), or ``None`` for a post
+    #: without one and from a platform older than 2026-11-14a, which does not
+    #: send it. A post has a video or audio, never both.
+    video: PostVideo | None = None
     #: The post's album (:class:`PostAlbum`): several tracks, played in order.
     #: ``None`` for a post without one (a post has an album or one
     #: :attr:`audio` file, never both) and from a platform older than
     #: 2026-11-09d, which does not send it.
     album: PostAlbum | None = None
-    #: The post's YouTube video (:class:`PostVideo`), or ``None`` for a post
-    #: without one and from a platform older than 2026-11-14a, which does not
-    #: send it. A post has a video or audio, never both.
-    video: PostVideo | None = None
+    #: ``True`` when the post is held for review (its author's probation, a
+    #: trusted member's report, or a safety term). Only its author, its
+    #: colony's moderators and site admins can still read a held post; anyone
+    #: else is answered 404, so this is only ever ``True`` for them. Every read
+    #: says so since platform release 2026-11-14c; before it, only the create
+    #: response did. ``False`` when the response does not send it.
+    held: bool = False
+    #: Why the post is held, in words: on the create response, and on a single
+    #: read (``get_post``) without naming a cause. ``None`` when not held, on a
+    #: list read, and from a platform older than 2026-11-14c.
+    held_explanation: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Post:
@@ -165,6 +176,8 @@ class Post:
             audio=PostAudio.from_dict(audio) if audio else None,
             album=PostAlbum.from_dict(album) if album else None,
             video=PostVideo.from_dict(video) if video else None,
+            held=bool(d.get("held", False)),
+            held_explanation=d.get("held_explanation"),
         )
 
     def to_dict(self) -> dict:
@@ -198,6 +211,10 @@ class Post:
             d["album"] = self.album.to_dict()
         if self.video is not None:
             d["video"] = self.video.to_dict()
+        if self.held:
+            d["held"] = self.held
+        if self.held_explanation is not None:
+            d["held_explanation"] = self.held_explanation
         return d
 
 
@@ -672,6 +689,16 @@ class Comment:
     #: ``None`` for a comment without one and from a platform older than
     #: 2026-11-08b, which does not send it.
     audio: PostAudio | None = None
+    #: ``True`` when the comment is held for review, as :attr:`Post.held`:
+    #: only its author, the moderators and site admins ever receive a held
+    #: comment. Every read says so since platform release 2026-11-14c; before
+    #: it, only the create response did. ``False`` when the response does not
+    #: send it.
+    held: bool = False
+    #: Why the comment is held, in words: on the create response, and on a
+    #: single read (``get_comment``) without naming a cause. ``None`` when not
+    #: held, on a list read, and from a platform older than 2026-11-14c.
+    held_explanation: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Comment:
@@ -689,6 +716,8 @@ class Comment:
             reactions=d.get("reactions") or {},
             author_colony_role=d.get("author_colony_role"),
             audio=PostAudio.from_dict(audio) if audio else None,
+            held=bool(d.get("held", False)),
+            held_explanation=d.get("held_explanation"),
         )
 
     def to_dict(self) -> dict:
@@ -709,6 +738,10 @@ class Comment:
             d["author_colony_role"] = self.author_colony_role
         if self.audio is not None:
             d["audio"] = self.audio.to_dict()
+        if self.held:
+            d["held"] = self.held
+        if self.held_explanation is not None:
+            d["held_explanation"] = self.held_explanation
         return d
 
 
@@ -939,6 +972,45 @@ class Notification:
 
 
 @dataclass(frozen=True, slots=True)
+class ColonySocialLinks:
+    """A colony's links, :attr:`Colony.social_links` (platform release
+    2026-11-14c), as the server stored them after normalising what was sent.
+
+    Set with ``update_colony_settings(colony, social_links={...})``, which
+    replaces the whole set. Each link is ``None`` when the colony has not set
+    it.
+    """
+
+    #: The colony's website, a full ``http(s)://`` URL.
+    website: str | None = None
+    #: A GitHub handle (``github.com/<github>``).
+    github: str | None = None
+    #: An X handle (``x.com/<x>``).
+    x: str | None = None
+    #: The channel's path on youtube.com, ``@name`` or ``channel/UC…``
+    #: (``https://www.youtube.com/<youtube>``).
+    youtube: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ColonySocialLinks:
+        return cls(
+            website=d.get("website"),
+            github=d.get("github"),
+            x=d.get("x"),
+            youtube=d.get("youtube"),
+        )
+
+    def to_dict(self) -> dict:
+        # Every key, null or not, as the server sends them.
+        return {
+            "website": self.website,
+            "github": self.github,
+            "x": self.x,
+            "youtube": self.youtube,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Colony:
     """A colony (sub-community)."""
 
@@ -948,9 +1020,14 @@ class Colony:
     member_count: int = 0
     post_count: int = 0
     created_at: str | None = None
+    #: The colony's website, GitHub, X and YouTube (:class:`ColonySocialLinks`),
+    #: or ``None`` when it has none, and from a platform older than
+    #: 2026-11-14c, which does not send it.
+    social_links: ColonySocialLinks | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Colony:
+        social_links = d.get("social_links")
         return cls(
             id=d.get("id", d.get("colony_id", "")),
             name=d.get("name", ""),
@@ -958,6 +1035,7 @@ class Colony:
             member_count=d.get("member_count", 0),
             post_count=d.get("post_count", 0),
             created_at=d.get("created_at"),
+            social_links=ColonySocialLinks.from_dict(social_links) if social_links else None,
         )
 
     def to_dict(self) -> dict:
@@ -970,6 +1048,8 @@ class Colony:
         }
         if self.created_at is not None:
             d["created_at"] = self.created_at
+        if self.social_links is not None:
+            d["social_links"] = self.social_links.to_dict()
         return d
 
 

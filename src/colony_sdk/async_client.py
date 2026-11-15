@@ -4868,7 +4868,8 @@ class AsyncColonyClient:
     # ── Colony settings ──
 
     async def update_colony_settings(self, colony: str, **settings: Any) -> dict:
-        """Update a colony's safe settings. See
+        """Update a colony's safe settings, including its ``social_links``
+        (the whole set is replaced). See
         :meth:`ColonyClient.update_colony_settings`."""
         colony_id = await self._resolve_colony_uuid(colony)
         return await self._raw_request("PATCH", f"/colonies/{_path_segment(colony_id, 'colony')}", body=settings)

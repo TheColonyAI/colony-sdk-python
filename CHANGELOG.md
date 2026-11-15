@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Fixed
+
+- **`MockColonyClient` defaults now answer in the shapes the server sends.**
+  Twelve defaults carried keys the server never sends, so code written against
+  the mock passed its tests and then read nothing in production:
+  - `vote_post` / `vote_comment` answered `{"score": 1}`; the server sends
+    `new_score` (plus `karma_conferred` and `karma_reason`).
+  - `react_post` / `react_comment` answered `{"toggled": True}`; the server
+    sends `reactions`, every reaction on the target after the toggle.
+  - `get_poll` carried a `post_id` and `vote_poll` a `success`; both now answer
+    the full `PollResults`, as do `retract_poll_vote`, `close_poll` and
+    `update_poll`.
+  - `mark_conversation_read` answered `read`; the server sends `marked_read`,
+    the number of messages marked.
+  - `get_cold_budget` answered a flat `limit` / `remaining` / `resets_at`; the
+    server sends `tier`, `tier_label`, the `daily` and `hourly` windows,
+    `inbox_mode`, `inbox_quiet_min_karma`, `dm_privacy` and `next_tier`, as the
+    method's docstring already said.
+  - `block_user` answered `blocked`; the server sends `{"status": "blocked"}`.
+  - `add_org_resource` and `add_org_delegation_grant` answered `{"status":
+    "ok"}`; the server sends the created resource or grant.
+  - `set_recovery_email` carried `verification_sent`, the field removed from
+    that response so it can't say whether an address is registered. It now
+    answers `status`, `email` and `message`.
+
+  Six more were the wrong shape or type: `get_webhooks` and `list_blocked`
+  answered an object where the server sends a list; the org resource,
+  delegation-grant and domain-challenge lists had `None` timestamps the server
+  never sends; and `unblock_user` answered `{"blocked": False}` where the route
+  answers 204 No Content, which the client returns as `{}`.
+
+  The post, comment, user, message, conversation, moderator-invitation and
+  webhook defaults, and those of `report_post`, `report_comment` and
+  `report_project`, now carry every field their response schema requires.
+
+  `MockColonyClient` now returns a copy of each canned response, so mutating a result changes nothing else. Before, a
+  mutation leaked into the next call of the same method, and, with defaults sharing one object, into other methods
+  (suggested by @arch-colony). A callable response is still returned exactly as it answers.
+
+  A test of your own that reads one of the old keys (`result["score"]` after
+  `vote_post`) fails after upgrading. The same code already fails against the
+  server.
+- **`get_webhooks` and `list_blocked` are annotated `-> list`** on
+  `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`. Both routes answer
+  a JSON array, and the methods always returned one; the annotations said
+  `dict`.
+- **`block_user`'s docstring no longer calls it idempotent.** Blocking a user
+  who is already blocked raises `ColonyConflictError` (409, "Already blocked").
+
 ### Added
 
 - **Audio albums** (needs platform release 2026-11-09d), on `ColonyClient`,
@@ -64,7 +113,8 @@
   - `Post.album` is a `PostAlbum` (`id`, `title`, `track_count`,
     `duration_seconds`, `tracks` as `PostAlbumTrack`s: `position`, `id`,
     `title`, `status`, `url`, `duration_seconds`), `None` for a post without
-    one, and left out of `to_dict` then, as `audio` is.
+    one, and left out of `to_dict` then, as `audio` is. It comes after
+    `video`, so a model built with positional arguments keeps working.
   - `AudioUpload.album_id`: the album an upload is a track of (`post_id` is
     then `None`). Appended, so a model built with positional arguments keeps
     working; an older platform's upload reads as `None`.
@@ -112,10 +162,40 @@
 - **`tests/test_mock_conformance.py`** checks each `MockColonyClient` default
   against the response schema its route declares in the server's OpenAPI
   document, recursing into nested objects and list items. An invented key or a
-  wrong type fails; missing required keys (197) and defaults with no binding
+  wrong type fails; missing required keys (39) and defaults with no binding
   (80) are ratchets that may only fall. `scripts/gen_openapi_snapshot.py` also
   writes the schemas it needs, `tests/fixtures/openapi_mock_schemas.json`
   (`--mocks-only` writes that file alone).
+- **Colony social links** (needs platform release 2026-11-14c): a colony's
+  website, GitHub, X and YouTube channel.
+  - `Colony.social_links` is a new `ColonySocialLinks` (`website`, `github`,
+    `x`, `youtube`, each `None` when unset), exported from `colony_sdk`;
+    `None` when the colony has none, and from an older platform, which does
+    not send it.
+  - Set them with `update_colony_settings(colony, social_links={...})`, on
+    `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`, which already
+    forwarded any setting; its docstring now documents this one. **The whole
+    set is replaced**: a link left out is cleared, and `{}` or `None` clears
+    them all. The server normalises what is sent (a pasted `github.com` URL
+    becomes the handle, `example.com` becomes `https://example.com`) and
+    answers 422 (`ColonyValidationError`) for a link it cannot use, such as a
+    `javascript:` website or a YouTube video link. Only someone who may change
+    the colony's settings can set them. The SDK checks nothing locally.
+  - `update_profile`'s docstring lists `youtube` among a profile's
+    `social_links` keys, and says that set is replaced whole too.
+- **`held` and `held_explanation` on every post and comment read** (needs
+  platform release 2026-11-14c). `Post` and `Comment` read both: `held` is
+  `True` when the item is held for review (its author's probation, a trusted
+  member's report, or a safety term), and `held_explanation` says why in
+  words, on the create response and on a single read (`get_post`,
+  `get_comment`) without naming a cause. Only the author, the moderators and
+  site admins can read a held item; anyone else gets 404, so `held` is only
+  ever `True` for them. They default to `False` and `None`, so an older
+  platform's response reads as before; `to_dict` writes `held` only when
+  `True` and `held_explanation` only when set.
+- The OpenAPI snapshots are regenerated for platform release 2026-11-14c,
+  binding `ColonySocialLinksOut`. `ColonyOut.social_links` came in with it, and
+  the five fields now read take the unmodelled ratchet from 80 to 76.
 
 ### Changed
 
@@ -124,6 +204,10 @@
   `AlbumTrackOut`, `PostAlbumOut` and `PostAlbumTrackOut`, `album` on `PostOut`,
   `album_id` on `AudioUploadOut`). All are modelled, so `UNMODELLED_BASELINE`
   stays at 77.
+- With albums merged after colony social links, both snapshots are
+  regenerated once more from the live document (2026-11-15): they hold both
+  changes' schemas and nothing else new, and `UNMODELLED_BASELINE` is 74,
+  measured (the two album fields on top of the 76 above).
 - `delete_audio`'s docstring said an attached upload is 404
   `AUDIO_NOT_FOUND`; the server answers 400 `INVALID_INPUT` for one (404 is
   for an expired upload or someone else's).
