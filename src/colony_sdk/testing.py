@@ -314,11 +314,19 @@ _MOCK_USER: dict[str, Any] = {
     "karma": 100,
     "created_at": "2026-01-01T00:00:00Z",
     "avatar_url": "https://example.com/avatar.png",
+    # Only the links that are set, as the server sends them: no ``x`` or
+    # ``youtube`` key here, rather than a null.
+    "social_links": {"website": "https://example.com", "github": "mock-agent"},
 }
 
 #: A user looked up by id or username (``UserOut``), and a conversation's
-#: ``other_user``.
-_MOCK_OTHER_USER: dict[str, Any] = {**_MOCK_USER, "username": "mock-user", "display_name": "Mock User"}
+#: ``other_user``: a profile with no links, which the server sends as null.
+_MOCK_OTHER_USER: dict[str, Any] = {
+    **_MOCK_USER,
+    "username": "mock-user",
+    "display_name": "Mock User",
+    "social_links": None,
+}
 
 #: A post (``PostOut``) as the plain ``create_post("Title", "Body")`` makes
 #: one: in no colony, with no type, and not a marketplace listing.
@@ -1010,6 +1018,12 @@ def _project_slug_arg(slug: str) -> str:
     return _check_path_segment(_require_nonempty(slug, "slug"), "slug")
 
 
+def _given(**kwargs: Any) -> dict[str, Any]:
+    """The keyword arguments that are not ``None``: what a method that sends a
+    parameter only when given records."""
+    return {k: v for k, v in kwargs.items() if v is not None}
+
+
 def _canned_rows(resp: Any, key: str) -> list:
     """The rows a mock iterator yields from a canned list response.
 
@@ -1045,6 +1059,13 @@ class MockColonyClient:
         # AttributeError. Always an empty dict — the mock doesn't fake
         # HTTP responses.
         self.last_response_headers: dict[str, str] = {}
+        #: As on the live clients: whether the last response was the stored
+        #: response to an earlier request with the same ``Idempotency-Key``,
+        #: and why a keyed write's response was not stored. The mock sends no
+        #: requests, so they stay ``False`` and ``None`` unless a test sets
+        #: them, to drive the code under test down its replay or retry path.
+        self.last_response_idempotent_replay: bool = False
+        self.last_response_idempotency_skipped: str | None = None
 
     def _respond(self, method: str, kwargs: dict[str, Any]) -> Any:
         self.calls.append((method, kwargs))
@@ -1407,8 +1428,12 @@ class MockColonyClient:
     def verify_email(self, token: str) -> dict:
         return self._respond("verify_email", {"token": token})
 
-    def get_post_context(self, post_id: str) -> dict:
-        return self._respond("get_post_context", {"post_id": post_id})
+    def get_post_context(self, post_id: str, *, limit: int | None = None, offset: int | None = None) -> dict:
+        # limit and offset are recorded only when given, as the real client
+        # sends them, so a recorded ("get_post_context", {"post_id": ...})
+        # written before they existed still matches. The canned answer is
+        # returned as configured, as for every paged mock method.
+        return self._respond("get_post_context", {"post_id": post_id, **_given(limit=limit, offset=offset)})
 
     def get_post_conversation(self, post_id: str) -> dict:
         return self._respond("get_post_conversation", {"post_id": post_id})
@@ -3474,8 +3499,20 @@ class MockColonyClient:
 
     # ── Puzzles ──────────────────────────────────────────────────────
 
-    def get_puzzles(self) -> dict:
-        return self._respond("get_puzzles", {})
+    def get_puzzles(self, *, limit: int | None = None, offset: int | None = None) -> dict:
+        # Recorded only when given, as for get_post_context.
+        return self._respond("get_puzzles", _given(limit=limit, offset=offset))
+
+    def iter_puzzles(self, page_size: int = 50, max_results: int | None = None) -> Iterator[dict]:
+        # Yields get_puzzles' canned page, like iter_projects, rather than
+        # paging a double that answers one fixed page forever.
+        self.calls.append(("iter_puzzles", {"page_size": page_size, "max_results": max_results}))
+        resp = self._responses.get("get_puzzles", {"items": []})
+        items = resp.get("items", []) if isinstance(resp, dict) else resp
+        for i, item in enumerate(items):
+            if max_results is not None and i >= max_results:
+                return
+            yield item
 
     def get_puzzle(self, puzzle_id: str) -> dict:
         return self._respond("get_puzzle", {"puzzle_id": puzzle_id})

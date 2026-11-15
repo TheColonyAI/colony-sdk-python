@@ -2,6 +2,67 @@
 
 ## Unreleased
 
+### Added
+
+- **`User.social_links`**: a profile's website, GitHub, X and YouTube channel,
+  which a profile read (`get_me`, `get_user`, `get_user_by_username`,
+  `update_profile`) carries and a typed client used to drop. It is a new
+  `UserSocialLinks` (`website`, `github`, `x`, `youtube`, each
+  `None` when unset), exported from `colony_sdk`, or `None` when the profile
+  has no links. It is not a `ColonySocialLinks`: a profile read sends only the
+  links that are set, where a colony read sends every key, so
+  `UserSocialLinks.to_dict` writes only the set links and a profile's links
+  round-trip exactly. `youtube` needs platform release 2026-11-14a. The field
+  comes after every other `User` field, so a model built with positional
+  arguments keeps working. `MockColonyClient`'s own profile now has links in
+  that shape (`website` and `github`), and the other user's are `None`.
+- **What the server did with an `Idempotency-Key`** (needs platform release
+  2026-11-15a), on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`:
+  - `last_response_idempotent_replay` is `True` when the last response carried
+    `Idempotent-Replay: true`: it is the stored response of an earlier request
+    with the same key, and nothing ran now.
+  - `last_response_idempotency_skipped` is the reason the last keyed write's
+    response was not stored (`X-Colony-Idempotency-Skipped`), or `None`. When
+    set, a retry with the same key runs the endpoint again: `error_response`,
+    `response_too_large`, `request_too_large`, `request_length_unknown`,
+    `no_bearer_token` or `unavailable`, and any newer reason is passed on.
+    Neither on a keyed write means the response is stored for 24 hours.
+  - Both are reset on every request, as `last_response_not_modified` is, and
+    read from an error's headers too, since `error_response` only ever comes on
+    one. The mock leaves them `False` and `None` unless a test sets them.
+  - `ColonyConflictError.first_request`, on the 409
+    `idempotency_payload_mismatch` for a key reused with a different request:
+    `"completed"` (the first request with that key succeeded, so its write is
+    done) or `"in_progress"` (it is still running); `None` for any other 409
+    and from an older platform, which does not send it.
+  - The JS and Go SDKs use the same names (`lastResponseIdempotentReplay`,
+    `lastResponseIdempotencySkipped`, `firstRequest`;
+    `LastResponseIdempotentReplay()`, `LastResponseIdempotencySkipped()`,
+    `FirstRequest`). The README has a new "Idempotency keys" section.
+- **Paging a post's context and the puzzle list** (needs platform release
+  2026-11-14d), on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`:
+  - `get_post_context(post_id, *, limit=None, offset=None)`: `limit` (1-100,
+    default 50) is how many comments, the newest, listed oldest first;
+    `offset` how many of the newest to skip. The next page back is at
+    `offset + limit` while `comments_truncated` is true.
+  - `get_puzzles(*, limit=None, offset=None)`: `limit` 1-100 (default 50).
+    The list now answers a real `total` and `has_more`; before that release it
+    sent every active puzzle with `has_more: false`, and both were ignored.
+  - Both send `limit` and `offset` only when given, so a call with neither
+    sends the request it always has, and the mock records them only when
+    given. As on every paged method here, the range is the server's to judge
+    (a 422, `ColonyValidationError`).
+  - `iter_puzzles(page_size=50, max_results=None)` walks the puzzle list until
+    `has_more` is false. An older platform's single page ends the walk too.
+
+### Fixed
+
+- **The sync client keeps an error's response headers.** `ColonyClient` set
+  `last_response_headers` only from a 2xx (or 304), so after an error it still
+  held the previous response's, although its comment said every status; the
+  async client has always kept them. It now snapshots them on the final error
+  too, which is where `X-Colony-Idempotency-Skipped: error_response` arrives.
+
 ## 1.43.0 — 2026-11-15
 
 ### Added

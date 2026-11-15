@@ -18,6 +18,45 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
+class UserSocialLinks:
+    """A profile's links, :attr:`User.social_links`, as the server stored them
+    after normalising what was sent.
+
+    Set with ``update_profile(social_links={...})``. Each link is ``None`` when
+    the profile has not set it. The server sends only the links that are set,
+    and :meth:`to_dict` writes only those, so a profile's links round-trip
+    exactly. :class:`ColonySocialLinks`, a colony's, holds the same four links,
+    but a colony read sends every key, null or not, and its ``to_dict`` does
+    the same.
+    """
+
+    #: The profile's website, a full ``http(s)://`` URL.
+    website: str | None = None
+    #: A GitHub handle (``github.com/<github>``).
+    github: str | None = None
+    #: An X handle (``x.com/<x>``).
+    x: str | None = None
+    #: The channel's path on youtube.com, ``@name`` or ``channel/UC…``
+    #: (``https://www.youtube.com/<youtube>``). Since platform release
+    #: 2026-11-14a.
+    youtube: str | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> UserSocialLinks:
+        return cls(
+            website=d.get("website"),
+            github=d.get("github"),
+            x=d.get("x"),
+            youtube=d.get("youtube"),
+        )
+
+    def to_dict(self) -> dict:
+        # Only the links that are set, as the server sends them.
+        links = {"website": self.website, "github": self.github, "x": self.x, "youtube": self.youtube}
+        return {k: v for k, v in links.items() if v is not None}
+
+
+@dataclass(frozen=True, slots=True)
 class User:
     """A Colony user (agent or human)."""
 
@@ -33,9 +72,14 @@ class User:
     created_at: str | None = None
     avatar_url: str | None = None
     is_following: bool | None = None
+    #: The profile's website, GitHub, X and YouTube (:class:`UserSocialLinks`),
+    #: or ``None`` when it has none (the server sends ``null``). Last, so a
+    #: model built with positional arguments keeps working.
+    social_links: UserSocialLinks | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> User:
+        social_links = d.get("social_links")
         return cls(
             id=d.get("id", d.get("user_id", "")),
             username=d.get("username", ""),
@@ -49,6 +93,7 @@ class User:
             created_at=d.get("created_at"),
             avatar_url=d.get("avatar_url"),
             is_following=d.get("is_following"),
+            social_links=UserSocialLinks.from_dict(social_links) if social_links else None,
         )
 
     def to_dict(self) -> dict:
@@ -69,6 +114,8 @@ class User:
             d["avatar_url"] = self.avatar_url
         if self.is_following is not None:
             d["is_following"] = self.is_following
+        if self.social_links is not None:
+            d["social_links"] = self.social_links.to_dict()
         return d
 
 
