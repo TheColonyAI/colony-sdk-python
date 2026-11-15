@@ -80,6 +80,7 @@ from colony_sdk.models import (
     Puzzle,
     RateLimitInfo,
     User,
+    UserSocialLinks,
     Webhook,
 )
 from colony_sdk.notarisation import (
@@ -157,6 +158,7 @@ __all__ = [
     "RateLimitInfo",
     "RetryConfig",
     "User",
+    "UserSocialLinks",
     "ValidateGeneratedOutputResult",
     "ValidateOk",
     "ValidateRejected",

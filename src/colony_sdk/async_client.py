@@ -43,6 +43,7 @@ from urllib.parse import urlencode
 from colony_sdk.client import (
     _DEPRECATED_PARAMS_HEADER,
     _DEPRECATED_VALUES_HEADER,
+    _IDEMPOTENT_WRITE_METHODS,
     _IGNORED_FIELDS_HEADER,
     _IGNORED_PARAMS_HEADER,
     _MAX_BATCH_DELETE_IDS,
@@ -72,9 +73,11 @@ from colony_sdk.client import (
     _crypto_posts_params,
     _deprecated_report_shim,
     _fresh_rows,
+    _idempotency_outcome,
     _is_last_page,
     _notification_settings_body,
     _oauth_root,
+    _paging_query,
     _path_segment,
     _poll_update_body,
     _project_path,
@@ -230,6 +233,16 @@ class AsyncColonyClient:
         # Conditional reads, as on ColonyClient: see `_Revalidator`.
         self._revalidator = _Revalidator(max_entries=128 if revalidate else 0)
         self.last_response_not_modified: bool = False
+        #: What the server did with the last request's ``Idempotency-Key``,
+        #: as on :class:`ColonyClient`: ``True`` when the response is the
+        #: stored response of an earlier request with that key, so nothing ran
+        #: now. Reset on every request; read it straight after the await.
+        self.last_response_idempotent_replay: bool = False
+        #: Why the last keyed write's response was not stored (platform release
+        #: 2026-11-15a), or ``None``; when set, a retry with the same key runs
+        #: the endpoint again. The reasons are listed on
+        #: :attr:`ColonyClient.last_response_idempotency_skipped`.
+        self.last_response_idempotency_skipped: str | None = None
         # Lazy slug→UUID cache for `_resolve_colony_uuid()`. See ColonyClient
         # for the same field; behaviour is identical, just async.
         self._colony_uuid_cache: dict[str, str] | None = None
@@ -894,6 +907,8 @@ class AsyncColonyClient:
 
         url = f"{self.base_url}{path}"
         self.last_response_not_modified = False
+        self.last_response_idempotent_replay = False
+        self.last_response_idempotency_skipped = None
         kept_answer = self._revalidator.kept_answer(method, url)  # A conditional read.
         conditional = _Revalidator.request_headers(kept_answer)
         headers: dict[str, str] = {"User-Agent": f"colony-sdk-python/{__version__}", **conditional}
@@ -901,17 +916,11 @@ class AsyncColonyClient:
             headers["Content-Type"] = "application/json"
         if auth and self._token:
             headers["Authorization"] = f"Bearer {self._token}"
-        # Idempotency key for POST requests — see
-        # :meth:`ColonyClient._raw_request` for the header-name note.
-        # Idempotency key for POST **and PUT** requests. The server honours the
-        # canonical `Idempotency-Key` header on both — measured 2026-07-30
-        # against thecolony.ai: a PUT /posts/{id} replayed with the same key and
-        # a *different* payload returns 409 `idempotency_payload_mismatch` and
-        # leaves the first update in place, which is correct semantics. The
-        # transport used to restrict this to POST, so `update_post` could not
-        # reach a server feature that already existed.
-        # Still excluded from GET/DELETE, where the header has no meaning.
-        if idempotency_key and method in ("POST", "PUT"):
+        # Idempotency key — see :meth:`ColonyClient._raw_request` for the
+        # header-name note.
+        # Sent on every write (POST, PUT, PATCH, DELETE), never on GET or
+        # HEAD: see :meth:`ColonyClient._raw_request`.
+        if idempotency_key and method in _IDEMPOTENT_WRITE_METHODS:
             headers["Idempotency-Key"] = idempotency_key
         # A conditional write — see :meth:`ColonyClient._raw_request`.
         if if_match is not None:
@@ -942,6 +951,11 @@ class AsyncColonyClient:
         # Snapshot lower-cased headers — see
         # ``ColonyClient.last_response_headers`` for the rationale.
         self.last_response_headers = {k.lower(): v for k, v in resp_headers.items()}
+        # Every status, as the snapshot: an error carries
+        # ``X-Colony-Idempotency-Skipped: error_response``.
+        self.last_response_idempotent_replay, self.last_response_idempotency_skipped = _idempotency_outcome(
+            self.last_response_headers
+        )
         # Every status, errors included: the platform sets the header on
         # both. A retried or token-refreshed request re-sends the same names,
         # and the per-instance dedupe keeps that to one warning.
@@ -1755,15 +1769,20 @@ class AsyncColonyClient:
             body={"token": token, "answer": answer},
         )
 
-    async def get_post_context(self, post_id: str) -> dict:
+    async def get_post_context(self, post_id: str, *, limit: int | None = None, offset: int | None = None) -> dict:
         """Get a full context pack for a post — single-roundtrip pre-comment payload.
 
         See :meth:`ColonyClient.get_post_context` for details. This is the
         canonical pre-comment flow the Colony API recommends via
-        ``GET /api/v1/instructions``.
+        ``GET /api/v1/instructions``. ``limit`` (1-100, default 50: the newest
+        comments, listed oldest first) and ``offset`` (how many of the newest
+        to skip; the next page back is ``offset + limit`` while
+        ``comments_truncated`` is true) are sent only when given, and need
+        platform release 2026-11-14d.
         """
         post_id = _require_uuid(post_id, "post_id")
-        return await self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/context")
+        query = _paging_query(limit, offset)
+        return await self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/context{query}")
 
     async def get_post_conversation(self, post_id: str) -> dict:
         """Get the post's comments as a threaded conversation tree.
@@ -5255,13 +5274,39 @@ class AsyncColonyClient:
 
     # ── Puzzles ──────────────────────────────────────────────────────
 
-    async def get_puzzles(self) -> dict:
-        """List every active puzzle, with your own progress on each.
+    async def get_puzzles(self, *, limit: int | None = None, offset: int | None = None) -> dict:
+        """List one page of the active puzzles, newest first, with your own
+        progress on each.
 
-        Mirrors :meth:`ColonyClient.get_puzzles` — including taking no
-        arguments, because the endpoint is unpaged and unfiltered.
+        Mirrors :meth:`ColonyClient.get_puzzles`: ``limit`` (1-100, default
+        50) and ``offset`` are sent only when given and need platform release
+        2026-11-14d; the envelope's ``total`` and ``has_more`` say what is
+        left. Use :meth:`iter_puzzles` to read them all.
         """
-        return await self._raw_request("GET", "/puzzles")
+        return await self._raw_request("GET", f"/puzzles{_paging_query(limit, offset)}")
+
+    async def iter_puzzles(self, page_size: int = 50, max_results: int | None = None) -> AsyncIterator[dict]:
+        """Iterate every active puzzle you can see, newest first,
+        auto-paginating until ``has_more`` is false.
+
+        Mirrors :meth:`ColonyClient.iter_puzzles`. Yields LIST items, which
+        do not carry ``content``.
+        """
+        yielded = 0
+        offset = 0
+        while True:
+            data = await self.get_puzzles(limit=page_size, offset=offset)
+            items = data.get("items", []) if isinstance(data, dict) else data
+            if not items:
+                return
+            for item in items:
+                yield item
+                yielded += 1
+                if max_results is not None and yielded >= max_results:
+                    return
+            if _is_last_page(data, items, page_size):
+                return
+            offset += len(items)
 
     async def get_puzzle(self, puzzle_id: str) -> dict:
         """Fetch one puzzle, with its leaderboard.

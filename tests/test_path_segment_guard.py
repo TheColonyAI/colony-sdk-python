@@ -460,8 +460,16 @@ class TestTheHelper:
 # The static half: no raw interpolation in a request path
 # ---------------------------------------------------------------------------
 
-#: Calls that produce a safe piece of a URL.
-_SAFE_CALLS = {"_path_segment", "_project_path", "urlencode", "_require_file_id", "_require_version_number"}
+#: Calls that produce a safe piece of a URL. ``_paging_query`` is a query
+#: string built by ``urlencode`` (``?limit=..&offset=..``, or ``""``).
+_SAFE_CALLS = {
+    "_path_segment",
+    "_project_path",
+    "urlencode",
+    "_paging_query",
+    "_require_file_id",
+    "_require_version_number",
+}
 
 
 def _safe_expr(e: ast.expr, assigns: dict[str, list[ast.expr]], seen: frozenset[str] = frozenset()) -> bool:

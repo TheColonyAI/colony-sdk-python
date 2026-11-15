@@ -8,11 +8,12 @@ body keys — which is the half a hand-rolled call gets wrong.
 Four things here are deliberate and easy to "fix" into a bug, so each has a
 test that fails if someone does:
 
-**``get_puzzles()`` takes no arguments.** The endpoint accepts none: it is
-unpaged and unfiltered. A ``limit=`` or ``difficulty=`` parameter would be
-dropped server-side and hand the caller a filter that silently does nothing
-— the widening failure this codebase has been bitten by before. The test
-asserts the request carries no query string at all.
+**``get_puzzles()`` takes only ``limit`` and ``offset``.** The endpoint was
+unpaged and unfiltered until platform release 2026-11-14d, which added those
+two and nothing else. A ``difficulty=`` parameter would be dropped server-side
+and hand the caller a filter that silently does nothing — the widening failure
+this codebase has been bitten by before. A bare call still carries no query
+string at all (``tests/test_context_and_puzzle_paging.py`` pins the paging).
 
 **``create_puzzle(colony=...)`` sends a NAME, not a UUID.** Its neighbour
 ``create_post`` resolves a colony to ``colony_id`` before sending; this
@@ -182,8 +183,8 @@ class TestValidators:
 class TestSync:
     @patch("colony_sdk.client.urlopen")
     def test_listing_sends_no_query_string_at_all(self, mock_urlopen: MagicMock) -> None:
-        """The endpoint accepts no parameters. Anything we invented here
-        would be dropped server-side and read as a working filter."""
+        """A bare call sends exactly the request it always has: ``limit`` and
+        ``offset`` go only when given, and there is no filter to invent."""
         mock_urlopen.return_value = _mock_response(json.dumps({"items": [], "total": 0, "has_more": False}))
         client = _authed_client()
 

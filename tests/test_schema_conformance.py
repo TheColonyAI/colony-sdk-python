@@ -76,9 +76,17 @@ BINDINGS: list[Binding] = [
     Binding(
         models.User,
         "UserOut",
-        unfilled=("post_count", "comment_count", "is_following"),
-        notes="GET /users/me and /users/{id} answer UserOut, which has none of the three; "
-        "post_count is on the directory's DirectoryUserOut, and nothing sends is_following",
+        unfilled=("post_count", "comment_count", "is_following", "social_links"),
+        notes="GET /users/me and /users/{id} answer UserOut, which has none of the first three; "
+        "post_count is on the directory's DirectoryUserOut, and nothing sends is_following. "
+        "UserOut declares social_links a free-form object (dict | None), so the schema names none "
+        "of its keys to fill it from; UserSocialLinks is checked against ColonySocialLinksOut below",
+    ),
+    Binding(
+        models.UserSocialLinks,
+        "ColonySocialLinksOut",
+        notes="UserOut.social_links has no schema of its own; the server builds it from the same "
+        "four normalised links as ColonySocialLinksOut, sending only those that are set",
     ),
     Binding(
         models.Post,
@@ -152,7 +160,9 @@ _NOT_FROM_A_BODY = {"RateLimitInfo": "parsed from response headers by from_heade
 #: ``held_explanation`` on ``Post`` and ``Comment`` now read five fields. Lowered
 #: again to 74 on 2026-11-15, measured, when the audio-albums change (#229)
 #: merged after it and modelled ``PostOut.album`` and ``AudioUploadOut.album_id``.
-UNMODELLED_BASELINE = 74
+#: Lowered to 73, measured, when ``User.social_links`` started reading
+#: ``UserOut.social_links``.
+UNMODELLED_BASELINE = 73
 
 
 # ── The snapshot ─────────────────────────────────────────────────────

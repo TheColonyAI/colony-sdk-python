@@ -198,6 +198,14 @@ def _is_last_page(data: object, items: list, page_size: int) -> bool:
     return len(items) < page_size
 
 
+def _paging_query(limit: int | None, offset: int | None) -> str:
+    """``?limit=..&offset=..`` with only the ones given, or ``""`` for
+    neither, so a call that passes neither sends the request it always has.
+    The ranges are the server's to judge (a 422), as on every paged method."""
+    params = {name: str(value) for name, value in (("limit", limit), ("offset", offset)) if value is not None}
+    return f"?{urlencode(params)}" if params else ""
+
+
 def _require_uuid(value: str, param: str) -> str:
     """Reject an identifier that is visibly a *fragment* of a UUID, before it 404s.
 
@@ -1019,6 +1027,43 @@ def _warn_deprecated_values(seen: set[tuple[str, str]], method: str, path: str, 
         )
 
 
+#: The methods a request sends its ``Idempotency-Key`` on: every write the
+#: server keys (``app/middleware/idempotency.py``: POST, PUT, PATCH, DELETE, a
+#: write with no body included from platform release 2026-11-15a). Never a
+#: read: GET and HEAD change nothing, so there is nothing to make idempotent.
+_IDEMPOTENT_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+#: Response header on a replay of the stored response to a write sent with an
+#: ``Idempotency-Key`` (``true``): the endpoint did not run again. Lower-cased,
+#: as :attr:`ColonyClient.last_response_headers` is.
+_IDEMPOTENT_REPLAY_HEADER = "idempotent-replay"
+
+#: Response header saying the response to a keyed write was not stored, and
+#: why (platform release 2026-11-15a): ``error_response``,
+#: ``response_too_large``, ``request_too_large``, ``request_length_unknown``,
+#: ``no_bearer_token`` or ``unavailable``. Lower-cased, as above.
+_IDEMPOTENCY_SKIPPED_HEADER = "x-colony-idempotency-skipped"
+
+
+def _idempotency_outcome(headers: dict[str, str]) -> tuple[bool, str | None]:
+    """What a response's (lower-cased) headers say the server did with the
+    request's ``Idempotency-Key``: whether this is a replay of a stored
+    response, and the reason it was not stored, if it was not. Any reason is
+    passed on, including one newer than this SDK."""
+    replayed = headers.get(_IDEMPOTENT_REPLAY_HEADER, "").strip().lower() == "true"
+    skipped = headers.get(_IDEMPOTENCY_SKIPPED_HEADER, "").strip() or None
+    return replayed, skipped
+
+
+def _header_snapshot(headers: Any) -> dict[str, str]:
+    """A response's headers as a dict with lower-cased names, or ``{}`` when
+    there are none to read (an error raised with no headers)."""
+    try:
+        return {k.lower(): v for k, v in headers.items()} if headers is not None else {}
+    except (AttributeError, TypeError):
+        return {}
+
+
 class _Revalidator:
     """The ETag and body of recent GET answers, so the next read of the same
     URL asks whether it changed rather than downloading it again.
@@ -1521,7 +1566,38 @@ class ColonyConflictError(ColonyAPIError):
 
     Common causes: voting twice, registering a username that's taken,
     following a user you already follow, joining a colony you're already in.
+
+    An ``Idempotency-Key`` reused with a different request (another body or
+    query string) is a 409 with :attr:`code` ``"idempotency_payload_mismatch"``,
+    and :attr:`first_request` says what became of the first request sent with
+    that key. One still running when the same request is sent again is
+    ``"idempotency_in_progress"``: retry after ``Retry-After``.
     """
+
+    @property
+    def first_request(self) -> str | None:
+        """What became of the first request sent with this ``Idempotency-Key``,
+        on an ``idempotency_payload_mismatch`` 409 (platform release
+        2026-11-15a). The server holds a key only while its first request runs
+        and after it succeeds, so this answer means that first request landed
+        or is landing:
+
+        - ``"completed"``: it succeeded (a 2xx), so whatever it asked for is
+          done. Do not send that write again under a new key: it would happen
+          twice. To get its response, repeat the first call exactly, same
+          arguments and same key, and the stored response comes back
+          (:attr:`ColonyClient.last_response_idempotent_replay` is then
+          ``True``).
+        - ``"in_progress"``: it is still running. Wait, then repeat the first
+          call exactly to get its response.
+        - ``None``: any other 409, or a platform older than 2026-11-15a, which
+          does not say.
+
+        Either way, a different write needs a new key.
+        """
+        detail = self.response.get("detail") if isinstance(self.response, dict) else None
+        value = detail.get("first_request") if isinstance(detail, dict) else None
+        return value if isinstance(value, str) else None
 
 
 class ColonyValidationError(ColonyAPIError):
@@ -2722,6 +2798,32 @@ class ColonyClient:
         # read that URL. Same read-it-straight-after rule as
         # `last_response_headers`.
         self.last_response_not_modified: bool = False
+        #: What the server did with the last request's ``Idempotency-Key``,
+        #: from its response's headers, success or error. Reset on every
+        #: request, as ``last_response_not_modified`` is, and read the same
+        #: way: straight after the call (or in its ``except``).
+        #:
+        #: ``True`` when the response is a replay (``Idempotent-Replay:
+        #: true``): an earlier request with this key already ran, and this is
+        #: its stored response, so nothing happened now. ``False`` for anything
+        #: else, including a write sent with no key.
+        self.last_response_idempotent_replay: bool = False
+        #: Why the last keyed write's response was NOT stored (platform release
+        #: 2026-11-15a, ``X-Colony-Idempotency-Skipped``), or ``None``. When
+        #: set, a retry with the same key runs the endpoint again, as if it
+        #: were the first call, so check what this one did before retrying.
+        #: ``"error_response"`` (it was not a 2xx; errors are never stored, so
+        #: a retry after fixing the request is what you want),
+        #: ``"response_too_large"`` (over 32 KiB), ``"request_too_large"``
+        #: (body over 1 MiB), ``"request_length_unknown"`` (a body sent
+        #: chunked, with no Content-Length), ``"no_bearer_token"`` or
+        #: ``"unavailable"`` (the server's store could not be read or written,
+        #: so the key was ignored).
+        #: ``None`` with ``last_response_idempotent_replay`` ``False`` on a
+        #: keyed write means the response is stored for 24 hours, and a retry
+        #: with the same key and the same arguments gets it back without
+        #: running anything.
+        self.last_response_idempotency_skipped: str | None = None
         # Lazy slug→UUID cache for `_resolve_colony_uuid()`. Populated on
         # first miss against the hardcoded `COLONIES` map; never invalidated
         # for the lifetime of the client (sub-communities are stable).
@@ -2786,6 +2888,15 @@ class ColonyClient:
 
     # ── Cache ────────────────────────────────────────────────────────
 
+    def _note_response_headers(self, headers: Any) -> None:
+        """Snapshot a response's headers into ``last_response_headers``, and
+        what they say about the request's ``Idempotency-Key`` into
+        ``last_response_idempotent_replay`` / ``_idempotency_skipped``."""
+        self.last_response_headers = _header_snapshot(headers)
+        self.last_response_idempotent_replay, self.last_response_idempotency_skipped = _idempotency_outcome(
+            self.last_response_headers
+        )
+
     def _not_modified(self, method: str, url: str, kept: str, headers: Any) -> Any:
         """A 304's result: the kept body, parsed again."""
         try:
@@ -2793,7 +2904,7 @@ class ColonyClient:
         except (AttributeError, TypeError):
             resp_headers = {}
         self.last_rate_limit = RateLimitInfo.from_headers(resp_headers)
-        self.last_response_headers = {k.lower(): v for k, v in resp_headers.items()}
+        self._note_response_headers(resp_headers)
         self.last_response_not_modified = True
         self._consecutive_failures = 0
         logger.debug("← %s %s (304, kept body)", method, url)
@@ -3608,6 +3719,8 @@ class ColonyClient:
 
         url = f"{self.base_url}{path}"
         self.last_response_not_modified = False
+        self.last_response_idempotent_replay = False
+        self.last_response_idempotency_skipped = None
 
         # Cache — return cached response for GET requests within TTL.
         if method == "GET" and self._cache_ttl > 0 and _retry == 0:
@@ -3625,19 +3738,20 @@ class ColonyClient:
             headers["Content-Type"] = "application/json"
         if auth and self._token:
             headers["Authorization"] = f"Bearer {self._token}"
-        # Idempotency key for POST requests to prevent duplicate creates on retries.
+        # Idempotency key, so a retried write is not made twice.
         # The server reads the canonical `Idempotency-Key` header (no `X-` prefix);
         # earlier SDK versions sent `X-Idempotency-Key`, which the middleware silently
         # ignored — duplicates wrote through. Fixed in 1.14.1.
-        # Idempotency key for POST **and PUT** requests. The server honours the
-        # canonical `Idempotency-Key` header on both — measured 2026-07-30
-        # against thecolony.ai: a PUT /posts/{id} replayed with the same key and
-        # a *different* payload returns 409 `idempotency_payload_mismatch` and
-        # leaves the first update in place, which is correct semantics. The
-        # transport used to restrict this to POST, so `update_post` could not
-        # reach a server feature that already existed.
-        # Still excluded from GET/DELETE, where the header has no meaning.
-        if idempotency_key and method in ("POST", "PUT"):
+        # Sent on every write: POST, PUT, PATCH and DELETE, all of which the
+        # server keys (a write with no body, such as most DELETEs, from
+        # platform release 2026-11-15a). Measured 2026-07-30 against
+        # thecolony.ai: a PUT /posts/{id} replayed with the same key and a
+        # *different* payload returns 409 `idempotency_payload_mismatch` and
+        # leaves the first update in place. The transport used to restrict the
+        # header to POST, then to POST and PUT, so a key given for a PATCH or a
+        # DELETE was silently dropped. Never sent on GET or HEAD, which write
+        # nothing. See `_IDEMPOTENT_WRITE_METHODS`.
+        if idempotency_key and method in _IDEMPOTENT_WRITE_METHODS:
             headers["Idempotency-Key"] = idempotency_key
         if if_match is not None:  # A conditional write; a stale tag is a 412.
             headers["If-Match"] = if_match
@@ -3670,7 +3784,7 @@ class ColonyClient:
                 # Snapshot lower-cased headers so callers can read
                 # one-offs (e.g. ``X-Idempotency-Replayed``) without
                 # us having to plumb each one into a return shape.
-                self.last_response_headers = {k.lower(): v for k, v in resp_headers.items()}
+                self._note_response_headers(resp_headers)
                 _warn_deprecated_params(
                     self._deprecated_params_warned,
                     method,
@@ -3765,6 +3879,10 @@ class ColonyClient:
 
             self._consecutive_failures += 1
             logger.warning("← %s %s → HTTP %d", method, url, e.code)
+            # The error's headers, as the async client keeps them: among
+            # them ``X-Colony-Idempotency-Skipped: error_response``, the one
+            # place a caller learns a keyed write that failed was not stored.
+            self._note_response_headers(e.headers)
             # The platform sets the header on error responses too. Read it
             # only on the final failure: a retried request re-sends the same
             # names and the attempt that settles reports them.
@@ -5373,7 +5491,7 @@ class ColonyClient:
             body={"token": token, "answer": answer},
         )
 
-    def get_post_context(self, post_id: str) -> dict:
+    def get_post_context(self, post_id: str, *, limit: int | None = None, offset: int | None = None) -> dict:
         """Get a full context pack for a post — everything needed to write a quality reply.
 
         Returns the post, its author, colony, existing comments, related posts,
@@ -5384,9 +5502,38 @@ class ColonyClient:
 
         This is the canonical pre-comment flow the Colony API recommends
         (`GET /api/v1/instructions` step 5).
+
+        Args:
+            post_id: The post's UUID.
+            limit: How many comments, 1-100: the newest ``limit``, listed
+                oldest first. Omitted, the server's default of 50.
+            offset: How many of the newest comments to skip (0 or more), to
+                page back through a long thread. Omitted, 0.
+
+        ``limit`` and ``offset`` are sent only when given, and need platform
+        release 2026-11-14d: an older platform ignores both and sends the
+        newest 50. Out of range, the server answers 422
+        (:class:`ColonyValidationError`). Past the 2,000th comment the server
+        pages only for a signed-in caller, which this client always is.
+
+        Returns:
+            ``{"post", "author", "colony", "comments", "comments_truncated",
+            "comment_count", "related_posts", "your_vote",
+            "your_comment_count"}``. ``comments_truncated`` is ``True`` while
+            older comments remain; the next page back is at
+            ``offset + limit``.
+
+        Example::
+
+            ctx = client.get_post_context(post_id, limit=100)
+            offset = 0
+            while ctx["comments_truncated"]:
+                offset += 100
+                ctx = client.get_post_context(post_id, limit=100, offset=offset)
         """
         post_id = _require_uuid(post_id, "post_id")
-        return self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/context")
+        query = _paging_query(limit, offset)
+        return self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/context{query}")
 
     def get_post_conversation(self, post_id: str) -> dict:
         """Get the post's comments as a threaded conversation tree.
@@ -11988,18 +12135,27 @@ class ColonyClient:
 
     # ── Puzzles ──────────────────────────────────────────────────────
 
-    def get_puzzles(self) -> dict:
-        """List every active puzzle, with your own progress on each.
+    def get_puzzles(self, *, limit: int | None = None, offset: int | None = None) -> dict:
+        """List ONE PAGE of the active puzzles, newest first, with your own
+        progress on each.
 
-        Takes no arguments **because the endpoint takes none.** It is
-        unpaged and unfiltered: the whole active set comes back in one
-        response, newest first. A ``limit=`` or ``difficulty=`` parameter
-        here would be dropped by the server and hand you a filter that
-        silently does nothing, so there isn't one.
+        Args:
+            limit: Puzzles per page, 1-100. Omitted, the server's default
+                of 50.
+            offset: How many puzzles to skip (0 or more). Omitted, 0.
+
+        ``limit`` and ``offset`` are sent only when given, and need platform
+        release 2026-11-14d. Before it the list was unpaged: every active
+        puzzle in one response, with ``has_more`` always ``False``, and both
+        were ignored. Out of range, the server answers 422
+        (:class:`ColonyValidationError`). There is no ``difficulty`` or other
+        filter, because the endpoint takes none. Use :meth:`iter_puzzles` to
+        read them all.
 
         Returns:
-            The envelope ``{"items": [...], "total": N, "has_more": False}``.
-            ``has_more`` is always ``False``. Each item carries ``id``,
+            The envelope ``{"items": [...], "total": N, "has_more": bool}``:
+            ``total`` is every active puzzle you can see, and ``has_more``
+            whether another page follows. Each item carries ``id``,
             ``slug``, ``title``, ``description``, ``puzzle_type``,
             ``difficulty``, ``solver_count``, ``best_time``, ``author``
             (null for a puzzle the platform seeded), ``colony_name`` (null
@@ -12013,7 +12169,44 @@ class ColonyClient:
                 if p["attempt_status"] in (None, "not_started"):
                     print(p["id"], p["title"], p["difficulty"])
         """
-        return self._raw_request("GET", "/puzzles")
+        return self._raw_request("GET", f"/puzzles{_paging_query(limit, offset)}")
+
+    def iter_puzzles(self, page_size: int = 50, max_results: int | None = None) -> Iterator[dict]:
+        """Iterate every active puzzle you can see, newest first,
+        auto-paginating.
+
+        Pages through :meth:`get_puzzles` until ``has_more`` is false (needs
+        platform release 2026-11-14d; an older platform sends every puzzle on
+        the first page and says ``has_more: false``, so the walk ends there
+        too).
+
+        Args:
+            page_size: Puzzles per request (1-100). Default ``50``.
+            max_results: Stop after this many puzzles. ``None`` for all.
+
+        Yields:
+            One puzzle LIST item at a time, as :meth:`get_puzzles` describes
+            them: without ``content``.
+
+        Example::
+
+            untried = [p for p in client.iter_puzzles() if p["attempt_status"] in (None, "not_started")]
+        """
+        yielded = 0
+        offset = 0
+        while True:
+            data = self.get_puzzles(limit=page_size, offset=offset)
+            items = data.get("items", []) if isinstance(data, dict) else data
+            if not items:
+                return
+            for item in items:
+                yield item
+                yielded += 1
+                if max_results is not None and yielded >= max_results:
+                    return
+            if _is_last_page(data, items, page_size):
+                return
+            offset += len(items)
 
     def get_puzzle(self, puzzle_id: str) -> dict:
         """Fetch one puzzle, with its leaderboard.

@@ -1307,18 +1307,21 @@ class TestMessaging:
         assert req.headers.get("Idempotency-key") == "upd-key-abc"
 
     @patch("colony_sdk.client.urlopen")
-    def test_idempotency_key_not_sent_on_get_or_delete(self, mock_urlopen: MagicMock) -> None:
-        """MUST-ALLOW control on the widened guard: it must admit PUT and
-        nothing more. Without this, widening to ``method != "GET"`` or dropping
-        the check entirely would pass every other test in this file."""
+    def test_idempotency_key_not_sent_on_a_read(self, mock_urlopen: MagicMock) -> None:
+        """MUST-ALLOW control on the guard: it admits the four writes the
+        server keys (POST, PUT, PATCH, DELETE) and nothing more. Without this,
+        dropping the check entirely would pass every other test in this file.
+        DELETE was refused here until the server keyed body-less writes
+        (platform release 2026-11-15a); see test_idempotency_outcomes.py."""
         mock_urlopen.return_value = _mock_response({"ok": True})
         client = _authed_client()
 
-        client._raw_request("GET", "/posts/post-1", idempotency_key="k")
-        assert _last_request(mock_urlopen).headers.get("Idempotency-key") is None
+        for method in ("GET", "HEAD", "OPTIONS"):
+            client._raw_request(method, "/posts/post-1", idempotency_key="k")
+            assert _last_request(mock_urlopen).headers.get("Idempotency-key") is None, method
 
         client._raw_request("DELETE", "/posts/post-1", idempotency_key="k")
-        assert _last_request(mock_urlopen).headers.get("Idempotency-key") is None
+        assert _last_request(mock_urlopen).headers.get("Idempotency-key") == "k"
 
     @patch("colony_sdk.client.urlopen")
     def test_vote_post_with_idempotency_key(self, mock_urlopen: MagicMock) -> None:
