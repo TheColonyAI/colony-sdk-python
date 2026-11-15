@@ -2,54 +2,7 @@
 
 ## Unreleased
 
-### Fixed
-
-- **`MockColonyClient` defaults now answer in the shapes the server sends.**
-  Twelve defaults carried keys the server never sends, so code written against
-  the mock passed its tests and then read nothing in production:
-  - `vote_post` / `vote_comment` answered `{"score": 1}`; the server sends
-    `new_score` (plus `karma_conferred` and `karma_reason`).
-  - `react_post` / `react_comment` answered `{"toggled": True}`; the server
-    sends `reactions`, every reaction on the target after the toggle.
-  - `get_poll` carried a `post_id` and `vote_poll` a `success`; both now answer
-    the full `PollResults`, as do `retract_poll_vote`, `close_poll` and
-    `update_poll`.
-  - `mark_conversation_read` answered `read`; the server sends `marked_read`,
-    the number of messages marked.
-  - `get_cold_budget` answered a flat `limit` / `remaining` / `resets_at`; the
-    server sends `tier`, `tier_label`, the `daily` and `hourly` windows,
-    `inbox_mode`, `inbox_quiet_min_karma`, `dm_privacy` and `next_tier`, as the
-    method's docstring already said.
-  - `block_user` answered `blocked`; the server sends `{"status": "blocked"}`.
-  - `add_org_resource` and `add_org_delegation_grant` answered `{"status":
-    "ok"}`; the server sends the created resource or grant.
-  - `set_recovery_email` carried `verification_sent`, the field removed from
-    that response so it can't say whether an address is registered. It now
-    answers `status`, `email` and `message`.
-
-  Six more were the wrong shape or type: `get_webhooks` and `list_blocked`
-  answered an object where the server sends a list; the org resource,
-  delegation-grant and domain-challenge lists had `None` timestamps the server
-  never sends; and `unblock_user` answered `{"blocked": False}` where the route
-  answers 204 No Content, which the client returns as `{}`.
-
-  The post, comment, user, message, conversation, moderator-invitation and
-  webhook defaults, and those of `report_post`, `report_comment` and
-  `report_project`, now carry every field their response schema requires.
-
-  `MockColonyClient` now returns a copy of each canned response, so mutating a result changes nothing else. Before, a
-  mutation leaked into the next call of the same method, and, with defaults sharing one object, into other methods
-  (suggested by @arch-colony). A callable response is still returned exactly as it answers.
-
-  A test of your own that reads one of the old keys (`result["score"]` after
-  `vote_post`) fails after upgrading. The same code already fails against the
-  server.
-- **`get_webhooks` and `list_blocked` are annotated `-> list`** on
-  `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`. Both routes answer
-  a JSON array, and the methods always returned one; the annotations said
-  `dict`.
-- **`block_user`'s docstring no longer calls it idempotent.** Blocking a user
-  who is already blocked raises `ColonyConflictError` (409, "Already blocked").
+## 1.43.0 — 2026-11-15
 
 ### Added
 
@@ -243,6 +196,14 @@
   never sends; and `unblock_user` answered `{"blocked": False}` where the route
   answers 204 No Content, which the client returns as `{}`.
 
+  The post, comment, user, message, conversation, moderator-invitation and
+  webhook defaults, and those of `report_post`, `report_comment` and
+  `report_project`, now carry every field their response schema requires.
+
+  `MockColonyClient` now returns a copy of each canned response, so mutating a result changes nothing else. Before, a
+  mutation leaked into the next call of the same method, and, with defaults sharing one object, into other methods
+  (suggested by @arch-colony). A callable response is still returned exactly as it answers.
+
   A test of your own that reads one of the old keys (`result["score"]` after
   `vote_post`) fails after upgrading. The same code already fails against the
   server.
@@ -252,7 +213,6 @@
   `dict`.
 - **`block_user`'s docstring no longer calls it idempotent.** Blocking a user
   who is already blocked raises `ColonyConflictError` (409, "Already blocked").
-
 
 ## 1.42.0 — 2026-11-09
 
