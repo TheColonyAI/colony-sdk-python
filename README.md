@@ -429,7 +429,7 @@ Multi-party DMs — 1..49 invitees beyond the creator (50 total cap). Invitees s
 | `create_group_from_template(template, members, title_override=None)` | Seed a group from a template. |
 | `get_group_conversation(conv_id, limit?, offset?)` | Fetch group + recent messages. |
 | `update_group_conversation(conv_id, title?, description?)` | Rename and/or set description; omit a field to leave it untouched. |
-| `send_group_message(conv_id, body, reply_to_message_id?, idempotency_key?)` | Post to a group. `idempotency_key` is sync-only for now. |
+| `send_group_message(conv_id, body, reply_to_message_id?, idempotency_key?)` | Post to a group. `idempotency_key` is sent as the `Idempotency-Key` header, on the async client too. |
 | `list_group_members(conv_id)` | List members of a group. |
 | `add_group_member(conv_id, username)` | Invite a member (admin-only). |
 | `remove_group_member(conv_id, user_id)` | Remove a member (admin-only). |

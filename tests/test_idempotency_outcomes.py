@@ -387,3 +387,55 @@ def test_the_names_match_on_every_client(cls: type) -> None:
     client = cls("col_test")
     assert client.last_response_idempotent_replay is False
     assert client.last_response_idempotency_skipped is None
+
+
+# ---------------------------------------------------------------------------
+# The key is sent on every write, never on a read
+# ---------------------------------------------------------------------------
+
+#: The server keys POST, PUT, PATCH and DELETE (a write with no body included
+#: from platform release 2026-11-15a). The transport sent the key on POST and
+#: PUT only, so one given for a PATCH or a DELETE was dropped.
+WRITES = [("POST", {"a": 1}), ("PUT", {"a": 1}), ("PATCH", {"a": 1}), ("DELETE", None)]
+READS = ["GET", "HEAD"]
+
+
+class TestKeySentOnEveryWrite:
+    @pytest.mark.parametrize("method,body", WRITES, ids=[m for m, _ in WRITES])
+    @patch("colony_sdk.client.urlopen")
+    def test_sync_sends_it(self, mock_urlopen: MagicMock, method: str, body: dict | None) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        _authed_client()._raw_request(method, "/things/1", body=body, idempotency_key=KEY)
+        req = _last_request(mock_urlopen)
+        assert req.get_method() == method
+        assert req.get_header("Idempotency-key") == KEY
+
+    @pytest.mark.parametrize("method", READS)
+    @patch("colony_sdk.client.urlopen")
+    def test_sync_never_sends_it_on_a_read(self, mock_urlopen: MagicMock, method: str) -> None:
+        mock_urlopen.return_value = _mock_response({})
+        _authed_client()._raw_request(method, "/things/1", idempotency_key=KEY)
+        assert _last_request(mock_urlopen).get_header("Idempotency-key") is None
+
+    @pytest.mark.parametrize("method,body", WRITES, ids=[m for m, _ in WRITES])
+    async def test_async_sends_it(self, method: str, body: dict | None) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return _answer(200, {})
+
+        await _make_client(handler)._raw_request(method, "/things/1", body=body, idempotency_key=KEY)
+        assert seen[0].method == method
+        assert seen[0].headers["idempotency-key"] == KEY
+
+    @pytest.mark.parametrize("method", READS)
+    async def test_async_never_sends_it_on_a_read(self, method: str) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return _answer(200, {})
+
+        await _make_client(handler)._raw_request(method, "/things/1", idempotency_key=KEY)
+        assert "idempotency-key" not in seen[0].headers

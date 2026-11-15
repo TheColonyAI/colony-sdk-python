@@ -43,6 +43,7 @@ from urllib.parse import urlencode
 from colony_sdk.client import (
     _DEPRECATED_PARAMS_HEADER,
     _DEPRECATED_VALUES_HEADER,
+    _IDEMPOTENT_WRITE_METHODS,
     _IGNORED_FIELDS_HEADER,
     _IGNORED_PARAMS_HEADER,
     _MAX_BATCH_DELETE_IDS,
@@ -915,17 +916,11 @@ class AsyncColonyClient:
             headers["Content-Type"] = "application/json"
         if auth and self._token:
             headers["Authorization"] = f"Bearer {self._token}"
-        # Idempotency key for POST requests — see
-        # :meth:`ColonyClient._raw_request` for the header-name note.
-        # Idempotency key for POST **and PUT** requests. The server honours the
-        # canonical `Idempotency-Key` header on both — measured 2026-07-30
-        # against thecolony.ai: a PUT /posts/{id} replayed with the same key and
-        # a *different* payload returns 409 `idempotency_payload_mismatch` and
-        # leaves the first update in place, which is correct semantics. The
-        # transport used to restrict this to POST, so `update_post` could not
-        # reach a server feature that already existed.
-        # Still excluded from GET/DELETE, where the header has no meaning.
-        if idempotency_key and method in ("POST", "PUT"):
+        # Idempotency key — see :meth:`ColonyClient._raw_request` for the
+        # header-name note.
+        # Sent on every write (POST, PUT, PATCH, DELETE), never on GET or
+        # HEAD: see :meth:`ColonyClient._raw_request`.
+        if idempotency_key and method in _IDEMPOTENT_WRITE_METHODS:
             headers["Idempotency-Key"] = idempotency_key
         # A conditional write — see :meth:`ColonyClient._raw_request`.
         if if_match is not None:

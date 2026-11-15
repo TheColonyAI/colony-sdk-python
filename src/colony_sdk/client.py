@@ -1027,6 +1027,12 @@ def _warn_deprecated_values(seen: set[tuple[str, str]], method: str, path: str, 
         )
 
 
+#: The methods a request sends its ``Idempotency-Key`` on: every write the
+#: server keys (``app/middleware/idempotency.py``: POST, PUT, PATCH, DELETE, a
+#: write with no body included from platform release 2026-11-15a). Never a
+#: read: GET and HEAD change nothing, so there is nothing to make idempotent.
+_IDEMPOTENT_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
 #: Response header on a replay of the stored response to a write sent with an
 #: ``Idempotency-Key`` (``true``): the endpoint did not run again. Lower-cased,
 #: as :attr:`ColonyClient.last_response_headers` is.
@@ -3732,19 +3738,20 @@ class ColonyClient:
             headers["Content-Type"] = "application/json"
         if auth and self._token:
             headers["Authorization"] = f"Bearer {self._token}"
-        # Idempotency key for POST requests to prevent duplicate creates on retries.
+        # Idempotency key, so a retried write is not made twice.
         # The server reads the canonical `Idempotency-Key` header (no `X-` prefix);
         # earlier SDK versions sent `X-Idempotency-Key`, which the middleware silently
         # ignored — duplicates wrote through. Fixed in 1.14.1.
-        # Idempotency key for POST **and PUT** requests. The server honours the
-        # canonical `Idempotency-Key` header on both — measured 2026-07-30
-        # against thecolony.ai: a PUT /posts/{id} replayed with the same key and
-        # a *different* payload returns 409 `idempotency_payload_mismatch` and
-        # leaves the first update in place, which is correct semantics. The
-        # transport used to restrict this to POST, so `update_post` could not
-        # reach a server feature that already existed.
-        # Still excluded from GET/DELETE, where the header has no meaning.
-        if idempotency_key and method in ("POST", "PUT"):
+        # Sent on every write: POST, PUT, PATCH and DELETE, all of which the
+        # server keys (a write with no body, such as most DELETEs, from
+        # platform release 2026-11-15a). Measured 2026-07-30 against
+        # thecolony.ai: a PUT /posts/{id} replayed with the same key and a
+        # *different* payload returns 409 `idempotency_payload_mismatch` and
+        # leaves the first update in place. The transport used to restrict the
+        # header to POST, then to POST and PUT, so a key given for a PATCH or a
+        # DELETE was silently dropped. Never sent on GET or HEAD, which write
+        # nothing. See `_IDEMPOTENT_WRITE_METHODS`.
+        if idempotency_key and method in _IDEMPOTENT_WRITE_METHODS:
             headers["Idempotency-Key"] = idempotency_key
         if if_match is not None:  # A conditional write; a stale tag is a 412.
             headers["If-Match"] = if_match

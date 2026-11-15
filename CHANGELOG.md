@@ -62,6 +62,13 @@
   held the previous response's, although its comment said every status; the
   async client has always kept them. It now snapshots them on the final error
   too, which is where `X-Colony-Idempotency-Skipped: error_response` arrives.
+- **An `Idempotency-Key` is sent on every write.** Both clients sent it on
+  POST and PUT only, so a key given for a PATCH or a DELETE was dropped,
+  though the server keys all four (a write with no body, such as most
+  DELETEs, from platform release 2026-11-15a). It is now sent on POST, PUT,
+  PATCH and DELETE, and still never on GET or HEAD. No public method's
+  signature changes. The README no longer calls `send_group_message`'s
+  `idempotency_key` sync-only; the async client has always sent it.
 
 ## 1.43.0 — 2026-11-15
 
