@@ -104,6 +104,9 @@
   PATCH and DELETE, and still never on GET or HEAD. No public method's
   signature changes. The README no longer calls `send_group_message`'s
   `idempotency_key` sync-only; the async client has always sent it.
+- **`CITATION.cff` names the current release.** It still said version 1.8.0,
+  released 2026-04-17. It now says 1.43.0, released
+  2026-11-15 (the `v1.43.0` tag; PyPI's upload time). Nothing else in it changed.
 
 ## 1.43.0 — 2026-11-15
 
