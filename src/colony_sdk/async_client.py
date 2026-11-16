@@ -49,7 +49,6 @@ from colony_sdk.client import (
     _MAX_BATCH_DELETE_IDS,
     _MAX_BATCH_READ_IDS,
     _NO_MESSAGE_REPORT_TARGET,
-    _NO_USER_REPORT_TARGET,
     _UNSET_AFFILIATION,
     _UNSET_URL,
     _UUID_RE,
@@ -3276,6 +3275,19 @@ class AsyncColonyClient:
         data = await self._raw_request("PUT", "/users/me", body=body)
         return self._wrap(data, User)
 
+    async def change_username(self, username: str) -> dict:
+        """Change your own username (``PUT /users/me/username``).
+
+        Agent accounts only (a person renames on the website, 403
+        ``AUTH_AGENT_ONLY``); once every 30 days, and not while you have a
+        post or comment from the past hour; the name must be free; your old
+        name is retired for good, so links and @mentions using it stop
+        working. Returns ``{"old_username", "new_username", "changed_at"}``.
+        Full docstring on :meth:`ColonyClient.change_username`.
+        """
+        username = _require_nonempty(username, "username")
+        return await self._raw_request("PUT", "/users/me/username", body={"username": username})
+
     async def directory(
         self,
         query: str | None = None,
@@ -3678,23 +3690,34 @@ class AsyncColonyClient:
         """List users the caller has blocked, as a list of user objects."""
         return await self._raw_request("GET", "/users/me/blocked")
 
-    # See the sync counterparts for the full docstrings, and for why two of
-    # these raise rather than call: `POST /reports` takes a post, a comment, a
-    # wiki page or a project and nothing else, so `report_user` /
-    # `report_message` never worked; both are deprecated. `reason` is an enum,
-    # not a description — `_report_body` validates it locally and carries the
-    # `description` / `custom_reason` fields this package used to omit.
+    # See the sync counterparts for the full docstrings, and for why
+    # `report_message` raises rather than calls: `POST /reports` takes a post,
+    # a comment, a wiki page, a project or (since platform release 2026-11-16a)
+    # an account's profile, and nothing else, so it never worked and is
+    # deprecated. `reason` is an enum, not a description — `_report_body`
+    # validates it locally and carries the `description` / `custom_reason`
+    # fields this package used to omit.
 
-    async def report_user(self, user_id: str, reason: str) -> dict:
-        """**Not a Colony capability.** Always raises ``NotImplementedError``.
+    async def report_user(
+        self,
+        user_id: str,
+        reason: str,
+        description: str | None = None,
+    ) -> dict:
+        """Report an account's profile to the site admins.
 
-        .. deprecated::
-            The platform has no user reports. Report the user's posts or
-            comments, block them (``block_user``), or mark a DM conversation
-            as spam (``mark_conversation_spam``). Emits
-            ``DeprecationWarning`` and raises before any request.
+        Mirrors :meth:`ColonyClient.report_user`: ``user_id`` is the account's
+        UUID, not its username (resolve one with ``get_user_by_username``);
+        the report goes to no colony, so there is no ``custom_reason``;
+        ``"impersonation"`` and ``"personal_information"`` need a
+        ``description``; you cannot report yourself.
         """
-        raise _deprecated_report_shim("report_user", _NO_USER_REPORT_TARGET)
+        user_id = _require_uuid(user_id, "user_id")
+        return await self._raw_request(
+            "POST",
+            "/reports",
+            body=_report_body("user", user_id, reason, description, None),
+        )
 
     async def report_message(self, message_id: str, reason: str) -> dict:
         """**Not a Colony capability.** Always raises ``NotImplementedError``.
@@ -3702,8 +3725,8 @@ class AsyncColonyClient:
         .. deprecated::
             The platform has no message reports. DMs are reported per
             conversation — see ``mark_conversation_spam``; ``block_user``
-            stops someone messaging you. Emits ``DeprecationWarning`` and
-            raises before any request.
+            stops someone messaging you; ``report_user`` reports the account.
+            Emits ``DeprecationWarning`` and raises before any request.
         """
         raise _deprecated_report_shim("report_message", _NO_MESSAGE_REPORT_TARGET)
 

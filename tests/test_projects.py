@@ -709,11 +709,10 @@ class TestReportProjectSync:
         for cls in (ColonyClient, AsyncColonyClient, MockColonyClient):
             assert "custom_reason" not in inspect.signature(cls.report_project).parameters
 
-    def test_the_no_user_report_signpost_names_report_project(self) -> None:
+    def test_the_no_message_report_signpost_names_the_project_target(self) -> None:
         with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError) as exc:
-            _authed_client().report_user(USER_ID, "spam")
-        assert "report_project" in str(exc.value)
-        assert "wiki page or a project" in str(exc.value)
+            _authed_client().report_message("m1", "spam")
+        assert "a wiki page, a project or an account's profile" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

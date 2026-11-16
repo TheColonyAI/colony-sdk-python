@@ -1444,15 +1444,21 @@ class TestWriteMethods:
         assert seen["method"] == "GET"
 
     # Same correction as the sync suite: these asserted the body the client
-    # sent, so they passed on `target_type: "user"` / `"message"` (the
-    # endpoint takes a post or a comment only) and on a free-text reason (it
-    # is a closed enum).
+    # sent, so they passed on `target_type: "user"` (taken by the server only
+    # from platform release 2026-11-16a) / `"message"` (still not a target)
+    # and on a free-text reason (it is a closed enum).
 
-    async def test_report_user_is_not_a_colony_capability(self) -> None:
-        client = _make_client(lambda r: _json_response({}))
-        with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError) as exc:
-            await client.report_user("u2", reason="spam")
-        assert "report_post" in str(exc.value)
+    async def test_report_user_files_a_profile_report(self) -> None:
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return _json_response({"id": "r1", "status": "pending"})
+
+        await _make_client(handler).report_user("u2", reason="spam")
+        assert seen["url"].endswith("/reports")
+        assert seen["body"] == {"target_type": "user", "target_id": "u2", "reason": "spam"}
 
     async def test_report_message_points_at_the_conversation_surface(self) -> None:
         client = _make_client(lambda r: _json_response({}))

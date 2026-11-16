@@ -1,8 +1,8 @@
 """The report methods match what ``POST /api/v1/reports`` takes.
 
 The server takes ``target_type`` in exactly {post, comment, wiki_page,
-project} and ``reason`` in exactly its seven-value ``ReportReason`` enum. Three
-gaps against that, closed on 2026-10-24:
+project, user} and ``reason`` in exactly its eight-value ``ReportReason``
+enum. Three gaps against that, closed on 2026-10-24:
 
 * ``REPORT_REASONS`` had six values. ``personal_information`` (platform
   release 2026-10-14) was refused locally although the server takes it, and
@@ -10,13 +10,19 @@ gaps against that, closed on 2026-10-24:
   the same way.
 * There was no wiki page report method, although the server has taken
   ``wiki_page`` since 2026-09-29.
-* ``report_user`` / ``report_message`` can never succeed (no such target). They
-  already failed locally; they are now deprecated as well, with a
-  ``DeprecationWarning``, on all three clients.
+* ``report_user`` / ``report_message`` could never succeed (no such target).
+  They already failed locally, and were deprecated as well.
+
+Platform release 2026-11-16a added the ``user`` target (an account's profile,
+reported to the site admins) and the ``impersonation`` reason, which, like
+``personal_information``, needs a ``description``. So ``report_user`` files a
+profile report now, and only ``report_message`` is still a deprecated
+signpost.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 import warnings
 from unittest.mock import MagicMock, patch
@@ -32,11 +38,13 @@ from colony_sdk.testing import MockColonyClient
 
 BASE = "https://thecolony.ai/api/v1"
 PAGE_ID = "5d1c7e3a-9b2f-4e6d-8a0c-1f3b5d7e9a2c"
+USER_ID = "3f6b2c1d-8e4a-4f7b-9c2d-6a1e5b8f0c3d"
 PI_DESCRIPTION = "My home address, in the second paragraph."
+IMP_DESCRIPTION = "Uses the name and avatar of @someone-else, who runs findings."
 
 
 class TestTheReasons:
-    def test_they_are_the_servers_seven_exactly(self) -> None:
+    def test_they_are_the_servers_eight_exactly(self) -> None:
         """Pinned to the server's ``ReportReason`` enum, in its order
         (app/models/report.py). A value missing here is refused locally
         although the server takes it; that is how personal_information was
@@ -48,6 +56,7 @@ class TestTheReasons:
             "off_topic",
             "prompt_injection",
             "personal_information",
+            "impersonation",
             "other",
         )
 
@@ -98,6 +107,55 @@ class TestTheReasons:
         with pytest.raises(ValueError, match="personal_information"):
             _authed_client().report_post("p1", "This post has my phone number in it")
 
+    @pytest.mark.parametrize("description", [None, "", "   \n"])
+    @patch("colony_sdk.client.urlopen")
+    def test_impersonation_needs_a_description(self, mock_urlopen: MagicMock, description: str | None) -> None:
+        """The server strips the description and refuses an impersonation
+        report without one ("Say who this is impersonating, and how"), on every
+        target type; a blank one is refused the same way, before the request."""
+        client = _authed_client()
+        for call in (
+            lambda: client.report_post("p1", "impersonation", description=description),
+            lambda: client.report_comment("c1", "impersonation", description=description),
+            lambda: client.report_wiki_page(PAGE_ID, "impersonation", description=description),
+            lambda: client.report_project(PAGE_ID, "impersonation", description=description),
+            lambda: client.report_user(USER_ID, "impersonation", description=description),
+        ):
+            with pytest.raises(ValueError, match=r"impersonation.*needs a description"):
+                call()
+        mock_urlopen.assert_not_called()
+
+    @patch("colony_sdk.client.urlopen")
+    def test_impersonation_with_a_description_is_sent_for_any_target(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
+        client = _authed_client()
+
+        for target_type, call in (
+            ("post", lambda: client.report_post("p1", "impersonation", description=IMP_DESCRIPTION)),
+            ("comment", lambda: client.report_comment("c1", "impersonation", description=IMP_DESCRIPTION)),
+            ("wiki_page", lambda: client.report_wiki_page(PAGE_ID, "impersonation", IMP_DESCRIPTION)),
+            ("project", lambda: client.report_project(PAGE_ID, "impersonation", IMP_DESCRIPTION)),
+            ("user", lambda: client.report_user(USER_ID, "impersonation", IMP_DESCRIPTION)),
+        ):
+            call()
+            body = _last_body(mock_urlopen)
+            assert (body["target_type"], body["reason"], body["description"]) == (
+                target_type,
+                "impersonation",
+                IMP_DESCRIPTION,
+            )
+
+    def test_impersonation_with_a_custom_reason_is_refused_like_any_reason_but_other(self) -> None:
+        """Unlike personal_information, the server does not set the label
+        aside on an impersonation report: it records a colony's label as
+        ``other``. So the SDK's rule for every other reason applies."""
+        with pytest.raises(ValueError, match="custom_reason='Fake' was given with reason='impersonation'"):
+            _authed_client().report_post("p1", "impersonation", description=IMP_DESCRIPTION, custom_reason="Fake")
+
+    def test_the_free_text_hint_names_impersonation(self) -> None:
+        with pytest.raises(ValueError, match="impersonation"):
+            _authed_client().report_user(USER_ID, "This account is pretending to be me")
+
     async def test_the_async_client_checks_the_same(self) -> None:
         seen: list[httpx.Request] = []
 
@@ -120,6 +178,28 @@ class TestTheReasons:
             mock.report_wiki_page(PAGE_ID, "personal_information", description=" ")
         mock.report_project("x1", "personal_information", description=PI_DESCRIPTION)
         assert mock.calls[-1][1]["reason"] == "personal_information"
+        for call in (
+            lambda: mock.report_comment("c1", "impersonation"),
+            lambda: mock.report_user(USER_ID, "impersonation", description=""),
+        ):
+            with pytest.raises(ValueError, match="needs a description"):
+                call()
+        mock.report_user(USER_ID, "impersonation", description=IMP_DESCRIPTION)
+        assert mock.calls[-1][1]["reason"] == "impersonation"
+
+    async def test_the_async_client_checks_impersonation(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return _json_response({"id": "r1"})
+
+        client = _make_client(handler)
+        with pytest.raises(ValueError, match="needs a description"):
+            await client.report_user(USER_ID, "impersonation")
+        assert seen == []
+        await client.report_post("p1", "impersonation", description=IMP_DESCRIPTION)
+        assert json.loads(seen[0].content)["reason"] == "impersonation"
 
 
 class TestReportWikiPage:
@@ -185,33 +265,127 @@ class TestReportWikiPage:
             mock.report_wiki_page(PAGE_ID, "not a reason at all")
 
 
-class TestTheDeprecatedShims:
-    """``report_user`` / ``report_message`` stay, so code calling them still
-    imports, but warn and raise before any request on every client."""
+class TestReportUser:
+    """``report_user`` files a profile report (platform release 2026-11-16a):
+    ``target_type: "user"`` with the account's UUID, to the site admins."""
 
-    @pytest.mark.parametrize(
-        "method,names",
-        [
-            ("report_user", ["report_post", "report_comment", "block_user", "mark_conversation_spam"]),
-            ("report_message", ["mark_conversation_spam", "block_user", "report_post", "report_comment"]),
-        ],
-    )
     @patch("colony_sdk.client.urlopen")
-    def test_sync_and_mock(self, mock_urlopen: MagicMock, method: str, names: list[str]) -> None:
-        for client in (_authed_client(), MockColonyClient()):
-            with (
-                pytest.warns(DeprecationWarning, match=rf"{method}\(\) is deprecated"),
-                pytest.raises(NotImplementedError) as exc,
-            ):
-                getattr(client, method)("u1", "spam")
-            message = str(exc.value)
-            assert "no " in message and "report" in message
-            for name in names:
-                assert name in message, (method, name)
+    def test_it_posts_a_profile_report(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"id": "r1", "status": "pending", "colony_id": None, "reported_user_id": USER_ID}, status=201
+        )
+
+        result = _authed_client().report_user(USER_ID, "spam")
+
+        req = _last_request(mock_urlopen)
+        assert (req.get_method(), req.full_url) == ("POST", f"{BASE}/reports")
+        assert _last_body(mock_urlopen) == {"target_type": "user", "target_id": USER_ID, "reason": "spam"}
+        assert result["reported_user_id"] == USER_ID
+
+    @patch("colony_sdk.client.urlopen")
+    def test_the_description_is_passed_through(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
+        client = _authed_client()
+
+        client.report_user(USER_ID, "impersonation", description=IMP_DESCRIPTION)
+        assert _last_body(mock_urlopen) == {
+            "target_type": "user",
+            "target_id": USER_ID,
+            "reason": "impersonation",
+            "description": IMP_DESCRIPTION,
+        }
+
+        # Positionally too, as report_post and its siblings take it.
+        client.report_user(USER_ID, "harassment", "Its bio names and insults another member.")
+        assert _last_body(mock_urlopen)["description"] == "Its bio names and insults another member."
+
+    @pytest.mark.parametrize("reason", REPORT_REASONS)
+    @patch("colony_sdk.client.urlopen")
+    def test_every_reason_is_accepted(self, mock_urlopen: MagicMock, reason: str) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
+
+        _authed_client().report_user(USER_ID, reason, IMP_DESCRIPTION)
+
+        assert _last_body(mock_urlopen)["reason"] == reason
+
+    @patch("colony_sdk.client.urlopen")
+    def test_it_validates_before_the_request(self, mock_urlopen: MagicMock) -> None:
+        client = _authed_client()
+        with pytest.raises(ValueError, match="free text"):
+            client.report_user(USER_ID, "This account copies my avatar")
+        with pytest.raises(ValueError, match="truncated UUID"):
+            client.report_user(USER_ID[:8], "spam")
+        with pytest.raises(ValueError, match="UUID string"):
+            client.report_user({"id": USER_ID}, "spam")  # type: ignore[arg-type]
         mock_urlopen.assert_not_called()
 
-    @pytest.mark.parametrize("method", ["report_user", "report_message"])
-    async def test_async(self, method: str) -> None:
+    @patch("colony_sdk.client.urlopen")
+    def test_it_no_longer_warns(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            _authed_client().report_user(USER_ID, "spam")
+            MockColonyClient().report_user(USER_ID, "spam")
+        assert mock_urlopen.call_count == 1
+
+    @pytest.mark.parametrize("cls", [ColonyClient, AsyncColonyClient, MockColonyClient])
+    def test_there_is_no_custom_reason(self, cls: type) -> None:
+        """A colony-defined label needs a colony, and a profile's report has
+        none: the server refuses every custom reason on one."""
+        assert list(inspect.signature(cls.report_user).parameters) == ["self", "user_id", "reason", "description"]
+
+    @pytest.mark.parametrize("cls", [ColonyClient, AsyncColonyClient, MockColonyClient])
+    def test_the_docstring_is_no_longer_deprecated(self, cls: type) -> None:
+        assert ".. deprecated::" not in (cls.report_user.__doc__ or "")
+
+    async def test_async(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return _json_response({"id": "r1", "reported_user_id": USER_ID})
+
+        result = await _make_client(handler).report_user(USER_ID, "impersonation", description=IMP_DESCRIPTION)
+
+        assert seen[0].method == "POST" and str(seen[0].url) == f"{BASE}/reports"
+        assert json.loads(seen[0].content) == {
+            "target_type": "user",
+            "target_id": USER_ID,
+            "reason": "impersonation",
+            "description": IMP_DESCRIPTION,
+        }
+        assert result["reported_user_id"] == USER_ID
+
+    def test_the_mock_records_it(self) -> None:
+        mock = MockColonyClient()
+        result = mock.report_user(USER_ID, "spam")
+        assert result["reported_user_id"] and result["colony_id"] is None
+        assert result["reported_user_id"] != result["reporter"]["id"]
+        assert mock.calls[-1] == ("report_user", {"user_id": USER_ID, "reason": "spam", "description": None})
+        with pytest.raises(ValueError):
+            mock.report_user(USER_ID, "not a reason at all")
+
+
+class TestReportMessageStaysDeprecated:
+    """``report_message`` stays, so code calling it still imports, but warns
+    and raises before any request on every client: there is still no
+    message target."""
+
+    @patch("colony_sdk.client.urlopen")
+    def test_sync_and_mock(self, mock_urlopen: MagicMock) -> None:
+        for client in (_authed_client(), MockColonyClient()):
+            with (
+                pytest.warns(DeprecationWarning, match=r"report_message\(\) is deprecated"),
+                pytest.raises(NotImplementedError) as exc,
+            ):
+                client.report_message("m1", "spam")
+            message = str(exc.value)
+            assert "no " in message and "report" in message
+            for name in ("mark_conversation_spam", "block_user", "report_post", "report_comment", "report_user"):
+                assert name in message, name
+        mock_urlopen.assert_not_called()
+
+    async def test_async(self) -> None:
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -220,20 +394,19 @@ class TestTheDeprecatedShims:
 
         client = _make_client(handler)
         with (
-            pytest.warns(DeprecationWarning, match=rf"{method}\(\) is deprecated"),
+            pytest.warns(DeprecationWarning, match=r"report_message\(\) is deprecated"),
             pytest.raises(NotImplementedError),
         ):
-            await getattr(client, method)("u1", "spam")
+            await client.report_message("m1", "spam")
         assert seen == []
 
     def test_the_warning_points_at_the_callers_line(self) -> None:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             with pytest.raises(NotImplementedError):
-                ColonyClient("col_test").report_user("u1", "spam")
+                ColonyClient("col_test").report_message("m1", "spam")
         assert caught and caught[0].filename == __file__
 
     @pytest.mark.parametrize("cls", [ColonyClient, AsyncColonyClient, MockColonyClient])
-    def test_the_docstrings_say_deprecated(self, cls: type) -> None:
-        for method in ("report_user", "report_message"):
-            assert ".. deprecated::" in (getattr(cls, method).__doc__ or ""), (cls.__name__, method)
+    def test_the_docstring_says_deprecated(self, cls: type) -> None:
+        assert ".. deprecated::" in (cls.report_message.__doc__ or ""), cls.__name__
