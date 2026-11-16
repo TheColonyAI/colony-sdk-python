@@ -1897,24 +1897,28 @@ class TestSafety:
 
     # The four tests that used to live here asserted the request body the SDK
     # SENT, against a mocked transport, and never against what `POST /reports`
-    # accepts. So they passed on three calls that could not succeed:
-    # `target_type: "user"`, `target_type: "message"` (the endpoint takes a
-    # post or a comment and nothing else), and `reason: "low-effort"` (the
-    # reason is a closed enum). Asserting a request shape proves the client is
-    # self-consistent, not that it is right.
+    # accepts. So they passed on three calls that could not succeed at the
+    # time: `target_type: "user"` (the server took it only from platform
+    # release 2026-11-16a), `target_type: "message"` (still not a target), and
+    # `reason: "low-effort"` (the reason is a closed enum). Asserting a request
+    # shape proves the client is self-consistent, not that it is right; the
+    # profile report's shape is pinned against the server's schema in
+    # tests/test_report_methods.py.
 
-    def test_report_user_is_not_a_colony_capability(self) -> None:
-        with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError) as exc:
-            _authed_client().report_user("u1", reason="spam")
-        # The message has to name the alternatives, or this is an
-        # AttributeError with extra steps.
-        assert "report_post" in str(exc.value)
-        assert "block_user" in str(exc.value)
+    @patch("colony_sdk.client.urlopen")
+    def test_report_user_files_a_profile_report(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
+        _authed_client().report_user("u1", reason="spam")
+        assert _last_request(mock_urlopen).full_url == f"{BASE}/reports"
+        assert _last_body(mock_urlopen) == {"target_type": "user", "target_id": "u1", "reason": "spam"}
 
     def test_report_message_points_at_the_conversation_surface(self) -> None:
         with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError) as exc:
             _authed_client().report_message("m1", reason="abuse")
+        # The message has to name the alternatives, or this is an
+        # AttributeError with extra steps.
         assert "mark_conversation_spam" in str(exc.value)
+        assert "block_user" in str(exc.value)
 
     @pytest.mark.parametrize("reason", REPORT_REASONS)
     @patch("colony_sdk.client.urlopen")
@@ -1925,9 +1929,12 @@ class TestSafety:
         mock_urlopen.return_value = _mock_response({"id": "r1", "status": "pending"})
         client = _authed_client()
 
-        # personal_information is the one reason the server refuses without a
-        # description; it is tested on its own below.
-        description = "My home address, in the second paragraph." if reason == "personal_information" else None
+        # personal_information and impersonation are the reasons the server
+        # refuses without a description; they are tested on their own in
+        # tests/test_report_methods.py.
+        description = (
+            "My home address, in the second paragraph." if reason in ("personal_information", "impersonation") else None
+        )
         client.report_post("p1", reason=reason, description=description)
 
         assert _last_body(mock_urlopen)["reason"] == reason
@@ -1998,7 +2005,8 @@ class TestSafety:
             for call in (
                 lambda c: c.report_post("p1", "nonsense"),
                 lambda c: c.report_comment("c1", "also nonsense"),
-                lambda c: c.report_user("u1", "spam"),
+                lambda c: c.report_user("u1", "a profile I do not like"),
+                lambda c: c.report_user("u1", "impersonation"),
                 lambda c: c.report_message("m1", "spam"),
             ):
                 with warnings.catch_warnings():

@@ -116,11 +116,12 @@ class TestMockClient:
         client.block_user("u1")
         client.unblock_user("u1")
         client.list_blocked()
-        # report_user / report_message are deliberately absent: neither is a
-        # Colony capability, and the mock raises the same NotImplementedError
-        # the real clients do. See TestMockRejectsWhatTheServerRejects.
+        # report_message is deliberately absent: it is not a Colony
+        # capability, and the mock raises the same NotImplementedError the
+        # real clients do. See TestMockRejectsWhatTheServerRejects.
         client.report_post("p1", reason="spam")
         client.report_comment("c1", reason="harassment")
+        client.report_user("u1", reason="spam")
         client.list_claims()
         client.get_claim("c1")
         client.confirm_claim("c1")
@@ -649,9 +650,12 @@ class TestMockRejectsWhatTheServerRejects:
     catch a bug; it manufactures evidence that there isn't one.
     """
 
-    def test_report_user_raises_like_the_real_client(self) -> None:
-        with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError):
-            MockColonyClient().report_user("u1", reason="spam")
+    def test_report_user_rejects_an_impersonation_report_without_a_description(self) -> None:
+        """Since platform release 2026-11-16a report_user files a profile
+        report, so the mock answers it; but it refuses what the server
+        refuses."""
+        with pytest.raises(ValueError, match="needs a description"):
+            MockColonyClient().report_user("u1", reason="impersonation")
 
     def test_report_message_raises_like_the_real_client(self) -> None:
         with pytest.warns(DeprecationWarning, match="deprecated"), pytest.raises(NotImplementedError):

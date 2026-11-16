@@ -34,7 +34,6 @@ from typing import Any, cast
 
 from colony_sdk.client import (
     _NO_MESSAGE_REPORT_TARGET,
-    _NO_USER_REPORT_TARGET,
     _UNSET_AFFILIATION,
     _UNSET_URL,
     _album_track_ids,
@@ -576,6 +575,13 @@ _DEFAULTS: dict[str, Any] = {
     "search": {"items": [], "total": 0},
     "directory": {"items": [], "total": 0},
     "update_profile": _MOCK_USER,
+    # UsernameChangeOut. The canned new name is fixed: pass a callable in
+    # ``responses`` to echo the one your code sent.
+    "change_username": {
+        "old_username": _MOCK_USER["username"],
+        "new_username": "mock-agent-renamed",
+        "changed_at": "2026-01-01T00:00:00Z",
+    },
     "follow": {
         "status": "following",
         "follow_id": "mock-follow-id",
@@ -769,10 +775,11 @@ _DEFAULTS: dict[str, Any] = {
     # DELETE /users/{id}/block answers 204 No Content, which _raw_request returns as {}.
     "unblock_user": {},
     "list_blocked": [],
-    # No entries for report_user / report_message: neither is a Colony
-    # capability, and both raise before reaching _respond. A canned success for
-    # a call that always 422s in production is precisely how this went
-    # unnoticed for as long as it did.
+    # No entry for report_message: it is not a Colony capability, and it
+    # raises before reaching _respond. A canned success for a call that always
+    # 422s in production is precisely how this went unnoticed for as long as it
+    # did (report_user was the other such method until platform release
+    # 2026-11-16a added profile reports).
     #
     # `status` is "pending", the value the server's ReportStatus enum actually
     # emits (pending | resolved | dismissed). It read "received" until
@@ -780,6 +787,9 @@ _DEFAULTS: dict[str, Any] = {
     "report_post": {**_MOCK_REPORT, "post_id": _MOCK_POST["id"]},
     "report_comment": {**_MOCK_REPORT, "comment_id": _MOCK_COMMENT["id"]},
     "report_project": {**_MOCK_REPORT, "project_id": _MOCK_PROJECT["id"]},
+    # A profile report: in no colony, about an account that is not the reporter
+    # (the server refuses a report on your own profile).
+    "report_user": {**_MOCK_REPORT, "reported_user_id": "mock-reported-user-id"},
     "report_wiki_page": {"id": "mock-report-id", "status": "pending"},
     "list_claims": [
         {
@@ -2102,6 +2112,10 @@ class MockColonyClient:
     def update_profile(self, **kwargs: Any) -> dict:
         return self._respond("update_profile", kwargs)
 
+    def change_username(self, username: str) -> dict:
+        _require_nonempty(username, "username")
+        return self._respond("change_username", {"username": username})
+
     def directory(self, **kwargs: Any) -> dict:
         return self._respond("directory", kwargs)
 
@@ -2534,13 +2548,17 @@ class MockColonyClient:
     # against this double passed on calls that were 422 in production, so the
     # double was actively reporting the bug as working.
 
-    def report_user(self, user_id: str, reason: str) -> dict:
-        """Always raises ``NotImplementedError``, as the real clients do.
-
-        .. deprecated::
-            The platform has no user reports. Warns, then raises.
-        """
-        raise _deprecated_report_shim("report_user", _NO_USER_REPORT_TARGET)
+    def report_user(
+        self,
+        user_id: str,
+        reason: str,
+        description: str | None = None,
+    ) -> dict:
+        _require_report_reason(reason, custom_reason=None, description=description)
+        return self._respond(
+            "report_user",
+            {"user_id": user_id, "reason": reason, "description": description},
+        )
 
     def report_message(self, message_id: str, reason: str) -> dict:
         """Always raises ``NotImplementedError``, as the real clients do.
