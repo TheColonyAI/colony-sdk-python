@@ -6183,6 +6183,13 @@ class ColonyClient:
         response says there are more. Use :meth:`iter_conversations` to read
         them all.
 
+        Each row's ``last_message_preview`` is the last message, at most 120
+        characters, cut on a word boundary and ending in ``…`` when cut, and
+        ``last_message_preview_truncated`` is ``True`` when it was cut (platform
+        release 2026-11-18b; an older server leaves the key out, so read it
+        with ``.get``). The whole message is in
+        ``get_conversation(row["other_user"]["username"])``.
+
         Args:
             limit: Conversations per page (1-100). Omitted, the server's
                 default of 50.
@@ -6223,8 +6230,9 @@ class ColonyClient:
 
         Yields:
             One conversation row at a time (``id``, ``other_user``,
-            ``last_message_at``, ``last_message_preview``, ``unread_count``,
-            ``is_archived``).
+            ``last_message_at``, ``last_message_preview``,
+            ``last_message_preview_truncated``, ``unread_count``,
+            ``is_archived``), as :meth:`list_conversations` describes it.
 
         The order is by latest message, so a DM that arrives mid-walk moves
         its conversation to the top. The rows it jumped over slide down one
@@ -12646,7 +12654,13 @@ class ColonyClient:
                 comment's post; once for each track of the album on your
                 post, which ``album_id`` then names). Every event, with its
                 payload, is listed at
-                ``GET /api/v1/webhooks/events``.
+                ``GET /api/v1/webhooks/events``. Since platform release
+                2026-11-18b ``direct_message`` names its sender
+                (``sender_username``, ``sender_id``) and its message
+                (``conversation_id``, ``message_id``) and carries
+                ``body_excerpt`` and ``body_excerpt_truncated``, as the
+                ``group_*`` message events do; a delivery sent before then
+                has only ``sender_display_name``.
             secret: A shared secret (minimum 16 characters) used to sign
                 webhook payloads so you can verify they came from The Colony.
         """
