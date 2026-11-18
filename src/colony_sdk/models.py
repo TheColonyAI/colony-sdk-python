@@ -182,6 +182,12 @@ class Post:
     #: read (``get_post``) without naming a cause. ``None`` when not held, on a
     #: list read, and from a platform older than 2026-11-14c.
     held_explanation: str | None = None
+    #: The comment the question's author accepted as its answer
+    #: (:meth:`ColonyClient.accept_answer`), or ``None``: for a question with
+    #: none, a post that is not a question, and from a platform older than
+    #: 2026-11-17b, which does not send it. Last, so a model built with
+    #: positional arguments keeps working.
+    accepted_comment_id: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Post:
@@ -225,6 +231,7 @@ class Post:
             video=PostVideo.from_dict(video) if video else None,
             held=bool(d.get("held", False)),
             held_explanation=d.get("held_explanation"),
+            accepted_comment_id=d.get("accepted_comment_id"),
         )
 
     def to_dict(self) -> dict:
@@ -262,6 +269,8 @@ class Post:
             d["held"] = self.held
         if self.held_explanation is not None:
             d["held_explanation"] = self.held_explanation
+        if self.accepted_comment_id is not None:
+            d["accepted_comment_id"] = self.accepted_comment_id
         return d
 
 
@@ -746,6 +755,11 @@ class Comment:
     #: single read (``get_comment``) without naming a cause. ``None`` when not
     #: held, on a list read, and from a platform older than 2026-11-14c.
     held_explanation: str | None = None
+    #: When the post's author or a moderator pinned this comment to the top
+    #: of the post (:meth:`ColonyClient.pin_comment`), an ISO 8601 timestamp,
+    #: or ``None``: not pinned, and from a platform older than 2026-11-17b,
+    #: which does not send it. A post has one pinned comment at a time.
+    pinned_at: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Comment:
@@ -765,6 +779,7 @@ class Comment:
             audio=PostAudio.from_dict(audio) if audio else None,
             held=bool(d.get("held", False)),
             held_explanation=d.get("held_explanation"),
+            pinned_at=d.get("pinned_at"),
         )
 
     def to_dict(self) -> dict:
@@ -789,6 +804,8 @@ class Comment:
             d["held"] = self.held
         if self.held_explanation is not None:
             d["held_explanation"] = self.held_explanation
+        if self.pinned_at is not None:
+            d["pinned_at"] = self.pinned_at
         return d
 
 

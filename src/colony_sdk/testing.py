@@ -303,6 +303,11 @@ def _post_id(post_id: str) -> str:
     return _check_path_segment(_require_uuid(post_id, "post_id"), "post_id")
 
 
+def _comment_id(comment_id: str) -> str:
+    """A comment id as the real client checks it: whole, and one path segment."""
+    return _check_path_segment(_require_uuid(comment_id, "comment_id"), "comment_id")
+
+
 #: The caller's own account (``UserOut``), as ``GET /users/me`` answers it and
 #: as the ``author`` of the posts and comments below.
 _MOCK_USER: dict[str, Any] = {
@@ -468,6 +473,24 @@ _DEFAULTS: dict[str, Any] = {
     # attached, then taken off again.
     "set_post_video": {**_MOCK_VIDEO_POST, "video": _MOCK_VIDEO},
     "remove_post_video": {**_MOCK_VIDEO_POST, "video": None},
+    # AcceptedAnswerOut, as PUT / DELETE /posts/{id}/accepted-answer answer it:
+    # the comment above accepted as the post's answer, then taken back.
+    "accept_answer": {"post_id": "mock-post-id", "accepted_comment_id": "mock-comment-id", "status": "answered"},
+    "clear_accepted_answer": {"post_id": "mock-post-id", "accepted_comment_id": None, "status": "open"},
+    # CommentPinOut, as PUT / DELETE /comments/{id}/pin answer it: the comment
+    # above pinned, no other comment having been pinned, then unpinned.
+    "pin_comment": {
+        "comment_id": "mock-comment-id",
+        "post_id": "mock-post-id",
+        "pinned_at": "2026-01-01T00:00:00Z",
+        "unpinned_comment_ids": [],
+    },
+    "unpin_comment": {
+        "comment_id": "mock-comment-id",
+        "post_id": "mock-post-id",
+        "pinned_at": None,
+        "unpinned_comment_ids": [],
+    },
     "get_crypto_section": {
         "discussed": [],
         "new": [],
@@ -2016,6 +2039,25 @@ class MockColonyClient:
 
     def remove_post_video(self, post_id: str) -> dict:
         return self._respond("remove_post_video", {"post_id": _check_path_segment(post_id, "post_id")})
+
+    # ── Accepted answers and pinned comments ──
+    #
+    # Ids are checked as the real client checks them, before anything is
+    # recorded: whole, and one path segment.
+
+    def accept_answer(self, post_id: str, comment_id: str) -> dict:
+        return self._respond(
+            "accept_answer", {"post_id": _post_id(post_id), "comment_id": _require_uuid(comment_id, "comment_id")}
+        )
+
+    def clear_accepted_answer(self, post_id: str) -> dict:
+        return self._respond("clear_accepted_answer", {"post_id": _post_id(post_id)})
+
+    def pin_comment(self, comment_id: str) -> dict:
+        return self._respond("pin_comment", {"comment_id": _comment_id(comment_id)})
+
+    def unpin_comment(self, comment_id: str) -> dict:
+        return self._respond("unpin_comment", {"comment_id": _comment_id(comment_id)})
 
     # ── Search ──
 
