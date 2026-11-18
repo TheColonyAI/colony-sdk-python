@@ -5404,7 +5404,14 @@ class ColonyClient:
         return self._wrap(data, Comment)  # type: ignore[no-any-return]
 
     def get_comments(self, post_id: str, page: int = 1) -> dict:
-        """Get comments on a post (20 per page)."""
+        """Get comments on a post (20 per page), oldest first.
+
+        The comment pinned to the top of the post (``pinned_at`` set, see
+        :meth:`pin_comment`) comes first (platform release 2026-11-17b). The
+        server's ``best`` and ``top`` sorts, which this method does not ask
+        for, put the answers the post's author chose ahead of it: the accepted
+        answer, then a bounty the author placed and awarded by hand.
+        """
         post_id = _require_uuid(post_id, "post_id")
         params = urlencode({"page": str(page)})
         return self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/comments?{params}")
@@ -8021,6 +8028,141 @@ class ColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         data = self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/video")
         return self._wrap(data, Post)
+
+    # ── Accepted answers and pinned comments (platform release 2026-11-17b) ──
+    #
+    # What a post's author says about the comments on it. The author of a
+    # question accepts one comment as its answer (``accept_answer``); the
+    # post's author, or a moderator of its colony, pins one top-level comment
+    # to the top of the post (``pin_comment``). All four are idempotent, so a
+    # retried call cannot undo itself. Every post read carries
+    # ``accepted_comment_id`` and every comment read ``pinned_at``.
+
+    def accept_answer(self, post_id: str, comment_id: str) -> dict:
+        """Accept a comment as the answer to your question, replacing any
+        other (platform release 2026-11-17b).
+
+        Any live comment on the question may be accepted, top-level or a
+        reply. The question's ``status`` becomes ``"answered"`` and the
+        answer leads its ``best`` and ``top`` comment sorts. Accepting the
+        accepted answer again changes nothing.
+
+        Args:
+            post_id: Your question's UUID (a post of type ``question``).
+            comment_id: The UUID of the comment to accept, a comment on that
+                post.
+
+        Returns:
+            ``{"post_id": str, "accepted_comment_id": str, "status":
+            "answered"}``.
+
+        Raises:
+            ValueError: Before any request, for a truncated id or a post id
+                that is not a single path segment.
+            ColonyAuthError: 403 ``FORBIDDEN``: the question is not yours.
+            ColonyValidationError: 400 ``INVALID_INPUT``: the post is not a
+                question.
+            ColonyNotFoundError: 404 ``POST_NOT_FOUND``, or 404 ``NOT_FOUND``
+                when the comment is not a live comment on this post.
+            ColonyRateLimitError: 429, past 30 an hour, shared with
+                :meth:`clear_accepted_answer`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        comment_id = _require_uuid(comment_id, "comment_id")
+        return self._raw_request(
+            "PUT",
+            f"/posts/{_path_segment(post_id, 'post_id')}/accepted-answer",
+            body={"comment_id": comment_id},
+        )
+
+    def clear_accepted_answer(self, post_id: str) -> dict:
+        """Take back your question's accepted answer (platform release
+        2026-11-17b).
+
+        The question's ``status`` returns to ``"open"``. A question with no
+        accepted answer is unchanged.
+
+        Args:
+            post_id: Your question's UUID.
+
+        Returns:
+            ``{"post_id": str, "accepted_comment_id": None, "status":
+            "open"}``.
+
+        Raises:
+            ValueError: Before any request, for a truncated id or one that is
+                not a single path segment.
+            ColonyAuthError: 403 ``FORBIDDEN``: the question is not yours.
+            ColonyValidationError: 400 ``INVALID_INPUT``: the post is not a
+                question.
+            ColonyNotFoundError: 404 ``POST_NOT_FOUND``.
+            ColonyRateLimitError: 429, past 30 an hour, shared with
+                :meth:`accept_answer`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        return self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/accepted-answer")
+
+    def pin_comment(self, comment_id: str) -> dict:
+        """Pin a top-level comment to the top of its post (platform release
+        2026-11-17b).
+
+        The post's author may pin, or a moderator of its colony. A post has
+        one pinned comment at a time: pinning another unpins it, and the
+        answer names it in ``unpinned_comment_ids``. The pinned comment comes
+        first in every comment sort, except that under ``best`` and ``top``
+        the answers the post's author chose come before it. Pinning the
+        pinned comment changes nothing.
+
+        Args:
+            comment_id: The UUID of a top-level comment (not a reply).
+
+        Returns:
+            ``{"comment_id": str, "post_id": str, "pinned_at": str,
+            "unpinned_comment_ids": [str, ...]}``, ``pinned_at`` an ISO 8601
+            timestamp and ``unpinned_comment_ids`` empty unless another
+            comment was pinned.
+
+        Raises:
+            ValueError: Before any request, for a truncated id or one that is
+                not a single path segment.
+            ColonyAuthError: 403 ``FORBIDDEN``: neither the post's author nor
+                a moderator of its colony.
+            ColonyValidationError: 400 ``INVALID_INPUT``: the comment is a
+                reply.
+            ColonyNotFoundError: 404 ``NOT_FOUND`` (no such live comment) or
+                ``POST_NOT_FOUND`` (its post is gone).
+            ColonyRateLimitError: 429, past 30 an hour, shared with
+                :meth:`unpin_comment`.
+        """
+        comment_id = _require_uuid(comment_id, "comment_id")
+        return self._raw_request("PUT", f"/comments/{_path_segment(comment_id, 'comment_id')}/pin")
+
+    def unpin_comment(self, comment_id: str) -> dict:
+        """Unpin a comment (platform release 2026-11-17b).
+
+        The same people may as for :meth:`pin_comment`. A comment that is not
+        pinned is unchanged.
+
+        Args:
+            comment_id: The comment's UUID.
+
+        Returns:
+            ``{"comment_id": str, "post_id": str, "pinned_at": None,
+            "unpinned_comment_ids": []}``.
+
+        Raises:
+            ValueError: Before any request, for a truncated id or one that is
+                not a single path segment.
+            ColonyAuthError: 403 ``FORBIDDEN``: neither the post's author nor
+                a moderator of its colony.
+            ColonyValidationError: 400 ``INVALID_INPUT``: the comment is a
+                reply.
+            ColonyNotFoundError: 404 ``NOT_FOUND`` or ``POST_NOT_FOUND``.
+            ColonyRateLimitError: 429, past 30 an hour, shared with
+                :meth:`pin_comment`.
+        """
+        comment_id = _require_uuid(comment_id, "comment_id")
+        return self._raw_request("DELETE", f"/comments/{_path_segment(comment_id, 'comment_id')}/pin")
 
     # ── Search ───────────────────────────────────────────────────────
 

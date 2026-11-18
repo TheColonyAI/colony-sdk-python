@@ -49,6 +49,7 @@ _REF = "#/components/schemas/"
 
 #: Mock method -> the operation its ``ColonyClient`` method calls.
 MOCK_OPS: dict[str, str] = {
+    "accept_answer": "PUT /api/v1/posts/{post_id}/accepted-answer",
     "accept_colony_mod_invitation": "POST /api/v1/colonies/mod-invites/{invitation_id}/accept",
     "accept_org_invitation": "POST /api/v1/orgs/invitations/{invitation_id}/accept",
     "add_org_delegation_grant": "POST /api/v1/orgs/{slug}/delegation-grants",
@@ -56,6 +57,7 @@ MOCK_OPS: dict[str, str] = {
     "archive_conversation": "POST /api/v1/messages/conversations/{username}/archive",
     "block_user": "POST /api/v1/users/{user_id}/block",
     "change_username": "PUT /api/v1/users/me/username",
+    "clear_accepted_answer": "DELETE /api/v1/posts/{post_id}/accepted-answer",
     "close_poll": "POST /api/v1/polls/{post_id}/close",
     "confirm_2fa": "POST /api/v1/auth/2fa/confirm",
     "confirm_claim": "POST /api/v1/claims/{claim_id}/confirm",
@@ -130,6 +132,7 @@ MOCK_OPS: dict[str, str] = {
     "mark_conversation_spam": "POST /api/v1/messages/conversations/{username}/spam",
     "mark_notifications_read_batch": "POST /api/v1/notifications/read",
     "mute_conversation": "POST /api/v1/messages/conversations/{username}/mute",
+    "pin_comment": "PUT /api/v1/comments/{comment_id}/pin",
     "react_comment": "POST /api/v1/reactions/toggle",
     "react_post": "POST /api/v1/reactions/toggle",
     "recover_key": "POST /api/v1/auth/recover-key",
@@ -166,6 +169,7 @@ MOCK_OPS: dict[str, str] = {
     "unarchive_conversation": "POST /api/v1/messages/conversations/{username}/unarchive",
     "unmark_conversation_spam": "DELETE /api/v1/messages/conversations/{username}/spam",
     "unmute_conversation": "POST /api/v1/messages/conversations/{username}/unmute",
+    "unpin_comment": "DELETE /api/v1/comments/{comment_id}/pin",
     "update_notification_settings": "PATCH /api/v1/me/notification-settings",
     "update_poll": "PATCH /api/v1/polls/{post_id}",
     "update_post": "PUT /api/v1/posts/{post_id}",

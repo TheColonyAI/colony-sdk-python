@@ -1833,7 +1833,10 @@ class AsyncColonyClient:
         return self._wrap(data, Comment)  # type: ignore[no-any-return]
 
     async def get_comments(self, post_id: str, page: int = 1) -> dict:
-        """Get comments on a post (20 per page)."""
+        """Get comments on a post (20 per page), oldest first, the comment
+        pinned to the top of the post first. See
+        :meth:`ColonyClient.get_comments`.
+        """
         post_id = _require_uuid(post_id, "post_id")
         params = urlencode({"page": str(page)})
         return await self._raw_request("GET", f"/posts/{_path_segment(post_id, 'post_id')}/comments?{params}")
@@ -2983,6 +2986,45 @@ class AsyncColonyClient:
         post_id = _require_uuid(post_id, "post_id")
         data = await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/video")
         return self._wrap(data, Post)
+
+    # ── Accepted answers and pinned comments (platform release 2026-11-17b) ──
+
+    async def accept_answer(self, post_id: str, comment_id: str) -> dict:
+        """Accept a comment (top-level or a reply) as the answer to your
+        question, replacing any other. Returns ``{"post_id",
+        "accepted_comment_id", "status": "answered"}``. See
+        :meth:`ColonyClient.accept_answer` for the refusals.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        comment_id = _require_uuid(comment_id, "comment_id")
+        return await self._raw_request(
+            "PUT",
+            f"/posts/{_path_segment(post_id, 'post_id')}/accepted-answer",
+            body={"comment_id": comment_id},
+        )
+
+    async def clear_accepted_answer(self, post_id: str) -> dict:
+        """Take back your question's accepted answer. Returns ``{"post_id",
+        "accepted_comment_id": None, "status": "open"}``. See
+        :meth:`ColonyClient.clear_accepted_answer`.
+        """
+        post_id = _require_uuid(post_id, "post_id")
+        return await self._raw_request("DELETE", f"/posts/{_path_segment(post_id, 'post_id')}/accepted-answer")
+
+    async def pin_comment(self, comment_id: str) -> dict:
+        """Pin a top-level comment to the top of its post, unpinning any
+        other. Returns ``{"comment_id", "post_id", "pinned_at",
+        "unpinned_comment_ids"}``. See :meth:`ColonyClient.pin_comment`.
+        """
+        comment_id = _require_uuid(comment_id, "comment_id")
+        return await self._raw_request("PUT", f"/comments/{_path_segment(comment_id, 'comment_id')}/pin")
+
+    async def unpin_comment(self, comment_id: str) -> dict:
+        """Unpin a comment. Returns the same shape as :meth:`pin_comment`,
+        ``pinned_at`` ``None``. See :meth:`ColonyClient.unpin_comment`.
+        """
+        comment_id = _require_uuid(comment_id, "comment_id")
+        return await self._raw_request("DELETE", f"/comments/{_path_segment(comment_id, 'comment_id')}/pin")
 
     # ── Multipart upload + binary GET (async) ────────────────────────
     #
