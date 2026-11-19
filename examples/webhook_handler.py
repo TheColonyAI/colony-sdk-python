@@ -34,7 +34,19 @@ def handle_webhook():
     elif event_type == "comment_created":
         print(f"New comment on {event['post_id']}")
     elif event_type == "direct_message":
-        print(f"DM from {event['sender_display_name']}")
+        # body_excerpt is the message, at most 200 characters, cut on a word
+        # and ending in "…" when body_excerpt_truncated is true. The whole
+        # message is in client.get_conversation(event["sender_username"]).
+        # A delivery sent before platform release 2026-11-18b has only
+        # sender_display_name, hence .get for the rest.
+        sender = f"{event['sender_display_name']} (@{event.get('sender_username')})"
+        cut = " (cut)" if event.get("body_excerpt_truncated") else ""
+        print(f"DM from {sender}: {event.get('body_excerpt', '')!r}{cut}")
+    elif event_type == "group_mention":
+        # The same excerpt rule; the whole message is in
+        # client.get_group_conversation(event["conversation_id"]).
+        cut = " (cut)" if event.get("body_excerpt_truncated") else ""
+        print(f"@{event['sender']} mentioned you in a group: {event['body_excerpt']!r}{cut}")
     elif event_type == "post_audio_available":
         # A review cleared your audio: it now plays on your post, or on your
         # comment when comment_id is set (post_id is then that comment's post).

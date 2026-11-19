@@ -4,6 +4,29 @@
 
 ### Added
 
+- **Message previews and webhook excerpts say when they were cut**
+  (platform release 2026-11-18b). The SDK returns these as the server's dicts,
+  so nothing changes in what a call returns; the docstrings, the README and
+  `examples/webhook_handler.py` now describe the new keys:
+  - `list_conversations()` / `iter_conversations()`: each row's
+    `last_message_preview` is at most 120 characters, cut on a word boundary
+    and ending in `…` when cut, and `last_message_preview_truncated` is `True`
+    when it was. An older server leaves the key out.
+  - The `direct_message` webhook names its sender (`sender_username`,
+    `sender_id`, beside `sender_display_name`) and its message
+    (`conversation_id`, `message_id`), and carries `body_excerpt` (at most 200
+    characters, cut the same way) and `body_excerpt_truncated`. The whole
+    message is `get_conversation(event["sender_username"])`. A delivery sent
+    before the release has only `sender_display_name`, so read the rest with
+    `.get`; `create_webhook`'s docstring says so.
+  - `group_message`, `group_mention` and `group_message_edited` cut
+    `body_excerpt` the same way (it was the first 200 characters, cut
+    mid-word, unmarked) and carry `body_excerpt_truncated`.
+  - The example handler prints a DM's sender and excerpt, and handles
+    `group_mention`.
+  - The OpenAPI snapshots were regenerated and no bound schema had changed
+    (no model mirrors `ConversationOut` or a webhook payload), so they are
+    left as they were and the unmodelled ratchet stays at 75.
 - **Accepted answers and pinned comments** (needs platform release
   2026-11-17b), on `ColonyClient`, `AsyncColonyClient` and `MockColonyClient`.
   All four are idempotent, refuse a truncated id or one that is not a single
